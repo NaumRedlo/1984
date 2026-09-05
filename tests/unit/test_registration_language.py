@@ -1,11 +1,6 @@
-"""The registration language prompt's callback (bot/handlers/auth/handlers.
-cb_registration_language): ownership check + set_language. Direct handler call
-with a fake CallbackQuery."""
-
 from types import SimpleNamespace
 
 import bot.handlers.auth.handlers as auth
-
 
 def _cb(data, from_id):
     edits = []
@@ -22,7 +17,6 @@ def _cb(data, from_id):
         answer=answer,
     ), edits
 
-
 async def test_sets_language_for_matching_user(monkeypatch):
     calls = []
 
@@ -37,7 +31,6 @@ async def test_sets_language_for_matching_user(monkeypatch):
     assert calls == [(111, "RU")]
     assert "Русский" in edits[0]
 
-
 async def test_rejects_tap_from_a_different_user(monkeypatch):
     calls = []
 
@@ -45,13 +38,12 @@ async def test_rejects_tap_from_a_different_user(monkeypatch):
         calls.append((tg_id, lang))
 
     monkeypatch.setattr(auth, "set_language", fake_set)
-    cb, edits = _cb("reglang:111:RU", 999)  # bystander in the group
+    cb, edits = _cb("reglang:111:RU", 999)
 
     await auth.cb_registration_language(cb)
 
     assert calls == []
     assert edits == []
-
 
 async def test_ignores_malformed_language_code(monkeypatch):
     calls = []

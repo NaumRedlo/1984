@@ -4,18 +4,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@500;600;700&family=JetBrains+Mono:wght@400;600&family=Literata:opsz,wght@7..72,400;7..72,600&display=swap">
 
 <style>
-  /*
-   * The bot's own palette, not one invented for this page. Every value in the
-   * dark set is lifted straight from `services/image/colors.py`, which is what
-   * draws the cards people already see in the chat — so the guide and the
-   * thing it describes are the same red on the same warm near-black.
-   *
-   * The light set is derived rather than copied, because the bot has no light
-   * mode to copy: the same warm bias in the neutrals, and the accent darkened
-   * until it passes on white. `#E24848` reads 3.78:1 there, which is under the
-   * line for text; `#C9342F` is 4.95:1. On the dark ground the bot's own value
-   * is 4.87:1 and needs no help.
-   */
+
   :root {
     --ground:  #F7F4F5;
     --surface: #FFFFFF;
@@ -37,8 +26,6 @@
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      /* BG, CARD, PANEL, TEXT_PRIMARY, TEXT_MUTED, ACCENT, DIVIDER,
-         CARD_BORDER — `services/image/colors.py`, verbatim. */
       --ground:  #0E0C10;
       --surface: #171318;
       --sunk:    #1E181E;
@@ -78,8 +65,6 @@
 
   .page { max-width: var(--page); margin: 0 auto; }
 
-  /* ── head ───────────────────────────────────────────────────────── */
-
   .masthead {
     padding: 4.5rem 0 2.5rem;
     border-bottom: 1px solid var(--line);
@@ -114,8 +99,6 @@
     max-width: var(--measure);
     margin: 0;
   }
-
-  /* ── the two tracks ─────────────────────────────────────────────── */
 
   .tracks {
     display: grid;
@@ -160,8 +143,6 @@
     color: var(--accent);
     margin-top: 0.7rem;
   }
-
-  /* ── sections ───────────────────────────────────────────────────── */
 
   section { padding-top: 3.5rem; }
 
@@ -211,8 +192,6 @@
   a { color: var(--accent); text-underline-offset: 2px; }
   a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 
-  /* ── numbered steps: the hit-circle ring ────────────────────────── */
-
   .steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
 
   .step {
@@ -240,7 +219,6 @@
     background: var(--ground);
   }
 
-  /* The trailing rule between steps, stopping short of the ring. */
   .step::after {
     content: "";
     position: absolute;
@@ -255,8 +233,6 @@
 
   .step h3 { margin-top: 0.15rem; margin-bottom: 0.45rem; }
   .step p:last-child, .step > *:last-child { margin-bottom: 0; }
-
-  /* ── code ───────────────────────────────────────────────────────── */
 
   .cmd {
     position: relative;
@@ -299,9 +275,6 @@
   .copy:hover, .copy:focus-visible { color: var(--accent); border-color: var(--accent); }
   .copy:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
 
-  /* No hover on a phone, so the button is always there — and always there
-     means always on top of the first line of the command unless the text is
-     moved out from under it. */
   @media (hover: none) {
     .cmd .copy { opacity: 1; }
     .cmd pre { padding-top: 2.4rem; }
@@ -314,17 +287,11 @@
     border: 1px solid var(--line);
     border-radius: 2px;
     padding: 0.08em 0.34em;
-    /* Wraps at spaces, and breaks inside a word only when the alternative is
-       running off the page. It used to be `nowrap`, which kept short things
-       like `--check` on one line and made a quoted error message a single
-       unbreakable box wider than a phone — the whole page then scrolled
-       sideways to fit one sentence. */
+
     overflow-wrap: anywhere;
   }
 
   .cmd pre code { background: none; border: none; padding: 0; white-space: pre; font-size: 1em; }
-
-  /* ── tables ─────────────────────────────────────────────────────── */
 
   .scroll { overflow-x: auto; margin: 0 0 1.4rem; border: 1px solid var(--line); border-radius: 3px; }
 
@@ -351,8 +318,6 @@
   td:first-child { font-family: var(--display); font-weight: 500; white-space: nowrap; }
   td code { white-space: nowrap; }
   .num { font-variant-numeric: tabular-nums; }
-
-  /* ── notes ──────────────────────────────────────────────────────── */
 
   .note {
     border-left: 2px solid var(--accent);
@@ -432,8 +397,6 @@
       </a></li>
     </ul>
   </header>
-
-  <!-- ══════════════════════════════════════════════════════════════ -->
 
   <section id="render">
     <div class="part">
@@ -646,8 +609,6 @@ link</code></pre></div>
       его, а напишет, где оно лежит.
     </p>
   </section>
-
-  <!-- ══════════════════════════════════════════════════════════════ -->
 
   <section id="worker">
     <div class="part">
@@ -953,8 +914,6 @@ Windows:      %USERPROFILE%\.dossier\worker.log</code></pre></div>
     </p>
   </section>
 
-  <!-- ══════════════════════════════════════════════════════════════ -->
-
   <section id="trouble">
     <div class="part">
       <span class="n">Если что</span>
@@ -1060,9 +1019,7 @@ Windows:      %USERPROFILE%\.dossier\worker.log</code></pre></div>
 </div>
 
 <script>
-  // Copy buttons are added here rather than written into the markup: without
-  // scripting they would be dead controls, and a button that does nothing is
-  // worse than no button.
+
   document.querySelectorAll(".cmd").forEach(function (block) {
     var pre = block.querySelector("pre");
     if (!pre) return;
@@ -1082,9 +1039,7 @@ Windows:      %USERPROFILE%\.dossier\worker.log</code></pre></div>
 
     button.addEventListener("click", function () {
       var text = pre.innerText;
-      // The clipboard is not always ours to write to in an embedded frame, so
-      // the fallback selects the command instead — which leaves the reader one
-      // keystroke away rather than stuck.
+
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(
           function () { say("Скопировано"); },

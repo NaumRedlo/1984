@@ -14,10 +14,8 @@ except ImportError:
 
 logger = get_logger("utils.pp_calculator")
 
-# In-memory cache for .osu file bytes: beatmap_id -> bytes
 _osu_file_cache: Dict[int, bytes] = {}
 _MAX_CACHE = 200
-
 
 async def _download_osu_file(beatmap_id: int) -> Optional[bytes]:
     if beatmap_id in _osu_file_cache:
@@ -33,7 +31,7 @@ async def _download_osu_file(beatmap_id: int) -> Optional[bytes]:
                 data = await resp.read()
                 if len(data) < 50:
                     return None
-                # Evict oldest if cache is full
+
                 if len(_osu_file_cache) >= _MAX_CACHE:
                     oldest = next(iter(_osu_file_cache))
                     del _osu_file_cache[oldest]
@@ -43,14 +41,12 @@ async def _download_osu_file(beatmap_id: int) -> Optional[bytes]:
         logger.debug(f"Error downloading .osu for {beatmap_id}: {e}")
         return None
 
-
 def _parse_mods(mods_str: str) -> int:
     bits = 0
     for i in range(0, len(mods_str), 2):
         mod = mods_str[i:i + 2]
         bits |= MOD_BITS.get(mod, 0)
     return bits
-
 
 def _calc_sync(
     osu_data: bytes,
@@ -67,7 +63,6 @@ def _calc_sync(
     judged = count_300 + count_100 + count_50 + misses
     partial = bool(total_objects) and 0 < judged < total_objects
 
-    # Current play PP
     perf = rosu.Performance(
         mods=mods_int,
         n300=count_300,
@@ -94,7 +89,6 @@ def _calc_sync(
         )
     fc_result = perf_fc.calculate(beatmap)
 
-    # If SS: 100% accuracy, max combo, 0 misses
     perf_ss = rosu.Performance(
         mods=mods_int,
         accuracy=100.0,
@@ -110,7 +104,6 @@ def _calc_sync(
         "max_combo": int(current.difficulty.max_combo or 0),
     }
 
-
 def _strains_sync(osu_data: bytes, mods_int: int, points: int) -> Optional[list]:
     beatmap = rosu.Beatmap(bytes=osu_data)
     diff = rosu.Difficulty(mods=mods_int)
@@ -121,7 +114,7 @@ def _strains_sync(osu_data: bytes, mods_int: int, points: int) -> Optional[list]
     if aim and speed and len(aim) == len(speed):
         series = [a + sp for a, sp in zip(aim, speed)]
     else:
-        # Non-std modes expose other lists; take the first non-empty one.
+
         series = aim or speed or []
         if not series:
             for name in ("movement", "color", "rhythm", "stamina", "strains"):
@@ -146,7 +139,6 @@ def _strains_sync(osu_data: bytes, mods_int: int, points: int) -> Optional[list]
         out.append(round(sum(chunk) / len(chunk), 4))
     return out
 
-
 async def calculate_strains(beatmap_id: int, mods_str: str = "", points: int = 64) -> Optional[list]:
     if rosu is None:
         return None
@@ -158,7 +150,6 @@ async def calculate_strains(beatmap_id: int, mods_str: str = "", points: int = 6
     except Exception as e:
         logger.debug(f"strain calc failed for beatmap {beatmap_id}: {e}")
         return None
-
 
 async def calculate_pp(
     beatmap_id: int,
@@ -198,13 +189,6 @@ async def calculate_pp(
             "max_combo": int(answer["max_combo"]),
         }
 
-    # Said out loud, every time. What follows is `rosu-pp-py`, and the whole
-    # reason the engine's own calculator exists is that this one is behind —
-    # nought point two to nought point eight stars out on the same map and
-    # mods, with the pp that follows from it. Falling back quietly meant the
-    # bot went on answering, with figures that were wrong by an amount nobody
-    # can see without checking them against the game. That is how this was
-    # found: not from a log line, but from somebody noticing the numbers.
     logger.warning(
         "pp: the engine did not answer for beatmap %s — falling back to "
         "rosu-pp-py, whose figures are behind the game's",
@@ -231,9 +215,7 @@ async def calculate_pp(
         logger.warning(f"PP calculation failed for beatmap {beatmap_id}: {e}")
         return None
 
-
 WHATIF_BRACKETS = (95.0, 98.0, 99.0, 100.0)
-
 
 def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
     beatmap = rosu.Beatmap(bytes=osu_data)
@@ -247,7 +229,7 @@ def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
     return {
         "pp": round(result.pp, 2),
         "star_rating": round(result.difficulty.stars, 2),
-        # Map's full max combo, same fallback rationale as _calc_sync's.
+
         "max_combo": int(result.difficulty.max_combo or 0),
         "combo": int(state.max_combo) if state else int(result.difficulty.max_combo or 0),
         "count_300": int(state.n300) if state else 0,
@@ -256,7 +238,6 @@ def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
         "count_miss": int(state.misses) if state else 0,
         "brackets": brackets,
     }
-
 
 async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = "") -> Optional[Dict]:
     if rosu is None:

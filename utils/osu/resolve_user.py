@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models.user import User
 
-
 def get_real_reply(message):
     reply = getattr(message, "reply_to_message", None)
     if reply is None:
@@ -17,14 +16,11 @@ def get_real_reply(message):
         return None
     return reply
 
-
 class OsuUserLookupError(Exception):
     pass
 
-
 class OsuUserNotFoundError(OsuUserLookupError):
     pass
-
 
 async def resolve_osu_user(api_client, query: str) -> Optional[Dict[str, Any]]:
     query = query.strip().lstrip("@").strip()
@@ -41,7 +37,6 @@ async def resolve_osu_user(api_client, query: str) -> Optional[Dict[str, Any]]:
 
     return await api_client.get_user_data(query)
 
-
 async def get_registered_user(
     session: AsyncSession, telegram_id: int, chat_id: int,
 ) -> Optional[User]:
@@ -52,7 +47,6 @@ async def get_registered_user(
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
-
 async def get_any_user_by_telegram_id(
     session: AsyncSession, telegram_id: int, chat_id: int,
 ) -> Optional[User]:
@@ -60,7 +54,6 @@ async def get_any_user_by_telegram_id(
         User.chat_id == chat_id, User.telegram_id == telegram_id,
     )
     return (await session.execute(stmt)).scalar_one_or_none()
-
 
 async def get_identity_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
     stmt = (
@@ -71,7 +64,6 @@ async def get_identity_user(session: AsyncSession, telegram_id: int) -> Optional
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
-
 async def get_registered_identity_user(session: AsyncSession, telegram_id: int) -> Optional[User]:
     stmt = (
         select(User)
@@ -80,7 +72,6 @@ async def get_registered_identity_user(session: AsyncSession, telegram_id: int) 
         .limit(1)
     )
     return (await session.execute(stmt)).scalar_one_or_none()
-
 
 async def get_reply_target_user(
     session: AsyncSession, message, *, registered_only: bool = True,
@@ -93,13 +84,12 @@ async def get_reply_target_user(
     if not rfrom or getattr(rfrom, "is_bot", False):
         return None
     if rfrom.id == message.from_user.id:
-        return None  # replying to yourself behaves like no reply
+        return None
     if chat_id is None:
         chat_id = message.chat.id
     if registered_only:
         return await get_registered_user(session, rfrom.id, chat_id)
     return await get_any_user_by_telegram_id(session, rfrom.id, chat_id)
-
 
 async def get_registered_user_by_osu(
     session: AsyncSession,
@@ -124,7 +114,6 @@ async def get_registered_user_by_osu(
 
     return None
 
-
 async def resolve_registered_user(
     session: AsyncSession,
     api_client,
@@ -142,7 +131,6 @@ async def resolve_registered_user(
         osu_username=user_data.get("username"),
     )
     return user, user_data
-
 
 async def resolve_osu_query_status(
     session: AsyncSession,

@@ -1,4 +1,3 @@
-
 from aiogram import Router, types, F
 from aiogram.types import (
     InlineKeyboardMarkup,
@@ -30,18 +29,10 @@ from bot.utils.safe_edit import safe_edit_media
 router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
 
-# Keyboard
-
 def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages: int = 1,
                              lang: str = "en", mode: str = "absolute") -> InlineKeyboardMarkup:
-    """Category buttons + mode toggle + pagination row.
-
-    Callback shape is ``lb:<key>:<page>:<mode>``. The mode segment is optional on
-    the way IN so buttons from messages sent before this feature still work
-    (missing -> "absolute").
-    """
     keys = list(CATEGORIES.keys())
-    # Layout: rows of 3, last row may have fewer
+
     rows = [keys[i:i + 3] for i in range(0, len(keys), 3)]
     keyboard = []
     for row_keys in rows:
@@ -52,13 +43,10 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
             row.append(InlineKeyboardButton(text=label, callback_data=f"lb:{k}:0:{mode}"))
         keyboard.append(row)
 
-    # Mode toggle — shows what you'd switch TO.
     other = "absolute" if mode == "delta" else "delta"
     keyboard.append([InlineKeyboardButton(
         text=t(f"lb.mode.{other}", lang), callback_data=f"lb:{active_key}:0:{other}")])
 
-    # Pagination — both modes page now. No counter in the middle: the arrows
-    # already say whether there's more, and the card carries the context.
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"lb:{active_key}:{page - 1}:{mode}"))
@@ -69,15 +57,10 @@ def get_leaderboard_keyboard(active_key: str = "pp", page: int = 0, total_pages:
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-
 async def _viewer_user_id(session, telegram_id: int, chat_id: int):
-    """DB id of the person pressing the button — for their pinned row."""
     from utils.osu.resolve_user import get_registered_user
     user = await get_registered_user(session, telegram_id, chat_id)
     return user.id if user else None
-
-
-# Handlers
 
 @router.message(TextTriggerFilter("lb", "top"))
 async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
@@ -100,7 +83,6 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
             logger.error(f"Error in /leaderboard: {e}", exc_info=True)
             await message.answer(t("lb.load_error", lang))
 
-
 @router.message(TextTriggerFilter("lbm"))
 async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None, tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
@@ -111,11 +93,9 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
     map_title = None
     map_version = None
 
-    # 1. From args (ID or URL)
     if user_input:
         beatmap_id = extract_beatmap_id(user_input)
 
-    # 2. From reply context
     if not beatmap_id and message.reply_to_message:
         reply = message.reply_to_message
         context = get_message_context(reply.chat.id, reply.message_id)
@@ -134,7 +114,6 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
 
     await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version,
                                 tenant_chat_id=tenant_chat_id, lang=lang)
-
 
 @router.callback_query(F.data.startswith("lbm:"))
 async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
@@ -157,7 +136,7 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
 
     beatmap_id = int(parts[1])
     page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
-    is_page_nav = len(parts) >= 3  # page navigation vs new lbm from rs card
+    is_page_nav = len(parts) >= 3
 
     await callback.answer()
     if is_page_nav:
@@ -167,13 +146,11 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
         await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0,
                                     tenant_chat_id=tenant_chat_id, lang=lang)
 
-
 def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int,
                         lang: str = "en") -> InlineKeyboardMarkup:
-    """Build inline keyboard for map leaderboard with pagination."""
     beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
     rows = []
-    # Navigation row (only if >1 page)
+
     if total_pages > 1:
         nav = []
         if page > 0:
@@ -185,11 +162,9 @@ def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pa
     rows.append([InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None,
                                 map_version=None, page: int = 0, edit: bool = False, tenant_chat_id=None,
                                 lang: str = "en"):
-    """Shared logic for lbm command and callback."""
     chat_id = tenant_chat_id if tenant_chat_id is not None else message.chat.id
     wait_msg = None
     if not edit:
@@ -210,8 +185,6 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             if map_version:
                 data["map_version"] = map_version
 
-            # Who is looking, so the card can mark their row — and pull it out
-            # beneath the board when this page does not happen to hold it.
             viewer_row = None
             viewer = await get_registered_user(session, message.from_user.id, chat_id) \
                 if message.from_user else None
@@ -220,15 +193,14 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                     (r for r in rows if r.get("username") == viewer.osu_username), None
                 )
             data["viewer"] = viewer_row
-            # The map's own name and difficulty, which the card sets separately
-            # rather than as one "artist - title" line.
+
             title = data.get("map_title") or ""
             artist, _, name = title.partition(" - ")
             data["title"] = name or title
             data["artist"] = artist if name else ""
             data["version"] = data.get("map_version")
             data["footer"] = t("lbm.footer", lang)
-            # Every word the card draws comes from its own table, keyed by this.
+
             data["lang"] = lang
 
             kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang)
@@ -272,7 +244,6 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
             elif wait_msg:
                 await wait_msg.edit_text(err_text)
 
-
 @router.callback_query(F.data.startswith("lb:"))
 async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
     lang = (await get_language(callback.from_user.id)).lower() if callback.from_user else "en"
@@ -282,7 +253,7 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
         return
 
     key, page_str = parts[1], parts[2]
-    # Older messages carry no mode segment — they mean the all-time board.
+
     mode = parts[3] if len(parts) == 4 and parts[3] in ("absolute", "delta") else "absolute"
 
     if key == "noop":
@@ -331,6 +302,5 @@ async def leaderboard_callback(callback: CallbackQuery, osu_api_client=None, ten
             return
 
     await callback.answer()
-
 
 __all__ = ["router"]

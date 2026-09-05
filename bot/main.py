@@ -42,10 +42,9 @@ from db.migrations import run_all_migrations
 from config.settings import RENDER_WORKER_TOKEN
 from dossier import skins
 from services.dossier import shared
-import db.models  # noqa: F401 — ensure all models registered for create_all
+import db.models
 
 logger = get_logger(__name__)
-
 
 class App:
     def __init__(self) -> None:
@@ -72,7 +71,6 @@ class App:
 
         self.osu_api_client = OsuApiClient()
 
-        # Middleware order: startup filter → group restriction → rate limit → last seen → api client
         startup_mw = StartupFilterMiddleware()
         self.dp.message.middleware(startup_mw)
         self.dp.callback_query.middleware(startup_mw)
@@ -81,8 +79,6 @@ class App:
         self.dp.message.middleware(group_mw)
         self.dp.callback_query.middleware(group_mw)
 
-        # Resolve the effective tenant (group→chat.id, DM→user's chosen group)
-        # and inject it as `tenant_chat_id` for data-scoped handlers.
         tenant_mw = TenantMiddleware()
         self.dp.message.middleware(tenant_mw)
         self.dp.callback_query.middleware(tenant_mw)
@@ -107,18 +103,14 @@ class App:
         self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
         self.dp.include_router(leaderboard_router)
-        # Dossier (replay engine) — gated to render testers inside the
-        # router, so for everyone else this is as if it weren't included.
+
         self.dp.include_router(dossier_router)
-        # Auto map-card on pasted beatmap links. After command routers so any
-        # command carrying a link is handled by its own router first.
+
         self.dp.include_router(maplink_router)
-        # Auto score-card on pasted score links — same rationale/placement as
-        # maplink above. No filter overlap: /beatmap*|/b/|/s/ vs /scores/...
+
         self.dp.include_router(scorelink_router)
         self.dp.include_router(pagination_router)
-        # Errors router — must be included LAST so it catches anything that
-        # other handlers raise without swallowing.
+
         self.dp.include_router(errors_router)
 
         logger.info("Checking/creating database tables...")
@@ -128,19 +120,10 @@ class App:
         logger.info("Running database migrations...")
         await run_all_migrations(engine)
 
-        # Which machines may take renders. Read once into memory because a
-        # worker asks this bot something about once a second, and a database
-        # round trip per poll to compare a hash is a round trip spent on
-        # nothing. See `services/render_farm/invites.py`.
         from services.render_farm import invites as farm_invites
 
         await farm_invites.load()
 
-        # Whether the engine answers, asked once and for real. A bot whose
-        # engine is missing does not stop — pp falls back to `rosu-pp-py` and
-        # the cards go on being sent, with figures that are wrong by an amount
-        # nobody can see. This is the line that says so at the top of the
-        # journal instead of leaving it to be noticed.
         from utils.osu import assay as osu_assay
 
         trouble = await osu_assay.working()
@@ -152,17 +135,9 @@ class App:
         else:
             logger.info("pp: the engine answers")
 
-        # Skins stored before the engine could be given their hitsounds are
-        # silent until their `.ogg` files have `.wav` beside them. Swept here
-        # rather than asking people to re-send every skin they ever sent; it
-        # finds nothing on every start after the first.
         logger.info("Checking stored skins for readable samples...")
         await asyncio.to_thread(skins.convert_stored)
 
-        # Said out loud because the alternative is guessing. Collecting other
-        # people's replays is off unless a deployment asked for it, and "did
-        # that variable actually take" is not a question anybody should have to
-        # answer by ticking a box, rendering something and going to look.
         if shared.enabled():
             kept = shared.how_many()
             logger.info(
@@ -174,10 +149,6 @@ class App:
                 "Shared replays: not collecting — SHARED_REPLAY_DIR is unset"
             )
 
-        # The same fingerprint a worker's `--check` prints for the token it is
-        # about to send. Two sides that disagree cannot compare a secret by
-        # pasting it into a chat, and "the token was rejected" says nothing
-        # about which of the two is wrong.
         if RENDER_WORKER_TOKEN:
             import hashlib
 
@@ -223,7 +194,6 @@ class App:
         if self.oauth_server:
             await self.oauth_server.stop()
 
-
         if self.osu_api_client:
             await self.osu_api_client.close()
 
@@ -234,7 +204,6 @@ class App:
         await close_engine()
 
         logger.info("Shutdown completed.")
-
 
 async def main() -> None:
     app = App()
@@ -255,7 +224,6 @@ async def main() -> None:
     finally:
         await app.shutdown()
 
-
 def run() -> None:
     try:
         asyncio.run(main())
@@ -264,7 +232,6 @@ def run() -> None:
     except Exception:
         logger.critical("Unhandled top-level exception.", exc_info=True)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     run()

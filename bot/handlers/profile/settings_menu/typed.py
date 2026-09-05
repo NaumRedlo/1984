@@ -1,18 +1,3 @@
-"""Settings you type rather than pick from a row of buttons.
-
-A row of five percentages is a row of five slivers on a phone, it cannot say
-63, and it grows a button every time somebody wants a value it does not have.
-So the numbers are typed: one row per setting saying what it is now, and a tap
-asks for the new one.
-
-The asking is the careful part. This is a bot that lives in group chats, and a
-handler that reads "the next message from whoever tapped" would eat somebody's
-conversation the moment they tapped and then said something else. So it is
-gated the way `WhatifReplyFilter` is gated — on a real reply to a real prompt
-this module sent, from the person it was sent to — and anything else falls
-through untouched. A prompt nobody answers is a message, not a state.
-"""
-
 from __future__ import annotations
 
 import re
@@ -31,16 +16,7 @@ logger = get_logger(__name__)
 
 router = Router(name="settings_typed")
 
-
 class Field(NamedTuple):
-    """One typed setting: what it is called, and what it will accept.
-
-    `low` and `high` are the same numbers `parse` enforces, said out loud so
-    that something other than a prompt can draw the setting — the mini-app
-    needs them to put a slider under a value. They are set together with the
-    parser by [`_number`] rather than beside it, because a bound stated twice
-    is a bound that will eventually disagree with itself.
-    """
 
     key: str
     label: str
@@ -49,14 +25,7 @@ class Field(NamedTuple):
     low: int | None = None
     high: int | None = None
 
-
 def _whole(low: int, high: int) -> Callable[[str], int | None]:
-    """A whole number in range, from whatever somebody typed.
-
-    `%`, spaces and a stray `fps` are dropped rather than refused: a person
-    answering "how loud" with "80%" has answered it, and a bot that says no to
-    that is being difficult about punctuation.
-    """
 
     def parse(text: str) -> int | None:
         cleaned = re.sub(r"[^0-9-]", "", text or "")
@@ -67,13 +36,7 @@ def _whole(low: int, high: int) -> Callable[[str], int | None]:
 
     return parse
 
-
 def _size(text: str) -> str | None:
-    """`1600x900`, however it was written — `×`, spaces, or a capital X.
-
-    Both sides must be even. Every encoder this feeds wants an even frame, and
-    finding that out at the end of a render is finding it out too late.
-    """
     match = re.match(r"^\s*(\d{3,5})\s*[x×X*]\s*(\d{3,5})\s*$", text or "")
     if not match:
         return None
@@ -84,27 +47,10 @@ def _size(text: str) -> str | None:
         return None
     return f"{width}x{height}"
 
-
-# Every setting somebody types, by the name it has on `Choices`.
 def _number(key: str, label: str, hint: str, low: int, high: int) -> Field:
-    """A whole-number setting whose bounds are stated once, here.
-
-    The parser and the two numbers a slider needs come out of the same call, so
-    they cannot drift — which they would, being one fact written twice.
-    """
     return Field(key, label, hint, _whole(low, high), low, high)
 
-
-# Every setting somebody types, by the name it has on `Choices`.
-#
-# 50 and not 25 on the meter: the engine's floor is `--meter-scale 0.5`, and
-# the bot divides a percentage by a hundred to reach it. Advertising 25 meant
-# promising something the engine refuses — somebody typed 30 and was told
-# "`--meter-scale` runs from 0.5 to 3 — 0.3 is outside it", which is the bot
-# having lied and the engine having caught it.
 FIELDS: dict[str, Field] = {
-    # Not a `_number`: a size is two numbers and a separator, and its bounds
-    # are per side rather than on the value.
     "size": Field("size", "sts.qly.size", "sts.typed.size_hint", _size),
     "fps": _number("fps", "sts.qly.fps", "sts.typed.fps_hint", 15, 240),
     "dim": _number("dim", "sts.qly.dim", "sts.typed.percent_hint", 0, 100),
@@ -118,21 +64,11 @@ FIELDS: dict[str, Field] = {
     "volume": _number("volume", "sts.snd.volume", "sts.typed.volume_hint", 0, 200),
 }
 
-# Which prompt is waiting on which answer: (chat, prompt message) -> (who, what).
-#
-# Held in memory rather than in the row. It is a question in flight, not a
-# preference, and a bot that restarts mid-question should forget it rather than
-# come back still waiting — the prompt it was waiting on is scrolled away by
-# then anyway.
 _ASKED: dict[tuple[int, int], tuple[int, str]] = {}
 
-# Enough that a person can go and look something up, not so many that a chat
-# fills with them.
 _MOST = 64
 
-
 def value_button(choices: renders.Choices, key: str, lang: str):
-    """The one row a typed setting gets: its name, and what it is now."""
     from aiogram.types import InlineKeyboardButton
 
     field = FIELDS[key]
@@ -143,14 +79,12 @@ def value_button(choices: renders.Choices, key: str, lang: str):
         callback_data=f"st:typed:{key}",
     )
 
-
 def _shown(key: str, value) -> str:
     if key == "size":
         return str(value).replace("x", "×")
     if key == "fps":
         return f"{value} fps"
     return f"{value}%"
-
 
 @router.callback_query(F.data.startswith("st:typed:"))
 async def cb_ask(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
@@ -161,26 +95,17 @@ async def cb_ask(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
         return
     prompt = await callback.message.answer(
         t("sts.typed.ask", lang, name=t(field.label, lang), hint=t(field.hint, lang)),
-        # The prompt carries a `<b>` and the rest of this menu is sent as HTML.
-        # Without this it arrived with the tags spelled out at the reader.
+
         parse_mode="HTML",
         reply_markup=ForceReply(selective=True),
     )
     if len(_ASKED) > _MOST:
-        # Oldest first. A question nobody answered is not worth a slot once the
-        # next sixty-four have been asked.
+
         _ASKED.pop(next(iter(_ASKED)))
     _ASKED[(prompt.chat.id, prompt.message_id)] = (callback.from_user.id, key)
     await callback.answer()
 
-
 class AnswerFilter(BaseFilter):
-    """A reply to a prompt this module sent, from the person it was sent to.
-
-    Everything else is somebody talking. Both halves matter: without the reply
-    the handler would read the chat, and without the person a passer-by could
-    answer somebody else's settings.
-    """
 
     async def __call__(self, message: Message) -> bool | dict:
         reply = message.reply_to_message
@@ -194,7 +119,6 @@ class AnswerFilter(BaseFilter):
             return False
         return {"typed_key": key}
 
-
 @router.message(AnswerFilter())
 async def on_answer(
     message: types.Message, typed_key: str, tenant_chat_id=None, lang: str = "en"
@@ -206,9 +130,7 @@ async def on_answer(
         return
 
     choices = await _load(message.from_user.id, tenant_chat_id)
-    # The same guard the buttons pass through. 4K can be reached by hand as
-    # easily as by button, and a rule only one of the two ways obeyed would be a
-    # rule with a way round it — see `render.rationed`.
+
     from dataclasses import replace
 
     from bot.handlers.profile.settings_menu.render import rationed
@@ -222,17 +144,14 @@ async def on_answer(
     _ASKED.pop((message.reply_to_message.chat.id, message.reply_to_message.message_id), None)
     setattr(choices, typed_key, value)
     await _store(message.from_user.id, tenant_chat_id, choices)
-    # The prompt and the answer both go: the screen they belong to is still up
-    # the chat and says the new figure itself, and two messages saying "80" is
-    # two messages nobody needs.
+
     for doomed in (message.reply_to_message, message):
         try:
             await doomed.delete()
-        except Exception:  # noqa: BLE001 — no rights, or already gone
+        except Exception:
             pass
     await message.answer(
         t("sts.typed.set", lang, name=t(field.label, lang), value=_shown(typed_key, value))
     )
-
 
 __all__ = ["router", "FIELDS", "value_button", "AnswerFilter"]

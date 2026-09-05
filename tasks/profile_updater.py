@@ -11,9 +11,7 @@ logger = get_logger("tasks.profile_updater")
 class ProfileUpdater:
     CONCURRENT_WORKERS = 3
     TICK_SECONDS = 300
-    # Ceiling on one tick's stats sweep. At 0.2s per API call (the client's own
-    # rate limit) 150 users take ~30s — comfortably inside a tick, and larger
-    # groups simply roll over into the next one (oldest-first ordering).
+
     SWEEP_BATCH_LIMIT = 150
 
     def __init__(self, api_client):
@@ -40,7 +38,6 @@ class ProfileUpdater:
                     logger.error(f"Error in background task for user_id {user_id}: {e}")
 
     async def get_stale_user_ids(self) -> list[int]:
-        """Users due the expensive pass (best scores + titles)."""
         async with AsyncSessionFactory() as session:
             result = await session.execute(select(User.id, User.last_full_update))
             return [
@@ -49,11 +46,6 @@ class ProfileUpdater:
             ]
 
     async def get_stats_sweep_ids(self) -> list[int]:
-        """Users whose headline stats are stale enough to re-pull.
-
-        Oldest first and capped: the sweep runs every tick, so on a big group
-        this spreads the API load over several ticks instead of spiking.
-        """
         async with AsyncSessionFactory() as session:
             result = await session.execute(
                 select(User.id, User.last_api_update)
@@ -64,7 +56,6 @@ class ProfileUpdater:
         return due[:self.SWEEP_BATCH_LIMIT]
 
     async def _sweep_single_user_task(self, user_id: int):
-        """One cheap stats-only refresh — a single osu! API call."""
         async with self.semaphore:
             async with AsyncSessionFactory() as session:
                 try:
@@ -83,18 +74,13 @@ class ProfileUpdater:
 
         while not shutdown_event.is_set():
             try:
-                # Open a new leaderboard period if the week rolled over. Cheap
-                # no-op once the current period's anchors exist, so it can ride
-                # along on every tick instead of needing its own scheduler.
+
                 try:
                     async with AsyncSessionFactory() as session:
                         await ensure_period_snapshot(session)
                 except Exception as e:
                     logger.warning(f"Leaderboard snapshot capture failed: {e}", exc_info=True)
 
-                # Fast pass: keep the leaderboard's numbers live. One API call
-                # per user (sync_user_stats_from_api covers every ranked
-                # metric), so this is cheap enough to run on every tick.
                 sweep_ids = await self.get_stats_sweep_ids()
                 if sweep_ids:
                     logger.info(f"Stats sweep: refreshing {len(sweep_ids)} profiles...")

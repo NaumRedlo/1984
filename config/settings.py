@@ -5,20 +5,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE_DEFAULT")
-# When set (e.g. http://localhost:8081), route aiogram through a self-hosted
-# telegram-bot-api server running with --local. Raises the upload limit from
-# 50 MB to ~2 GB — required for shipping rendered replay videos. Empty = use
-# the public cloud Bot API.
+
 TELEGRAM_BOT_API_URL = os.getenv("TELEGRAM_BOT_API_URL", "")
 OSU_CLIENT_ID = os.getenv("OSU_CLIENT_ID")
 OSU_CLIENT_SECRET = os.getenv("OSU_CLIENT_SECRET")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-# The DB holds ALL bot data (users, duels, ratings, tokens, bounties), so it's
-# named botdata.db. Legacy fallback: it was historically bounties.db (misleading
-# name). If a deployment hasn't renamed the file or set DATABASE_URL yet, keep
-# reading the old file instead of silently creating an empty botdata.db and
-# "losing" the data.
+
 _default_db = os.path.join(PROJECT_ROOT, "botdata.db")
 _legacy_db = os.path.join(PROJECT_ROOT, "bounties.db")
 if not os.path.exists(_default_db) and os.path.exists(_legacy_db):
@@ -32,75 +25,16 @@ ADMIN_IDS: list[int] = [int(x.strip()) for x in _raw_admin_ids.split(",") if x.s
 _raw_contributor_ids = os.getenv("CONTRIBUTOR_IDS", "")
 CONTRIBUTOR_IDS: list[int] = [int(x.strip()) for x in _raw_contributor_ids.split(",") if x.strip().isdigit()]
 
-# Who may use anything render-related (Dossier, the in-house replay engine).
-# Deliberately NOT ADMIN_IDS: the engine runs a native binary and pulls beatmaps
-# on demand. Empty means nobody — an unfinished renderer should ignore the world
-# by default rather than answer it.
-#
-# `RENDER_TESTER_IDS=*` opens it to everybody, which is the release switch. It
-# is a separate spelling rather than a second variable so there is one place to
-# look for the answer to "who can render", and so turning it back into a list of
-# ids is the same edit in reverse.
 _raw_render_ids = os.getenv("RENDER_TESTER_IDS", "")
 RENDER_OPEN_TO_ALL: bool = _raw_render_ids.strip() == "*"
 RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
 
-# Which Dossier skin the bot renders in. `classic` draws the map's own combo
-# colours over the engine's neutral look — the only one there is, now that the
-# project's house skin has been removed in favour of importing the skins
-# players actually use. See `crates/dossier-render/src/skin.rs` in the
-# engine's own repository, github.com/NaumRedlo/Dossier.
-
-# How hard the encoder works. Once drawing is parallel the encoder becomes the
-# wall, and these are the only knobs that move it: a faster preset trades file
-# size for speed, a higher CRF trades quality for both. Measured on our content
-# at 720p: veryfast/20 costs 7.6ms a frame for 900 KiB per twelve seconds,
-# superfast/23 costs 2.8ms for 1.5 MiB, ultrafast/23 costs 1.5ms for 3.0 MiB.
-
-# The encoder, which the engine also shells out to. Named here because the bot
-# needs it too: a skin's hitsounds arrive as `.ogg` as often as not, and the
-# engine reads WAV alone, so they are converted once on the way into the store.
-
-# How many threads the encoder may take. Empty leaves it to ffmpeg, which sizes
-# its pool at about 1.5 per core knowing nothing about the drawing threads it
-# shares the machine with — so both sides oversubscribe and slow each other
-# down. Measured at 1080p on a two-core box: uncapped gave 51.5ms of drawing
-# per frame against 26.1ms of piping, capping to one gave 19.8ms against 34.9,
-# and two balanced them at 29.3 against 29.1 and was fastest. The rule the
-# render report is for: move this until drawing-per-thread and piping meet.
-
-
-# Renders done on another machine (see services/render_farm). The shared secret
-# a worker authenticates with: empty means the feature is off and its endpoints
-# are never registered, which is the only safe reading of "no password set".
 RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 
-# How long a job sits unclaimed before the person who asked for it is told it
-# is waiting. Short, because it is the wait before *any* word appears and a
-# machine that is awake claims within a poll — so silence past this means
-# nobody is there, and saying so beats a progress bar that never moves.
-#
-# It used to be the moment the bot gave up and rendered the job itself. The bot
-# renders nothing now: the engine runs on the machines people lend, and this
-# host hands out work.
 RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
 
-# How long a job nobody takes stays on offer. Half an hour: long enough that
-# somebody switching a computer on after dinner still gets their video, short
-# enough that a queue does not grow all night for machines that are not coming
-# back — and that whoever asked finds out rather than waiting on a message
-# that will never change.
 RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "1800"))
 
-# The Telegram mini-app — the settings screen and the skin catalogue, served
-# at `/app`. Off as of 2026-09-02: it is being replaced by a desktop
-# application, and a screen that exists only inside one messenger is the wrong
-# home for the thing somebody spends an evening in.
-#
-# A switch rather than a deletion. The replacement is not written yet, the code
-# here works, and the cost of keeping it is one boolean read twice — while the
-# cost of deleting it is having nothing to fall back to if the desktop app
-# takes longer than expected.
 MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "0").strip().lower() not in (
     "",
     "0",
@@ -114,45 +48,9 @@ OSU_OAUTH_SCOPES = "public identify"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
-# Where imported skins are unpacked, one folder each. Outside the repository
-# on purpose: they are other people's work, they are megabytes, and a skin the
-# bot holds is deployment state rather than something to version.
-
-# The largest `.osk` this deployment will take, in megabytes.
-#
-# Configured rather than fixed because the binding constraint is the disk the
-# store sits on, not the skin: an alpha's worth of people each sending a
-# hundred megabytes is the number that matters, and only whoever runs the host
-# knows it. A skin with high-resolution elements and a full hit-sound set
-# really does reach three figures, so the old thirty-two turned away skins
-# people actually use.
-
-# osu!'s own hit sounds, for the step the game takes and the engine cannot take
-# alone: a skin that leaves `soft-hitwhistle` out gets osu!'s file rather than
-# silence or another bank's. Unset by default and harmless when unset.
-#
-# The files are ppy's, so they are not shipped: extract them from a client with
-# `tools/stable.py assets <osu!gameplay.dll> <dir>` in the engine's repository
-# and point this at the result. See its `docs/stable-client.md`.
-
-# Where downloaded beatmap .osz files are stored (utils/osu/beatmap_download.py).
-# Reads the legacy DANSER_SONGS_DIR env var as a fallback so existing deployments
-# keep their current store after the replay renderer was removed.
-
-# Where replays go when their player ticked "send replay data to the developer".
-#
-# Unset means nothing is kept, whatever anybody ticked — a deployment should not
-# accumulate other people's replays because it forgot to say no. What is kept is
-# the `.osr` and the engine's reading of it, which is exactly what the consent
-# text on that toggle says and is all that finding a judging error needs.
 SHARED_REPLAY_DIR = os.getenv("SHARED_REPLAY_DIR", "")
 
-# Everything the render client needs is declared where the client is — in the
-# `dossier` package's own `settings` — so that a worker can take the bridge
-# without taking the bot's settings with it. Re-exported here because the bot
-# has always read them from this module, and one definition cannot disagree
-# with itself.
-from dossier.settings import (  # noqa: E402
+from dossier.settings import (
     BEATMAP_STORE_DIR,
     DOSSIER_BIN,
     DOSSIER_CRF,
@@ -167,7 +65,6 @@ from dossier.settings import (  # noqa: E402
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
-
 
 def validate_settings() -> None:
     missing = []

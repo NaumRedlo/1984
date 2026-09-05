@@ -1,10 +1,3 @@
-"""Render the map-leaderboard (`lbm`) card to /tmp/ with synthetic data so the
-podium-panel corners can be inspected without hitting the osu! API.
-
-Usage:
-    PYTHONPATH=/home/naumredlo/1984 python3 scripts/render_lbm_demo.py
-"""
-
 from __future__ import annotations
 
 from io import BytesIO
@@ -14,21 +7,17 @@ from PIL import Image
 
 from services.image.leaderboard import LeaderboardCardGenerator
 
-
 def _cover_bytes(rgb: tuple[int, int, int]) -> bytes:
-    """A flat-colour 'cover' so the podium panel has a visible background."""
     img = Image.new("RGB", (360, 200), rgb)
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
 
 def _avatar_bytes(rgb: tuple[int, int, int]) -> bytes:
     img = Image.new("RGB", (128, 128), rgb)
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
 
 def main() -> None:
     palette = [
@@ -55,8 +44,7 @@ def main() -> None:
             "mods": mods[i],
             "avatar_data": av,
             "cover_data": _cover_bytes(palette[i]),
-            # The sync renderer reads extended-row avatars from `_avatar_img`
-            # (the async wrapper normally pre-decodes it from avatar_data).
+
             "_avatar_img": Image.open(BytesIO(av)).convert("RGBA"),
         })
 
@@ -80,7 +68,6 @@ def main() -> None:
     out = Path("/tmp/lbm_demo.png")
     out.write_bytes(buf.getvalue())
     print(f"→ {out}")
-
 
 if __name__ == "__main__":
     main()

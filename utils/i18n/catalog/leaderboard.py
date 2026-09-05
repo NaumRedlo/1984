@@ -1,5 +1,4 @@
 CATALOG = {
-    # ── lb / lbm (leaderboard) ───────────────────────────────────────────
     "lb.cat.pp": {"en": "PP/Rank", "ru": "PP/Ранг"},
     "lb.cat.accuracy": {"en": "Accuracy", "ru": "Точность"},
     "lb.cat.play_count": {"en": "Playcount", "ru": "Плейкаунт"},
@@ -7,9 +6,6 @@ CATALOG = {
     "lb.cat.ranked_score": {"en": "R. Score", "ru": "Р. очки"},
     "lb.cat.hits_per_play": {"en": "HPP", "ru": "ХПП"},
 
-    # ── lb: weekly growth ("delta") mode ─────────────────────────────────
-    # Two boards: "general" is the full all-time picture, "adaptive" is the
-    # weekly one that re-ranks by what you've gained this period.
     "lb.mode.delta": {"en": "Adaptive", "ru": "Адаптивный"},
     "lb.mode.absolute": {"en": "General", "ru": "Общий"},
     "lb.delta.title": {"en": "Leaderboard · Adaptive", "ru": "Лидерборд · Адаптивный"},
@@ -17,12 +13,12 @@ CATALOG = {
     "lb.abs.subtitle": {"en": "all-time standings", "ru": "за всё время"},
     "lb.abs.empty": {"en": "no data yet", "ru": "данных пока нет"},
     "lb.delta.period": {"en": "week {week} · {span}", "ru": "неделя {week} · {span}"},
-    # Russian needs three plural forms; English collapses to two.
+
     "lb.delta.participants.one": {"en": "{n} participant", "ru": "{n} участник"},
     "lb.delta.participants.few": {"en": "{n} participants", "ru": "{n} участника"},
     "lb.delta.participants.many": {"en": "{n} participants", "ru": "{n} участников"},
     "lb.delta.total": {"en": "{value} total", "ru": "{value} всего"},
-    # Duration unit suffixes — play time is rendered on both cards.
+
     "lb.unit.h": {"en": "h", "ru": "ч"},
     "lb.unit.m": {"en": "m", "ru": "м"},
     "lb.delta.new": {"en": "NEW", "ru": "NEW"},
@@ -41,7 +37,6 @@ CATALOG = {
         "ru": "идёт сбор данных — первый зачёт {date}",
     },
     "lb.delta.updated": {"en": "updated · {time} MSK", "ru": "обновлено · {time} MSK"},
-
 
     "lb.load_error": {
         "en": "An error occurred while loading the leaderboard.",

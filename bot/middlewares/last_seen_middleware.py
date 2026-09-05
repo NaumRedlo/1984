@@ -16,10 +16,8 @@ from utils.title_progress import detect_comeback, touch_activity_day, unlock_tit
 
 logger = get_logger("middleware.last_seen")
 
-# Update at most once per 5 minutes per (user, group) to avoid DB spam.
 _COOLDOWN_SECONDS = 300
 _last_updated: Dict[tuple[int, int], float] = {}
-
 
 def _event_chat(event) -> object | None:
     if isinstance(event, Message):
@@ -28,9 +26,7 @@ def _event_chat(event) -> object | None:
         return event.message.chat if event.message else None
     return None
 
-
 async def _announce_comeback(event, td) -> None:
-    """Best-effort secret reveal for 'quit w' on the user's first message back."""
     try:
         target = event if isinstance(event, Message) else getattr(event, "message", None)
         if target is None or not event.from_user:
@@ -45,7 +41,6 @@ async def _announce_comeback(event, td) -> None:
     except Exception:
         pass
 
-
 class LastSeenMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable, event: object, data: Dict[str, Any]) -> Any:
         import time
@@ -55,8 +50,7 @@ class LastSeenMiddleware(BaseMiddleware):
 
         user_id = event.from_user.id if event.from_user else None
         chat = _event_chat(event)
-        # last_seen is per-tenant: only group activity counts (it feeds duel
-        # "online" detection). DMs have no group row, so they're skipped.
+
         chat_id = chat.id if chat and chat.type in ("group", "supergroup") else None
 
         if user_id and chat_id is not None:
@@ -72,9 +66,9 @@ class LastSeenMiddleware(BaseMiddleware):
                                 User.telegram_id == user_id, User.chat_id == chat_id)
                         )).scalar_one_or_none()
                         if user is not None:
-                            # Comeback is read BEFORE last_seen_at is bumped.
-                            came_back = detect_comeback(user)   # "quit w" (secret)
-                            touch_activity_day(user)            # "Sleepless Watch" streak
+
+                            came_back = detect_comeback(user)
+                            touch_activity_day(user)
                             user.last_seen_at = utcnow()
                             if came_back and await unlock_title(user, "comeback_180d", session):
                                 comeback_td = TITLE_REGISTRY["comeback_180d"]

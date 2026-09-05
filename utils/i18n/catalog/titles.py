@@ -1,10 +1,4 @@
-"""titles message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
-    # ── tt (titles collection) / st (set title) ──────────────────────────
     "tt.load_error": {
         "en": "An error occurred while loading the title collection.",
         "ru": "Произошла ошибка при загрузке коллекции титулов.",

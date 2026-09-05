@@ -10,16 +10,7 @@ from utils.logger import get_logger
 
 logger = get_logger("middleware.startup_filter")
 
-
 class StartupFilterMiddleware(BaseMiddleware):
-    """Silently drop messages and callback queries that pre-date bot startup.
-
-    Telegram queues updates while the bot is offline.  Even with
-    drop_pending_updates=True in start_polling, there is a small window
-    where stale updates can slip through.  This middleware closes that gap
-    by comparing each event's timestamp against the moment the middleware
-    was instantiated (i.e. when the bot process started).
-    """
 
     def __init__(self) -> None:
         super().__init__()

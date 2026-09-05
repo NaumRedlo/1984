@@ -5,7 +5,6 @@ from db.migrations._utils import existing_columns, table_exists
 
 logger = logging.getLogger(__name__)
 
-
 async def run_bot_settings_migration(engine):
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -16,10 +15,6 @@ async def run_bot_settings_migration(engine):
         """))
         logger.info("Migration: bot_settings table ensured")
 
-        # `bounties` belongs to a feature that was removed; the table survives
-        # only on databases old enough to have had it. On a fresh install it is
-        # absent, so the ALTER below must be skipped — see _utils.table_exists
-        # for why a column check alone isn't enough to catch that.
         if not await table_exists(conn, "bounties"):
             logger.debug("Migration: no bounties table — skipping reminder_sent")
             return

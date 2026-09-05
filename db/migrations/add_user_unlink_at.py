@@ -1,17 +1,10 @@
-"""
-Migration: add last_unlink_at column to users table.
-Safe for SQLite — checks column existence before ALTER TABLE.
-"""
-
 import logging
 
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-
 async def run_user_unlink_at_migration(engine):
-    """Add last_unlink_at to users table. Idempotent."""
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(users)"))
         existing = {row[1] for row in result.fetchall()}

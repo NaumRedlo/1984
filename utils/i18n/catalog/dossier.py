@@ -1,18 +1,4 @@
-"""What the engine says while it reads, judges and renders a replay.
-
-Every line somebody sees between sending an `.osr` and getting a video back.
-It was written in Russian and stayed that way through the whole flow, which is
-the one part of the bot a person cannot avoid — the settings can be left alone
-and a card can be glanced at, but nobody gets a render without reading these.
-
-The engine's own read-outs are a different surface and are not here. Those are
-the four buttons under a finished render, they quote figures rather than
-sentences, and they are read by somebody checking the engine rather than by
-somebody using it.
-"""
-
 CATALOG = {
-    # ── reading the file ─────────────────────────────────────────────────
     "dsr.not_built": {
         "en": "Dossier: no engine installed.\n",
         "ru": "Dossier: движок не установлен.\n",
@@ -54,7 +40,6 @@ CATALOG = {
         "ru": "Судейство не состоялось: {why}",
     },
 
-    # ── a skin somebody sent ─────────────────────────────────────────────
     "dsr.skin_too_big_telegram": {
         "en": "That skin is over {mb} MB — Telegram will not hand us more than "
               "that. It is the cloud Bot API's limit, not ours.",
@@ -77,7 +62,6 @@ CATALOG = {
               "Выбрать его для рендера: <code>sts</code> → Рендер.",
     },
 
-    # ── setting a render going ───────────────────────────────────────────
     "dsr.gone": {
         "en": "That replay is no longer held — send it again.",
         "ru": "Реплей уже не хранится — пришли его заново.",
@@ -121,7 +105,6 @@ CATALOG = {
               "{seconds:.0f} с. Рендерю… это займёт минуты.",
     },
 
-    # ── while it runs, and how it ends ───────────────────────────────────
     "dsr.progress": {
         "en": "Rendering {size}{which}\n"
               "{done}/{total} frames · {fps:.0f}/s · about {left} left",
@@ -136,10 +119,7 @@ CATALOG = {
         "en": "In the queue — {ahead} {word} ahead of this one.",
         "ru": "В очереди — впереди {ahead} {word}.",
     },
-    # Rendering happens on the machines people lend, and sometimes none of them
-    # is switched on. Said out loud rather than left as a progress bar that
-    # never moves: the answer is to come back later, and somebody can only do
-    # that if they are told.
+
     "dsr.nobody_here": {
         "en": "No machine is on the farm right now. The job is waiting — it "
               "will start the moment somebody switches theirs on, and I will "
@@ -179,7 +159,6 @@ CATALOG = {
         "ru": "Отправлено — {mb:.1f} МБ, {width}×{height}, {seconds} с.",
     },
 
-    # ── the cancel button ────────────────────────────────────────────────
     "dsr.cancel": {"en": "✖️ Cancel", "ru": "✖️ Отменить"},
     "dsr.nothing_to_cancel": {
         "en": "Nothing left to cancel.",
@@ -197,13 +176,11 @@ CATALOG = {
         "ru": "(движок ничего не сообщил)",
     },
 
-    # ── the buttons under a card ─────────────────────────────────────────
     "dsr.kb.render": {"en": "🎬 Render", "ru": "🎬 Отрендерить"},
     "dsr.kb.reel": {"en": "✂️ Reel", "ru": "✂️ Экспозитор"},
     "dsr.kb.map": {"en": "🗺 Map", "ru": "🗺 Карта"},
     "dsr.kb.board": {"en": "🏆 Map top", "ru": "🏆 Топ карты"},
 
-    # ── how long is left ─────────────────────────────────────────────────
     "dsr.about_a_minute": {"en": "~1 min", "ru": "~1 мин"},
     "dsr.almost_done": {"en": "~0 min", "ru": "~0 мин"},
     "dsr.seconds": {"en": "{seconds}s", "ru": "{seconds} с"},
@@ -212,12 +189,6 @@ CATALOG = {
         "ru": "{minutes} мин {seconds:02d} с",
     },
 
-    # ── letting a machine onto the farm ──────────────────────────────────
-    #
-    # A code rather than the sixty-four character token everybody used to copy
-    # out of a chat by hand. Nobody handles the long string now, a code that
-    # leaks is worthless in ten minutes, and each machine gets its own — so one
-    # can be taken away without changing anything for the rest.
     "dsr.cltoken.not_yours": {
         "en": "Only an admin can let a machine onto the render farm.",
         "ru": "Пускать машины на рендер-ферму может только админ.",
@@ -249,7 +220,6 @@ CATALOG = {
               "«Начать» и попроси ещё раз. Код — не то, что кладут в общий чат.",
     },
 
-    # ── the farm, as somebody looking at it sees it ──────────────────────
     "dsr.farm.head": {
         "en": "<b>Render farm</b> — {workers} {word}, {waiting} queued",
         "ru": "<b>Ферма рендера</b> — {workers} {word}, в очереди {waiting}",
@@ -264,11 +234,7 @@ CATALOG = {
         "en": "{waiting} in the queue",
         "ru": "в очереди: {waiting}",
     },
-    # ── the words the mini-app puts on screen ────────────────────────────
-    #
-    # All of them, because a page that carries any of its own is a page that
-    # is only in one language — and every one of these was written into the
-    # HTML in Russian, where an English reader would have met it.
+
     "dsr.app.save": {"en": "Save", "ru": "Сохранить"},
     "dsr.app.saved": {"en": "Saved", "ru": "Сохранено"},
     "dsr.app.loading": {"en": "Loading…", "ru": "Загружаю…"},
@@ -280,9 +246,7 @@ CATALOG = {
         "ru": "Рендеров выше 1080p60 сегодня осталось: {left}",
     },
     "dsr.app.threads": {"en": "{threads} {word}", "ru": "{threads} {word}"},
-    # The forms, in each language's own number of them: English has two and
-    # Russian three. Written here rather than picked apart in code, so a
-    # language that wants a fourth gets one by being added to this line.
+
     "dsr.app.thread_word": {
         "en": "thread|threads", "ru": "поток|потока|потоков",
     },
@@ -294,13 +258,11 @@ CATALOG = {
         "en": "This page opens from Telegram.",
         "ru": "Эта страница открывается из Telegram.",
     },
-    # A tab over a grid of many, where the settings row that names one says
-    # "Скин". One word for the row and another for the tab.
+
     "dsr.app.skins_tab": {"en": "Skins", "ru": "Скины"},
     "dsr.farm.tab": {"en": "Farm", "ru": "Ферма"},
     "dsr.farm.settings_tab": {"en": "Settings", "ru": "Настройки"},
-    # Why a machine is not taking work, from the word the worker sent rather
-    # than the sentence — see `machine.Capacity.code`.
+
     "dsr.farm.why.battery": {
         "en": "on battery at {detail}%", "ru": "на батарее, заряд {detail}%",
     },
@@ -326,7 +288,6 @@ CATALOG = {
         "ru": "⚠️ ждёт пересборки — у него {build}, бот рендерит с {ours}",
     },
 
-    # ── why there is no scoreboard ───────────────────────────────────────
     "dsr.board_dm": {
         "en": "No scoreboard: in a private chat the bot does not know whose "
               "chat to compare. Send the replay to a chat, or pick one for DMs.",

@@ -5,7 +5,6 @@ from db.models.user_language import UserLanguage
 
 DEFAULT_LANGUAGE = "EN"
 
-
 async def get_language(telegram_id: int) -> str:
     async with get_db_session() as session:
         row = (await session.execute(
@@ -13,14 +12,12 @@ async def get_language(telegram_id: int) -> str:
         )).scalar_one_or_none()
         return row.language if row else DEFAULT_LANGUAGE
 
-
 async def has_language(telegram_id: int) -> bool:
     async with get_db_session() as session:
         row = (await session.execute(
             select(UserLanguage).where(UserLanguage.telegram_id == telegram_id)
         )).scalar_one_or_none()
         return row is not None
-
 
 async def set_language(telegram_id: int, language: str) -> None:
     lang = language.upper()

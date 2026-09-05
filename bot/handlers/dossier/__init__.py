@@ -1,9 +1,3 @@
-"""Dossier — the in-house replay engine, under test.
-
-The gate sits on the router rather than inside each handler: one place to widen
-when the engine is ready, and no way to add a handler that forgets it.
-"""
-
 from aiogram import Router
 
 from utils.render_access import RenderTesterFilter

@@ -2,12 +2,7 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
 <style>
-  /*
-   * Telegram's own colours, not ours. A mini-app that brings its own palette
-   * looks like a web page somebody embedded; one that reads the client's looks
-   * like part of it — and the client is where the reader chose light or dark.
-   * Fallbacks are for older clients that do not set every variable.
-   */
+
   :root {
     --bg:      var(--tg-theme-secondary-bg-color, #efeff4);
     --card:    var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
@@ -69,8 +64,6 @@
 
   .row.wrong .name b { color: var(--danger); }
 
-  /* ── a switch ────────────────────────────────────────────────────────── */
-
   .toggle {
     flex: 0 0 auto;
     width: 3.15rem;
@@ -100,8 +93,6 @@
   }
 
   .toggle[aria-checked="true"]::after { transform: translateX(1.25rem); }
-
-  /* ── a number ────────────────────────────────────────────────────────── */
 
   .row.number { display: block; padding-bottom: 0.85rem; }
 
@@ -157,8 +148,6 @@
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
   }
 
-  /* ── a size ──────────────────────────────────────────────────────────── */
-
   input[type="text"] {
     flex: 0 0 8.5rem;
     font: inherit;
@@ -173,8 +162,6 @@
 
   input[type="text"]:focus { outline: none; }
 
-  /* ── the rest ────────────────────────────────────────────────────────── */
-
   .note {
     margin: 0.45rem 1.6rem 0;
     font-size: 0.8rem;
@@ -182,14 +169,6 @@
   }
 
   .note.bad { color: var(--danger); }
-
-  /* ── the tabs ────────────────────────────────────────────────────────── */
-  /*
-   * Two peers rather than one screen with the other buried in it. The skins
-   * are still a drill-down from settings, because picking one is something you
-   * come back from; the farm is not that — it is a different thing to look at,
-   * and looking at it should not mean leaving what you were doing.
-   */
 
   .tabs {
     position: sticky;
@@ -201,11 +180,6 @@
     background: var(--bg);
   }
 
-  /*
-   * One track with a moving fill rather than three separate buttons: it reads
-   * as one control with a position, which is what a segmented control is for,
-   * and it stops the bar looking like a row of things to press.
-   */
   .tabs {
     background: var(--bg);
   }
@@ -240,7 +214,6 @@
 
   .tabs button:active { transform: scale(0.97); }
 
-  /* A view arriving should not read as the page jumping. */
   #screen > * { animation: rise 0.18s ease both; }
 
   @keyframes rise {
@@ -251,8 +224,6 @@
   @media (prefers-reduced-motion: reduce) {
     #screen > * { animation: none; }
   }
-
-  /* ── the farm ────────────────────────────────────────────────────────── */
 
   .worker .head { display: flex; align-items: baseline; gap: 0.5rem; }
   .worker .head b { flex: 1; font-weight: 600; overflow-wrap: anywhere; }
@@ -271,8 +242,6 @@
 
   .worker small { display: block; color: var(--hint); font-size: 0.8rem; }
   .worker small.bad { color: var(--danger); }
-
-  /* ── the skin grid ───────────────────────────────────────────────────── */
 
   .grid {
     display: grid;
@@ -364,16 +333,10 @@
   var tg = window.Telegram && window.Telegram.WebApp;
   var screen = document.getElementById("screen");
 
-  // What the server said, and what has been changed since. Two objects rather
-  // than one: the difference between them is exactly what gets sent, so a
-  // slider dragged back to where it started sends nothing.
   var stored = {};
   var changed = {};
   var described = {};
 
-  // Every word this page shows, and none of them written here. They arrive
-  // from the server in the reader's language — a page that carries its own is
-  // a page that is only in one language, and all of these were Russian.
   var words = {};
 
   function word(name, filling) {
@@ -387,9 +350,7 @@
   }
 
   function tap(kind) {
-    // A toggle that does not answer the thumb feels broken on a phone, and the
-    // client already knows how this device buzzes.
-    try { tg.HapticFeedback.impactOccurred(kind || "light"); } catch (e) { /* older client */ }
+    try { tg.HapticFeedback.impactOccurred(kind || "light"); } catch (e) {  }
   }
 
   function value(key) {
@@ -420,8 +381,6 @@
     note.className = "note" + (bad ? " bad" : "");
   }
 
-  // ── asking the server ──────────────────────────────────────────────────
-
   function ask(method, body) {
     return fetch("/app/api/settings", {
       method: method,
@@ -442,8 +401,6 @@
       });
     });
   }
-
-  // ── drawing ────────────────────────────────────────────────────────────
 
   function element(tag, className, text) {
     var made = document.createElement(tag);
@@ -497,10 +454,6 @@
     slider.step = 1;
     slider.setAttribute("aria-label", field.label);
 
-    // `null` is "as it comes" — the engine's own default, which is a real
-    // choice and the one a fresh account has. A slider cannot express it, so
-    // the number sits where the middle of the range is and the label says so
-    // until the reader actually moves it.
     function draw() {
       var now = value(key);
       if (now === null || now === undefined) {
@@ -563,7 +516,7 @@
 
       group.keys.forEach(function (key) {
         var field = described[key];
-        if (!field) return;  // a setting the server no longer describes
+        if (!field) return;
         if (field.kind === "switch") card.appendChild(switchRow(key, field));
         else if (field.kind === "number") card.appendChild(numberRow(key, field));
         else card.appendChild(textRow(key, field));
@@ -573,9 +526,6 @@
       screen.appendChild(block);
     });
 
-    // The way into the grid. Not a setting like the others — a skin is a name
-    // that has to exist in somebody's own store, so it is chosen from a list
-    // the server gave rather than typed into a box.
     var opener = element("section", "group");
     opener.appendChild(element("h2", null, said.skin_heading));
     var card = element("div", "card");
@@ -622,8 +572,6 @@
       if (tg && tg.MainButton) { tg.MainButton.hideProgress(); }
       showSaveButton();
     }).catch(function (wrong) {
-      // The server names the setting it refused, so the reader is pointed at
-      // the row rather than at a sentence about a row.
       var blamed = wrong.keys || (wrong.key ? [wrong.key] : []);
       blamed.forEach(function (key) {
         var row = document.querySelector('.row[data-key="' + key + '"]');
@@ -633,14 +581,6 @@
       if (tg && tg.MainButton) { tg.MainButton.hideProgress(); tg.MainButton.enable(); }
     });
   }
-
-  // ── the skins, as pictures ─────────────────────────────────────────────
-  //
-  // A column of buttons with names on them is the worst possible way to choose
-  // between things whose entire point is how they look. The previews are
-  // served without a signature on purpose: a grid loads them with `<img src>`,
-  // which cannot carry an Authorization header, and what a request can learn
-  // is that this host has a skin by that name.
 
   function skinCard(skin, current) {
     var card = element("button", "skin");
@@ -654,16 +594,13 @@
       picture.loading = "lazy";
       card.appendChild(picture);
     } else {
-      // A skin with no hit circle has nothing to show, and saying so beats a
-      // picture of our own fallbacks pretending to be its.
       card.appendChild(element("span", "nothing", word("no_picture")));
     }
 
     var who = element("span", "who");
     if (skin.name === current) who.appendChild(element("span", "mark", "● "));
     who.appendChild(document.createTextNode(skin.label));
-    // Unpacked by code older than what is running. The store keeps no archive
-    // to redo it from, so the only way back is somebody sending it again.
+
     if (skin.stale) who.appendChild(element("span", "old", " ⚠"));
     card.appendChild(who);
 
@@ -681,8 +618,6 @@
         block.appendChild(element("h2", null, pair[1]));
         var list = said[pair[0]];
         if (!list.length) {
-          // Said rather than left blank: an empty stretch under a heading
-          // reads as something that failed to load.
           block.appendChild(element("p", "note", said.headings.none_yours));
         } else {
           var grid = element("div", "grid");
@@ -715,13 +650,11 @@
       });
     }).then(function () {
       tap("medium");
-      // Redrawn from the server rather than moved locally: the store is the
-      // authority, and a grid outlives the skin it was drawn for.
+
       openSkins();
     }).catch(function (wrong) {
       say(wrong.message, true);
-      // A skin that is gone is gone from the list too, so the list is refetched
-      // rather than left showing it.
+
       ask("GET").then(function () { openSkins(); }).catch(function () {});
     });
   }
@@ -741,13 +674,6 @@
       });
   }
 
-  // ── the farm ───────────────────────────────────────────────────────────
-  //
-  // A different thing to look at rather than a setting: who is out there, what
-  // they are doing, and whether anything is waiting. The numbers are the same
-  // ones a terminal gets from `/render/farm`, in the reader's own language and
-  // without a worker's secret — somebody opening the app is not a worker.
-
   function workerRow(worker, tally) {
     var row = element("div", "row worker");
     row.style.display = "block";
@@ -758,12 +684,8 @@
     head.appendChild(state);
     row.appendChild(head);
 
-    // Why it is not taking work, when that is a thing it said. "The machine is
-    // idle" beside a machine already marked ready is a word for its own sake.
     if (worker.reason) row.appendChild(element("small", null, worker.reason));
-    // Already a phrase, plural and all: "поток", "потока" and "потоков" are
-    // three words for one number, and a page that picks between them is a page
-    // that knows Russian.
+
     if (worker.threads_label) {
       row.appendChild(element("small", null, worker.threads_label));
     }
@@ -771,8 +693,7 @@
       row.appendChild(element("small", null,
         tally.replace("{delivered}", worker.delivered).replace("{back}", worker.handed_back)));
     }
-    // The one thing worth flagging rather than merely showing: a worker
-    // standing by over a build no amount of waiting fixes.
+
     if (worker.stale_build) {
       row.appendChild(element("small", "bad", staleBuildWord));
     }
@@ -819,8 +740,6 @@
       });
   }
 
-  // ── the tabs ───────────────────────────────────────────────────────────
-
   var showing = "settings";
 
   function drawTabs(labels) {
@@ -858,13 +777,8 @@
     }
   }
 
-  // Empty until the first fetch says what they are called, and the bar is
-  // hidden until then — a tab labelled in a language nobody chose is worse
-  // than a moment without tabs.
   var tabLabels = { settings: "", skins: "", farm: "" };
   var staleBuildWord = "";
-
-  // ── going ──────────────────────────────────────────────────────────────
 
   if (tg) {
     tg.ready();
@@ -874,9 +788,7 @@
 
   ask("GET").then(draw).catch(function (wrong) {
     screen.className = "middle";
-    // The one string that cannot come from the server, because not reaching
-    // the server is the case it is for. English: it is read by somebody whose
-    // language nobody has been able to ask.
+
     screen.textContent = tg
       ? "Could not open the settings: " + wrong.message
       : "This page opens from Telegram.";

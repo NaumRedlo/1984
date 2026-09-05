@@ -1,19 +1,9 @@
-"""
-Migration: add OAuth token fields to users table.
-- users.oauth_access_token (VARCHAR)
-- users.oauth_refresh_token (VARCHAR)
-- users.oauth_token_expiry (DATETIME)
-Safe for SQLite — checks before ALTER.
-"""
-
 import logging
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-
 async def run_oauth_migration(engine):
-    """Add OAuth columns to users. Idempotent."""
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(users)"))
         cols = {row[1] for row in result.fetchall()}

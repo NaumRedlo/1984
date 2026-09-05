@@ -21,13 +21,11 @@ from services.oauth.token_manager import get_valid_token
 router = Router(name="compare")
 logger = get_logger("handlers.compare")
 
-
 def _format_number(value) -> str:
     try:
         return f"{int(value):,}"
     except (TypeError, ValueError):
         return "0"
-
 
 def _format_play_time(seconds) -> str:
     if not seconds or int(seconds) <= 0:
@@ -36,7 +34,6 @@ def _format_play_time(seconds) -> str:
     days = s // 86400
     hours = (s % 86400) // 3600
     return f"{days}d {hours}h"
-
 
 def _parse_compare_args(raw_args: str) -> Tuple[Optional[str], Optional[str]]:
     raw_args = (raw_args or "").strip()
@@ -49,7 +46,6 @@ def _parse_compare_args(raw_args: str) -> Tuple[Optional[str], Optional[str]]:
         return left.strip(), right.strip()
 
     return None, raw_args
-
 
 async def _build_subject(session, osu_api_client, query: str, chat_id: int, oauth_token: str = None) -> Tuple[Optional[Dict[str, Any]], str]:
     registered, user_data, status = await resolve_osu_query_status(session, osu_api_client, query, chat_id)
@@ -76,7 +72,6 @@ async def _build_subject(session, osu_api_client, query: str, chat_id: int, oaut
     }
     return subject, status
 
-
 async def _build_self_subject(session, osu_api_client, user, oauth_token: str = None) -> Dict[str, Any]:
     fresh = None
     if user and user.osu_user_id:
@@ -97,8 +92,6 @@ async def _build_self_subject(session, osu_api_client, user, oauth_token: str = 
         "avatar_url": source.get("avatar_url") or user.avatar_url,
         "cover_url": source.get("cover_url") or user.cover_url,
     }
-
-
 
 @router.message(TextTriggerFilter("cmp"))
 async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
@@ -156,7 +149,6 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 await wait_msg.edit_text(t("cmp.same_player", lang))
                 return
 
-            # Count this /compare-on-others toward "Informant" (secret, 50 uses).
             self_user.compare_uses = (self_user.compare_uses or 0) + 1
             informant = None
             if self_user.compare_uses >= 50 and await unlock_title(self_user, "compare_50", session):
@@ -221,7 +213,6 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 logger.warning(f"Compare card generation failed: {img_err}")
                 await wait_msg.edit_text(compare_text, parse_mode="HTML")
 
-            # Secret reveal: announce Informant the moment it unlocks.
             if informant is not None:
                 try:
                     await message.answer(
@@ -237,7 +228,6 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
             logger.error(f"Error in /compare: {e}", exc_info=True)
             await message.answer(t("cmp.error", lang))
 
-
 def _format_diff(value: float, suffix: str = "") -> str:
     if value == 0:
         return "±0" + suffix
@@ -246,6 +236,5 @@ def _format_diff(value: float, suffix: str = "") -> str:
     emoji = "🟢" if value > 0 else "🔴"
 
     return f"{emoji} {symbol}{value:,.2f}{suffix}"
-
 
 __all__ = ["router"]

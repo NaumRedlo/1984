@@ -1,7 +1,3 @@
-"""
-BaseCardRenderer — shared drawing primitives for all card types.
-"""
-
 from io import BytesIO
 from typing import Optional
 
@@ -23,9 +19,7 @@ from services.image.text_render import (
 
 logger = get_logger("services.image_gen")
 
-
 class BaseCardRenderer:
-    """Shared drawing primitives for all card types."""
 
     def __init__(self):
         bold = _find_font(TORUS_BOLD)
@@ -57,11 +51,6 @@ class BaseCardRenderer:
             self.font_stat_value = default
             self.font_stat_label = default
 
-
-        # CJK / Cyrillic / Greek / Hiragana / Katakana fallback. Sized to
-        # match each primary slot so mixed-script strings line up on the
-        # baseline without a visible step. `_draw_text` / `_text_right` /
-        # `_text_center` pick this transparently for unsupported glyphs.
         mp_bold = _find_font(MPLUS_BOLD)
         mp_reg  = _find_font(MPLUS_REG)
         if mp_bold:
@@ -76,17 +65,12 @@ class BaseCardRenderer:
             self.fb_stat_value  = ImageFont.truetype(mp_bold, 26)
             self.fb_stat_label  = ImageFont.truetype(mp_reg or mp_bold, 14)
         else:
-            # No CJK font available — `_font_fallback` returns None and
-            # `draw_text_multifont` degrades to single-font behaviour
-            # (tofu boxes for unsupported codepoints).
+
             self.fb_title = self.fb_big = self.fb_subtitle = None
             self.fb_row = self.fb_grade = self.fb_label = None
             self.fb_small = self.fb_vs = None
             self.fb_stat_value = self.fb_stat_label = None
 
-        # Map every primary font slot to its CJK fallback. `_font_fallback`
-        # uses this when drawing user-supplied text. Keyed by `id(font)`
-        # so the lookup is an identity-cheap dict hit.
         self._fb_map: dict[int, object] = {
             id(self.font_title):       self.fb_title,
             id(self.font_big):         self.fb_big,
@@ -100,11 +84,6 @@ class BaseCardRenderer:
             id(self.font_stat_label):  self.fb_stat_label,
         }
 
-        # Cyrillic-specific fallback (2026-07-02): ProximaSoft, weight-matched
-        # to each primary slot the same way the primary fonts themselves are
-        # built above (bold slots -> Proxima Bold, semi/reg slots -> their
-        # Proxima equivalents). Takes priority over the general CJK fallback
-        # for Cyrillic-block characters — see text_render._pick_font.
         px_bold = _find_font(PROXIMA_BOLD)
         px_semi = _find_font(PROXIMA_SEMI)
         px_reg  = _find_font(PROXIMA_REG)
@@ -139,25 +118,15 @@ class BaseCardRenderer:
         }
 
     def _font_fallback(self, font):
-        """Return the CJK fallback sized to match `font`, or None if missing."""
         return self._fb_map.get(id(font))
 
     def _font_cyrillic_fallback(self, font):
-        """Return the Cyrillic-specific (Proxima) fallback for `font`, or
-        None if missing — checked before the general CJK fallback."""
         return self._fb_cyrillic_map.get(id(font))
-
-    # Canvas
 
     def _create_canvas(self, w: int, h: int):
         img = Image.new("RGB", (w, h), BG_COLOR)
         draw = ImageDraw.Draw(img)
         return img, draw
-
-    # Multi-font text — primary glyph where covered, CJK fallback elsewhere.
-    # All shared text-drawing helpers below route through this; subclass
-    # renders that call `draw.text` directly bypass the fallback and will
-    # tofu on user-supplied non-Latin content.
 
     def _draw_text(
         self,
@@ -170,7 +139,6 @@ class BaseCardRenderer:
         shadow: bool = False,
         shadow_color=(0, 0, 0),
     ) -> int:
-        """`draw.text` with per-character Cyrillic/CJK fallback. Returns end-x."""
         fb = self._font_fallback(font)
         cyfb = self._font_cyrillic_fallback(font)
         return draw_text_multifont(
@@ -179,15 +147,11 @@ class BaseCardRenderer:
         )
 
     def _text_size(self, draw: ImageDraw.Draw, text: str, font) -> tuple[int, int]:
-        """(width, height) with Cyrillic/CJK fallback per glyph."""
         fb = self._font_fallback(font)
         cyfb = self._font_cyrillic_fallback(font)
         return text_size_multifont(draw, text, font, fb, cyrillic_fallback=cyfb)
 
-    # Header
-
     def _draw_header(self, draw: ImageDraw.Draw, title: str, subtitle: str, w: int):
-        """Compact 28px header: title left-aligned in accent red, subtitle right-aligned gray."""
         h = 28
         draw.rectangle([(0, 0), (w, h)], fill=(18, 18, 28))
         title_w, title_h = self._text_size(draw, title, self.font_stat_label)
@@ -197,18 +161,12 @@ class BaseCardRenderer:
             self._draw_text(draw, (w - PADDING_X - sub_w, (h - sub_h) // 2), subtitle, self.font_stat_label, TEXT_SECONDARY)
         draw.line([(0, h - 1), (w, h - 1)], fill=(40, 40, 55), width=1)
 
-    # Footer
-
     def _draw_footer(self, draw: ImageDraw.Draw, img: Image.Image, text: str, y: int, w: int):
         draw.line([(0, y), (w, y)], fill=ACCENT_RED, width=1)
         self._draw_text(draw, (PADDING_X, y + 6), text, self.font_small, TEXT_SECONDARY)
 
-    # Separator
-
     def _draw_separator(self, draw: ImageDraw.Draw, y: int, w: int):
         draw.line([(PADDING_X, y), (w - PADDING_X, y)], fill=ACCENT_RED, width=1)
-
-    # Key-Value row
 
     def _draw_kv_row(
         self, draw: ImageDraw.Draw, y: int,
@@ -226,14 +184,8 @@ class BaseCardRenderer:
         lw, _ = self._text_size(draw, label_str, lf)
         self._draw_text(draw, (x + lw + 8, y), value, vf, vc)
 
-    # Section title
-
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
         self._draw_text(draw, (PADDING_X, y), text, self.font_subtitle, ACCENT_RED)
-
-    # Shadowed text — drops a soft 2-pass shadow behind text. Cheap (two extra
-    # draw.text calls), readable over any cover photo, looks consistent with
-    # the rest of the dark UI.
 
     def _draw_text_shadow(
         self,
@@ -246,33 +198,22 @@ class BaseCardRenderer:
         shadow: bool = True,
         shadow_color=(0, 0, 0),
     ) -> None:
-        """`_draw_text` + drop shadow when `shadow=True`. Two passes (outer
-        +2/+2 and softer +1/+1) for a slight halo without an alpha layer.
-        Routes through multifont so cyrillic / CJK fall back to MPLUS."""
         if shadow:
             x, y = xy
             self._draw_text(draw, (x + 2, y + 2), text, font, shadow_color)
             self._draw_text(draw, (x + 1, y + 1), text, font, shadow_color)
         self._draw_text(draw, xy, text, font, fill)
 
-    # Right-aligned text
-
     def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill, *, shadow: bool = False):
         tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (x_right - tw, y), text, font, fill, shadow=shadow)
-
-    # Center-aligned text
 
     def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill, *, shadow: bool = False):
         tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (cx - tw // 2, y), text, font, fill, shadow=shadow)
 
-    # Panel (rounded rect bg)
-
     def _draw_panel(self, draw: ImageDraw.Draw, x: int, y: int, w: int, h: int, bg=PANEL_BG):
         draw.rounded_rectangle((x, y, x + w, y + h), radius=8, fill=bg)
-
-    # Stat cell (value on top, label below)
 
     def _draw_stat_cell(self, draw: ImageDraw.Draw, cx: int, y: int, value: str, label: str):
         self._text_center(draw, cx, y, value, self.font_stat_value, TEXT_PRIMARY)
@@ -283,11 +224,6 @@ class BaseCardRenderer:
         self._text_center(draw, x + w // 2, y + 2, value, self.font_small, TEXT_PRIMARY)
         self._text_center(draw, x + w // 2, y + h - 12, label, self.font_stat_label, TEXT_SECONDARY)
 
-    # AA outline helpers — supersample at 4× and downscale with LANCZOS so
-    # the curve where a rounded corner meets the straight edge doesn't
-    # show the visible step PIL's `rounded_rectangle(outline=...)` leaves
-    # at small radii (radius<20, width≥2). Same trick as `_draw_mod_badge`.
-    # Used by avatar outlines, podium frames, badge rims.
     _AA_OUTLINE_SS: int = 4
 
     def _aa_rounded_outline(
@@ -300,12 +236,6 @@ class BaseCardRenderer:
         width: int = 2,
         fill=None,
     ) -> None:
-        """Drop-in AA replacement for `draw.rounded_rectangle(outline=...)`.
-
-        Renders at 4× into an RGBA layer, downscales LANCZOS, pastes onto
-        `img`. `fill` is rendered at full size on the supersampled layer
-        so a filled-and-outlined panel comes out with one clean blend.
-        """
         ss = self._AA_OUTLINE_SS
         x0, y0, x1, y1 = box
         w = (x1 - x0) * ss
@@ -320,13 +250,6 @@ class BaseCardRenderer:
         img.paste(layer, (x0, y0), layer)
 
     def _rounded_mask(self, size: tuple[int, int], radius: int) -> Image.Image:
-        """Anti-aliased 'L' alpha mask: a filled rounded rectangle.
-
-        Supersampled 4× then LANCZOS-downscaled so the corners come out
-        smooth.  Pass as the mask arg to ``img.paste(panel, xy, mask)`` to
-        give a pasted (square) panel rounded corners that line up with an
-        ``_aa_rounded_outline`` frame of the same radius.
-        """
         ss = self._AA_OUTLINE_SS
         w, h = size
         big = Image.new("L", (w * ss, h * ss), 0)
@@ -343,7 +266,6 @@ class BaseCardRenderer:
         width: int = 2,
         fill=None,
     ) -> None:
-        """Drop-in AA replacement for `draw.ellipse(outline=...)`."""
         ss = self._AA_OUTLINE_SS
         x0, y0, x1, y1 = box
         w = (x1 - x0) * ss
@@ -358,35 +280,13 @@ class BaseCardRenderer:
         img.paste(layer, (x0, y0), layer)
 
     def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
-        """AA drop-in for a filled `draw.rounded_rectangle` (pills, badges).
-
-        Supersampled so the rounded corners come out smooth at the small radii
-        badges use — where PIL's direct fill leaves a visible step.
-        """
         self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)
 
     def _aa_ellipse_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, fill) -> None:
-        """AA drop-in for a filled `draw.ellipse` (disc badges, slot circles)."""
         self._aa_ellipse_outline(img, box, outline=None, fill=fill)
-
-    # ── Unified graph standard ────────────────────────────────────────────
-    # Every card's line graph (strain, pp/rank history, etc.) goes through
-    # these two: _smooth_points turns N raw samples into a dense Catmull-Rom
-    # curve (no "staircase" between sparse points), _aa_graph_curve draws
-    # that curve supersampled+downscaled (no pixel staircase from PIL's
-    # non-anti-aliased line drawing). Neither one changes the underlying
-    # data — smoothing interpolates the exact same values, AA only affects
-    # how the pixels blend.
 
     @staticmethod
     def _smooth_points(points: list, samples_per_segment: int = 8) -> list:
-        """Catmull-Rom spline through arbitrary (x, y) points, densified for
-        a smooth curve. Standard Catmull-Rom boundary handling — the nearest
-        endpoint stands in for the missing neighbour at each end. `points`
-        must be sorted by x (evenly spaced or not; the spline runs over
-        point INDEX, not x-distance, matching how every current caller
-        already spaces its samples evenly). 2 points → a straight line
-        (nothing to interpolate); 1 point or fewer is returned as-is."""
         n = len(points)
         if n < 3:
             return list(points)
@@ -413,18 +313,10 @@ class BaseCardRenderer:
     def _aa_graph_curve(self, img: Image.Image, x: int, y: int, w: int, h: int,
                         points: list, *, line_color, line_width: int = 3,
                         fill_color=None) -> None:
-        """Anti-aliased polyline (+ optional gradient fill down to the plot
-        box's bottom edge) through `points` (already in `img`'s pixel space,
-        expected to sit within the (x, y, w, h) plot box — pass through
-        `_smooth_points` first for a curve rather than a raw sparse
-        polyline). Supersampled at `_AA_OUTLINE_SS` then LANCZOS-downscaled,
-        same technique as `_aa_rounded_fill`/`_aa_rounded_outline` — the
-        single implementation every card's graph line renders through, so
-        "what a graph looks like" is defined in one place."""
         if len(points) < 2:
             return
         ss = self._AA_OUTLINE_SS
-        pad = line_width + 2  # stroke margin so the join isn't clipped at the layer edge
+        pad = line_width + 2
         lw, lh = int(w + pad * 2), int(h + pad * 2)
         if lw <= 0 or lh <= 0:
             return
@@ -439,29 +331,10 @@ class BaseCardRenderer:
         layer = layer.resize((lw, lh), Image.LANCZOS)
         img.paste(layer, (int(x - pad), int(y - pad)), layer)
 
-    # ── Unified cover-bleed standard ─────────────────────────────────────
-    # A duplicated map/profile cover reading across a whole panel, muted on
-    # the left ramping up to vivid on the right — used by recent.py's hero
-    # (rs and, via the same renderer, the score-link card), map_card.py's
-    # header, and profile.py's hero. Previously each drew its own version
-    # that only faded IN starting partway across (zero-alpha, i.e.
-    # invisible, on the left) instead of covering the full width at a
-    # muted alpha.
-
     def _cover_bleed(self, cover: Image.Image, w: int, h: int, *,
                      min_alpha: int = 50, max_alpha: int = 235,
                      darken_alpha: int = 120, radius: int = 14,
                      corner_mask: Optional[Image.Image] = None) -> Image.Image:
-        """Cover art bled across a (w, h) panel: a flat `darken_alpha` black
-        overlay (keeps text readable even at max_alpha) under a left-to-right
-        linear alpha ramp from `min_alpha` (muted — mostly the panel's own
-        flat colour shows through) to `max_alpha` (vivid). Corner-masked to
-        a simple `radius`-rounded rect by default; pass `corner_mask` (an
-        'L' image the same size as `(w, h)`) instead for anything irregular
-        — e.g. profile.py's hero, which only rounds its TOP corners since
-        it's the top slice of a taller card. Returns an RGBA image ready to
-        paste directly:
-        `bled = self._cover_bleed(cover, w, h); img.paste(bled.convert("RGB"), (x, y), bled)`."""
         from PIL import ImageChops
         bg = cover_center_crop(cover.convert("RGBA"), w, h)
         bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, darken_alpha)))
@@ -475,23 +348,11 @@ class BaseCardRenderer:
         bg.putalpha(ramp)
         return bg
 
-    # Mod badges — circular discs with white glyphs from osu-web SVGs.
-
-    # Render badge at 4x the requested size, then downscale once with
-    # LANCZOS — gives clean anti-aliased disc edges that PIL's ellipse()
-    # can't produce directly at small sizes.
     _MOD_BADGE_SS: int = 4
 
     def _draw_mod_badge(
         self, img: Image.Image, x: int, y: int, mod: str, *, size: int = 24,
     ) -> int:
-        """Draw a single colored disc with the mod's white glyph onto `img`.
-
-        Supersampled (4×) then downscaled so the disc edge is smooth even at
-        small sizes. Returns the x-coordinate just past the badge so callers
-        can chain them. Falls back to the 2-letter code centred in the disc
-        when the glyph PNG is missing from assets/icons/mods.
-        """
         ss = self._MOD_BADGE_SS
         big = size * ss
         col = MOD_COLORS.get(mod, (100, 100, 120))
@@ -499,13 +360,12 @@ class BaseCardRenderer:
         disc = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         dd = ImageDraw.Draw(disc)
         dd.ellipse((0, 0, big - 1, big - 1), fill=col + (255,))
-        # Faint rim — width scaled with supersample factor.
+
         dd.ellipse(
             (0, 0, big - 1, big - 1),
             outline=(0, 0, 0, 80), width=max(1, ss),
         )
 
-        # Pull glyph at the supersampled inner size so it stays crisp.
         glyph_target = int(big * 0.78)
         glyph = load_mod_icon(mod, size=glyph_target) if mod else None
         if glyph is not None:
@@ -530,7 +390,6 @@ class BaseCardRenderer:
         return x + size
 
     def _normalize_mods(self, mods) -> list[str]:
-        """Coerce string / list / list-of-dicts mod inputs into [acronym, …]."""
         if not mods:
             return []
         if isinstance(mods, str):
@@ -545,21 +404,18 @@ class BaseCardRenderer:
             raw = [m for m in raw if m]
         else:
             return []
-        # A token may be several acronyms glued together ("HDDT"); split it by
-        # longest-known-acronym-first so each mod becomes its own badge.
+
         out = []
         for tok in raw:
             out.extend(self._split_mod_token(tok.upper()))
-        # CL (Classic) is auto-added by lazer — drop as visual noise.
+
         return [m for m in out if m != "CL"]
 
     @staticmethod
     def _split_mod_token(tok: str) -> list[str]:
-        """Greedily split a concatenated acronym string into known mods.
-        Unknown remainders are kept as-is so nothing silently vanishes."""
         out, i, n = [], 0, len(tok)
         while i < n:
-            # Try 3-char (SV2) then 2-char acronyms before giving up.
+
             for size in (3, 2):
                 if tok[i:i + size] in MOD_ACRONYMS:
                     out.append(tok[i:i + size])
@@ -574,16 +430,11 @@ class BaseCardRenderer:
         self, img: Image.Image, draw: ImageDraw.Draw, x: int, y: int, mods,
         *, size: int = 24, spacing: int = 4,
     ) -> ImageDraw.Draw:
-        """Draw a left-aligned row of mod badges. `mods` accepts the same
-        shapes as `_normalize_mods`. Returns the draw context unchanged.
-        """
         cur_x = x
         for mod in self._normalize_mods(mods):
             cur_x = self._draw_mod_badge(img, cur_x, y, mod, size=size)
             cur_x += spacing
         return ImageDraw.Draw(img)
-
-    # Save helper
 
     @staticmethod
     def _save(img: Image.Image) -> BytesIO:

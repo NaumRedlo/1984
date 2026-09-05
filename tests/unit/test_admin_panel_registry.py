@@ -9,9 +9,7 @@ _ADMIN_DIR = Path(__file__).resolve().parents[2] / "bot" / "handlers" / "admin"
 _TTF = re.compile(r'TextTriggerFilter\(\s*((?:"[^"]+"\s*,?\s*)+)\)')
 _STR = re.compile(r'"([^"]+)"')
 
-# The panel's own entry trigger — it isn't itself a registry command.
 _PANEL_GROUP = frozenset({"admin", "ap"})
-
 
 def _real_command_groups() -> list[frozenset[str]]:
     groups: list[frozenset[str]] = []
@@ -22,32 +20,27 @@ def _real_command_groups() -> list[frozenset[str]]:
                 groups.append(frozenset(triggers))
     return groups
 
-
 def test_every_registry_trigger_is_real():
     real = set().union(*_real_command_groups())
     for cmd in all_commands():
         assert cmd.trigger in real, f"{cmd.trigger!r} is not a real admin command"
 
-
 def test_every_command_is_covered_by_panel():
     registry = {c.trigger for c in all_commands()}
     for group in _real_command_groups():
         if group == _PANEL_GROUP:
-            continue  # the panel entry itself
+            continue
         assert group & registry, f"command {sorted(group)} is missing from the panel"
-
 
 def test_no_duplicate_triggers():
     triggers = [c.trigger for c in all_commands()]
     assert len(triggers) == len(set(triggers)), "duplicate trigger in registry"
-
 
 def test_categories_non_empty_and_unique_keys():
     keys = [c.key for c in CATEGORIES]
     assert len(keys) == len(set(keys)), "duplicate category key"
     for cat in CATEGORIES:
         assert cat.commands, f"category {cat.key!r} is empty"
-
 
 def test_callback_data_within_limit():
     for cat in CATEGORIES:
@@ -56,14 +49,12 @@ def test_callback_data_within_limit():
             assert len(f"ap:m:{cmd.trigger}".encode()) <= 64
             assert len(f"ap:r:{cmd.trigger}".encode()) <= 64
 
-
 def test_executor_commands_are_safe():
     for cmd in all_commands():
         if cmd.executor is not None:
             assert callable(cmd.executor)
             assert cmd.args is None, f"{cmd.trigger}: executor command must take no args"
             assert cmd.destructive is False, f"{cmd.trigger}: executor must not be destructive"
-
 
 def test_find_helpers():
     assert find_command("whereami") is not None

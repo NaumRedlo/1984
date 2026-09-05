@@ -1,40 +1,3 @@
-"""Fill the corpus's blind spot from ppy's own calculator.
-
-`pp_corpus.py` builds the corpus from the attributes endpoint, which answers
-with nine numbers. The formula needs four more that it never returns:
-
-    aim_top_weighted_slider_factor    speed_top_weighted_slider_factor
-    reading_difficulty                reading_difficult_note_count
-
-`reading_difficulty` is the one that stings — the reading skill is why Hidden
-moves the star rating now, and the endpoint serves ratings computed with it
-while keeping its attributes to itself.
-
-osu-tools is ppy's own command-line wrapper around the same calculators, and it
-prints all sixteen. It is MIT, like `ppy/osu` itself, so this is a licence
-question with a boring answer.
-
-Nothing is borrowed but the numbers. This runs once, by hand, on a machine with
-.NET; what lands in the repository is JSON. The server never learns that .NET
-exists.
-
-    brew install dotnet
-    git clone --depth 1 --recurse-submodules https://github.com/ppy/osu-tools
-    cd osu-tools && dotnet build PerformanceCalculator -c Release
-    python scripts/pp_corpus_tools.py --dll <path-to>/PerformanceCalculator.dll
-
-The build targets net8.0 and homebrew ships .NET 10, so this sets
-`DOTNET_ROLL_FORWARD=Major` rather than asking for a second runtime.
-
-# Whether the two sources agree
-
-They must, and this checks rather than assumes: the endpoint and osu-tools share
-nine fields, and every one is compared before anything is merged. A disagreement
-would mean the tool is built against a different version of the calculator than
-the one the site is serving, which would make its four extra fields worse than
-useless — they would be right about a formula nobody is running.
-"""
-
 import argparse
 import json
 import os
@@ -44,64 +7,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.pp_corpus import MOD_SETS  # noqa: E402  — the same sets, by construction
+from scripts.pp_corpus import MOD_SETS
 
-# What osu-tools knows and the endpoint does not.
 EXTRA_FIELDS = (
     "aim_top_weighted_slider_factor",
     "speed_top_weighted_slider_factor",
     "reading_difficulty",
     "reading_difficult_note_count",
-    # Only present when Flashlight is on, which is why it is merged rather than
-    # expected: the endpoint never returns it and the tool only reports it where
-    # it means anything.
+
     "flashlight_difficulty",
-    # Not difficulty attributes at all, but the performance side needs them and
-    # nothing else offers them: the legacy score simulator is built on these.
+
     "nested_score_per_object",
     "legacy_score_base_multiplier",
     "maximum_legacy_combo_score",
 )
 
-# How closely the two sources have to agree on what they both report, as a
-# fraction of the value rather than as an absolute.
-#
-# Relative because the endpoint answers in single precision and osu-tools in
-# double, which is visible the moment you look: it reports a speed note count of
-# `1708.3800048828125` and a strain count of `147.58599853515625`, and those are
-# the float32 nearest to 1708.38 and 147.586. Comparing absolutely called that a
-# disagreement on every field in the hundreds.
-#
-# A hundred-thousandth admits that rounding — the worst pair in the corpus
-# differs by two parts in a million — while still catching what this is for. A
-# tool built against a different version of the calculator disagrees in the
-# second or third figure, not the seventh.
 TOLERANCE = 1e-5
 
-
-
 def corpus_dir() -> Path:
-    """Where the pp corpus lives, which is no longer in this repository.
-
-    It went with the engine to `github.com/NaumRedlo/Dossier`, and these
-    scripts write into a checkout of it. `$DOSSIER_REPO` names that checkout;
-    without it a sibling of this one is assumed, which is where it usually is.
-    The old default — `dossier/crates/...` — is a path this repository has not
-    had since the split, and pointed the corpus at a folder that would simply
-    be created, empty, beside the bot.
-    """
     root = os.getenv("DOSSIER_REPO") or str(Path(__file__).resolve().parents[2] / "Dossier")
     return Path(root) / "crates" / "dossier-assay" / "corpus"
 
-
 def run(dll: Path, maps: Path, mods: tuple[str, ...]) -> dict[int, dict]:
-    """Every map in `maps`, under `mods`, as beatmap id to attributes."""
     args = ["dotnet", str(dll), "difficulty", str(maps), "-j"]
     for mod in mods:
         args += ["-m", mod.lower()]
     env = dict(os.environ)
     env.setdefault("DOTNET_ROOT", "/opt/homebrew/opt/dotnet/libexec")
-    # The tool targets net8.0; roll forward rather than install a second runtime.
+
     env.setdefault("DOTNET_ROLL_FORWARD", "Major")
 
     done = subprocess.run(args, capture_output=True, text=True, env=env, check=False)
@@ -114,7 +47,6 @@ def run(dll: Path, maps: Path, mods: tuple[str, ...]) -> dict[int, dict]:
         result["beatmap_id"]: result["attributes"]
         for result in payload.get("results") or []
     }
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -140,12 +72,11 @@ def main() -> None:
                 continue
             theirs = entry["attributes"].get(key)
             if theirs is None:
-                # The endpoint refused this pair; take the tool's word whole.
+
                 entry["attributes"][key] = attributes
                 added += 1
                 continue
 
-            # Both sources, on every field they share.
             for field, value in attributes.items():
                 if field not in theirs:
                     continue
@@ -177,7 +108,6 @@ def main() -> None:
     )
     expected_path.write_text(json.dumps(corpus, indent=2, ensure_ascii=False) + "\n")
     print(f"\nдописано {added} полей, два источника сошлись на всех общих")
-
 
 if __name__ == "__main__":
     main()

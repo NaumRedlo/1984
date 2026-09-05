@@ -1,6 +1,4 @@
-
 from utils.osu.helpers import extract_beatmap_id, remember_message_context, get_message_context
-
 
 class TestExtractBeatmapId:
     def test_plain_number(self):
@@ -25,7 +23,6 @@ class TestExtractBeatmapId:
 
     def test_url_with_whitespace(self):
         assert extract_beatmap_id("  12345  ") == "12345"
-
 
 class TestMessageContext:
     def test_remember_and_get(self):

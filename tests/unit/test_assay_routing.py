@@ -6,7 +6,6 @@ import pytest
 
 from utils.osu import assay, pp_calculator
 
-
 class _Engine:
     def __init__(self, answer=None, returncode=0):
         self.answer = answer if answer is not None else {
@@ -33,7 +32,6 @@ class _Engine:
             return None
         return self.args[self.args.index(name) + 1]
 
-
 @pytest.fixture
 def map_on_disk(tmp_path, monkeypatch):
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
@@ -41,10 +39,8 @@ def map_on_disk(tmp_path, monkeypatch):
     path.write_bytes(b"osu file format v14\n\n[HitObjects]\n" + b"x" * 100)
     return path
 
-
 async def _download(_beatmap_id):
     return b"osu file format v14\n\n[HitObjects]\n" + b"x" * 100
-
 
 async def test_a_map_is_downloaded_once_and_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
@@ -59,12 +55,10 @@ async def test_a_map_is_downloaded_once_and_kept(tmp_path, monkeypatch):
     assert first == second and first.is_file()
     assert calls == [1494828], "the map was fetched twice"
 
-
 async def test_a_half_written_map_is_never_read(tmp_path, monkeypatch):
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
     await assay.beatmap_file(1494828, _download)
     assert not list(tmp_path.glob("*.part")), "a scratch file was left behind"
-
 
 async def test_the_engine_is_asked_before_the_port(map_on_disk):
     engine = _Engine()
@@ -74,10 +68,9 @@ async def test_the_engine_is_asked_before_the_port(map_on_disk):
             combo=2000, misses=1, count_300=1641, count_100=62, count_50=0,
         )
     assert out["pp_current"] == 353.18
-    # And the two hypotheticals are the engine's own, not scaled from anything.
+
     assert out["pp_if_fc"] == 388.74
     assert out["pp_if_ss"] == 460.34
-
 
 async def test_every_judgement_count_reaches_the_engine_including_the_zeroes(map_on_disk):
     engine = _Engine()
@@ -90,7 +83,6 @@ async def test_every_judgement_count_reaches_the_engine_including_the_zeroes(map
     assert engine.flag("--n100") == "62"
     assert engine.flag("--n50") == "0", "a zero count was dropped"
 
-
 async def test_the_accuracy_is_always_handed_over(map_on_disk):
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
@@ -99,7 +91,6 @@ async def test_the_accuracy_is_always_handed_over(map_on_disk):
             combo=2362, misses=0, count_300=1700, count_100=4, count_50=0,
         )
     assert engine.flag("--accuracy") == "99.31"
-
 
 async def test_a_deployment_without_the_engine_still_answers(map_on_disk, monkeypatch):
     async def missing(*_args, **_kwargs):
@@ -117,7 +108,6 @@ async def test_a_deployment_without_the_engine_still_answers(map_on_disk, monkey
     assert out is None
     assert reached_the_port, "the port was never reached"
 
-
 async def test_a_stable_score_is_read_as_one(map_on_disk):
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
@@ -129,7 +119,6 @@ async def test_a_stable_score_is_read_as_one(map_on_disk):
     assert "--classic" in engine.args
     assert engine.flag("--legacy-total") == "35158760"
 
-
 async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
@@ -139,7 +128,6 @@ async def test_a_lazer_score_is_not_told_it_is_classic(map_on_disk):
         )
     assert "--classic" not in engine.args
     assert engine.flag("--legacy-total") is None
-
 
 async def test_what_a_lazer_score_knows_about_itself_reaches_the_engine(map_on_disk):
     engine = _Engine()
@@ -151,7 +139,6 @@ async def test_what_a_lazer_score_knows_about_itself_reaches_the_engine(map_on_d
         )
     assert engine.flag("--slider-ends") == "398"
 
-
 async def test_a_classic_score_sends_no_slider_statistics(map_on_disk):
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
@@ -162,15 +149,7 @@ async def test_a_classic_score_sends_no_slider_statistics(map_on_disk):
         )
     assert engine.flag("--slider-ends") is None
 
-
-# ── when the engine is not there ─────────────────────────────────────────
-
-
 async def test_falling_back_to_the_port_is_said_out_loud(map_on_disk, caplog):
-    """The bug this is here to stop: with no engine the bot went on answering,
-    from `rosu-pp-py`, whose figures are the ones the engine's own calculator
-    was written to replace. Nothing said so. It was found by somebody noticing
-    that the pp looked wrong, which is the worst way to find it."""
     import logging
 
     async def missing(*_args, **_kwargs):
@@ -182,9 +161,7 @@ async def test_falling_back_to_the_port_is_said_out_loud(map_on_disk, caplog):
     assert "rosu-pp-py" in caplog.text, "the fallback was silent"
     assert "1494828" in caplog.text, "it did not say which map"
 
-
 async def test_the_engine_answering_says_nothing_about_a_fallback(map_on_disk, caplog):
-    """The other half: a warning on every card would be noise nobody reads."""
     import logging
 
     engine = _Engine()
@@ -192,16 +169,11 @@ async def test_the_engine_answering_says_nothing_about_a_fallback(map_on_disk, c
         await pp_calculator.calculate_pp(beatmap_id=1494828, mods_str="", accuracy=99.0)
     assert "rosu-pp-py" not in caplog.text
 
-
 async def test_the_startup_check_runs_a_real_map_through_the_engine():
-    """`is_available` asks whether a file is there and executable, which a
-    release built for another architecture also is. This asks the engine for an
-    answer and reads it."""
     engine = _Engine()
     with patch("asyncio.create_subprocess_exec", engine):
         assert await assay.working() == ""
     assert engine.flag("--map").endswith("tiny.osu")
-
 
 async def test_the_startup_check_names_the_trouble_rather_than_hiding_it():
     async def missing(*_args, **_kwargs):
@@ -211,10 +183,7 @@ async def test_the_startup_check_names_the_trouble_rather_than_hiding_it():
         said = await assay.working()
     assert said and "не ответил" in said
 
-
 async def test_an_engine_that_answers_nonsense_is_not_a_working_engine():
-    """A binary that runs and prints JSON without the figures in it is broken
-    in a way that `is_available` and a return code of nought both miss."""
     engine = _Engine(answer={"note": "hello"})
     with patch("asyncio.create_subprocess_exec", engine):
         assert await assay.working() != ""

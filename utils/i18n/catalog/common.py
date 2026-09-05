@@ -1,5 +1,4 @@
 CATALOG = {
-    # ── common (shared across handlers) ──────────────────────────────────
     "common.api_not_ready": {
         "en": "Error: API client is not initialised.",
         "ru": "Ошибка: API-клиент не инициализирован.",
@@ -21,7 +20,6 @@ CATALOG = {
         "ru": "<b>{user}</b> — новый титул: {title} ({rarity})!",
     },
 
-    # format_error / format_success prefixes
     "common.error_prefix": {"en": "Error! ", "ru": "Ошибка! "},
     "common.success_prefix": {"en": "Success! ", "ru": "Успешно! "},
     "common.duration_dh": {"en": "{days}d {hours}h", "ru": "{days}д {hours}ч"},
@@ -41,7 +39,6 @@ CATALOG = {
         "ru": "Что-то пошло не так. Попробуй ещё раз.",
     },
 
-    # shared inline-button labels
     "common.kb.leaderboard": {"en": "Leaderboard", "ru": "Лидерборд карты"},
     "common.kb.beatmap": {"en": "Beatmap", "ru": "Карта"},
 }

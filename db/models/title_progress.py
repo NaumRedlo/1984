@@ -1,7 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, UniqueConstraint
 from db.database import Base
 
-
 class UserTitleProgress(Base):
     __tablename__ = 'user_title_progress'
 

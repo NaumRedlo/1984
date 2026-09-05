@@ -14,4 +14,3 @@ class ApiClientMiddleware(BaseMiddleware):
     ) -> Any:
         data["osu_api_client"] = self.api_client
         return await handler(event, data)
-

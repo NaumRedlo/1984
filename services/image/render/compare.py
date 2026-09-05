@@ -20,7 +20,6 @@ from services.image.utils import (
     rounded_rect_crop,
 )
 
-
 class CompareCardMixin:
     def generate_compare_card(
         self,
@@ -156,4 +155,3 @@ class CompareCardMixin:
         )
         imgs = [r if not isinstance(r, Exception) else None for r in results]
         return await asyncio.to_thread(self.generate_compare_card, data, imgs[0], imgs[1], imgs[2], imgs[3])
-

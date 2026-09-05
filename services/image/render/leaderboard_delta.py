@@ -1,12 +1,3 @@
-"""Leaderboard card — shared by the all-time and weekly-growth modes.
-
-One screen: header with the period, the ranked rows, then the viewer's own row
-pinned below a divider when they're outside the visible top. Each row is wrapped
-in a frame whose colour encodes the place — gold/silver/bronze for the podium,
-the bot's coral accent for "this is you" (which wins over a medal when both
-apply). Avatars carry a softly-glowing red ring.
-"""
-
 from io import BytesIO
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -22,18 +13,16 @@ _ROW_H = 62
 _ROW_GAP = 6
 _AVATAR = 38
 _RADIUS = 12
-_SELF = colors.ACCENT           # coral — "this is you"
+_SELF = colors.ACCENT
 _ROW_BG = (27, 25, 34)
-_RING = (226, 72, 72)           # avatar ring + its glow
-_MV_COL_W = 58                  # movement column, centred within
-_POS_COL_X = 12                 # place column: offset from the row's left edge
-_POS_COL_W = 34                 # ...and its width, so 1 and 14 share a centre
-_DOWN = (208, 112, 112)         # dropped places — muted red, not alarm red
-# Row cover: opaque down the middle, faded at both edges so the number columns
-# on either side stay legible.
+_RING = (226, 72, 72)
+_MV_COL_W = 58
+_POS_COL_X = 12
+_POS_COL_W = 34
+_DOWN = (208, 112, 112)
+
 _COVER_MID = 210
 _COVER_EDGE = 26
-
 
 class LeaderboardDeltaRenderer(BaseCardRenderer):
     def _circle(self, src: Image.Image, size: int) -> Image.Image:
@@ -45,7 +34,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         return sq.resize((size, size), Image.LANCZOS)
 
     def _avatar_glow(self, img: Image.Image, boxes: list[tuple[int, int, int]]) -> Image.Image:
-        """Blurred red halo behind every avatar, drawn in one pass."""
         if not boxes:
             return img
         glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -72,25 +60,16 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             tw, th = self._text_size(d, initials, self.font_small)
             self._draw_text(d, (x + (size - tw) // 2, y + (size - th) // 2 - 1),
                             initials, self.font_small, colors.TEXT_MUTED)
-        # Crisp ring on top of the (already composited) glow.
+
         self._aa_ellipse_outline(img, (x - 1, y - 1, x + size + 1, y + size + 1),
                                  outline=_RING, width=2)
 
     def _frame_color(self, position, is_self: bool):
-        """Own row wins over a medal — you should always be able to find yourself."""
         if is_self:
             return _SELF
         return TOP_COLORS.get(position)
 
     def _text_centered(self, img, cx: int, cy: int, text: str, font, fill) -> None:
-        """Draw `text` centred on (cx, cy).
-
-        Width comes from the multifont measurement, not a raw textbbox:
-        `_draw_text` swaps in a Cyrillic face per glyph, so measuring Russian
-        text against the primary font alone reports the wrong width and the
-        "centre" drifts. Vertical placement uses the ink box — Torus sits low
-        in the em box, so centring on the nominal height leaves text high.
-        """
         d = ImageDraw.Draw(img)
         tw, _ = self._text_size(d, text, font)
         bb = d.textbbox((0, 0), text, font=font)
@@ -98,13 +77,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         self._draw_text(d, (int(round(cx - tw / 2)), int(round(y))), text, font, fill)
 
     def _row_cover(self, cover_data, w: int, h: int):
-        """The player's profile cover as a row background.
-
-        Brightest down the middle and fading out toward both edges, so the
-        artwork reads without fighting the number columns that sit at either
-        end. Returns an RGBA ready to paste through the row's rounded mask, or
-        None when there's no usable cover.
-        """
         if not cover_data:
             return None
         try:
@@ -112,20 +84,19 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             bg = cover_center_crop(cover.convert("RGBA"), w, h)
         except Exception:
             return None
-        # Darken first so light covers can't wash out the text on top.
+
         bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 150)))
 
         ramp = Image.new("L", (w, h), 0)
         rd = ImageDraw.Draw(ramp)
         half = max(1, w / 2)
         for x in range(w):
-            t = abs(x - w / 2) / half          # 0 dead centre, 1 at the edges
+            t = abs(x - w / 2) / half
             rd.line([(x, 0), (x, h)], fill=int(_COVER_MID - (_COVER_MID - _COVER_EDGE) * t))
         bg.putalpha(ramp)
         return bg
 
     def _tint(self, icon: Image.Image, color: tuple) -> Image.Image:
-        """Recolour a white-on-transparent glyph, keeping its alpha."""
         solid = Image.new("RGBA", icon.size, (*color, 255))
         solid.putalpha(icon.convert("RGBA").split()[-1])
         return solid
@@ -135,7 +106,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         return self._tint(icon, color) if icon else None
 
     def _movement_pill(self, img, cx: int, cy: int, label: str) -> None:
-        """`NEW` as a green pill, with the word centred inside it."""
         d = ImageDraw.Draw(img)
         tw, th = self._text_size(d, label, self.font_small)
         w, h = tw + 20, th + 8
@@ -145,7 +115,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
 
     def _draw_row(self, img, y: int, row: dict, fmt: dict, *, show_movement: bool,
                   value_color) -> tuple[int, int, int]:
-        """Draw one row; returns the avatar box so the caller can glow it."""
         is_self = bool(row.get("is_self"))
         pos = row.get("position")
         frame = self._frame_color(pos, is_self)
@@ -164,8 +133,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
         cy = y + _ROW_H // 2
 
-        # Place number: centred in its own column both ways, so it sits square
-        # on the avatar's axis whether it's "1" or "14".
         pos_txt = str(pos) if pos else "—"
         self._text_centered(img, x0 + _POS_COL_X + _POS_COL_W // 2, cy,
                             pos_txt, self.font_row, frame or colors.TEXT_MUTED)
@@ -175,8 +142,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         self._avatar(img, av_x, av_y, _AVATAR, row.get("avatar_data"), row.get("username", ""))
         draw = ImageDraw.Draw(img)
 
-        # Name + optional subtitle. With no subtitle the name centres on the
-        # avatar's axis instead of sitting high with empty space under it.
         name_x = av_x + _AVATAR + 14
         name = str(row.get("username") or "???")
         subtitle = row.get("title_label") or ""
@@ -191,15 +156,12 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             self._draw_text(draw, (name_x, cy - nh // 2 - 2), name, self.font_label,
                             colors.TEXT_PRIMARY)
 
-        # Movement column (far right) — omitted entirely in all-time mode.
         val_right = x1 - 20
         if show_movement:
             mv_cx = x1 - 20 - _MV_COL_W // 2
             mv = row.get("movement")
             if pos is None:
-                # Not in this period's standings at all — there's no "moved
-                # from A to B" to state, and NEW would be a lie for someone
-                # who's been around. Leave the column empty.
+
                 pass
             elif mv is None:
                 self._movement_pill(img, mv_cx, cy, fmt.get("new", "NEW"))
@@ -208,8 +170,7 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
                 self._text_centered(img, mv_cx, cy, "—", self.font_small, colors.TEXT_MUTED)
                 draw = ImageDraw.Draw(img)
             else:
-                # Project arrow glyphs rather than ▲/▼ text — they match the
-                # rest of the cards and don't depend on the font's coverage.
+
                 col = colors.POSITIVE if mv > 0 else _DOWN
                 arrow = self._arrow("arrowup" if mv > 0 else "arrowdown", col)
                 label = str(abs(mv))
@@ -224,7 +185,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
                 draw = ImageDraw.Draw(img)
             val_right = x1 - 20 - _MV_COL_W - 12
 
-        # Main value + the smaller secondary line under it.
         main = row.get("value_label", "")
         dw, dh = self._text_size(draw, main, self.font_label)
         sub = row.get("sub_label", "")
@@ -245,8 +205,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         value_color = colors.POSITIVE if data.get("value_positive", True) else colors.TEXT_PRIMARY
         empty_label = data.get("empty_label", "")
 
-        # Pin the viewer's row only when it isn't already visible above; when it
-        # is, just mark it so it picks up the coral frame.
         pinned = None
         if self_row:
             match = next((r for r in rows if r.get("user_id") == self_row.get("user_id")), None)
@@ -255,8 +213,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             else:
                 pinned = self_row
 
-        # A viewer who hasn't played at all this period gets a plain line
-        # instead of a "+0" row — there's nothing to show them yet.
         self_note = data.get("self_note") if not pinned else None
         if self_note:
             pinned = None
@@ -272,7 +228,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         img = Image.new("RGB", (_W, h), colors.BG)
         draw = ImageDraw.Draw(img)
 
-        # ── Header ───────────────────────────────────────────────────────
         self._draw_text(draw, (_PAD, 28), data.get("title", ""), self.font_title, colors.TEXT_PRIMARY)
         self._draw_text(draw, (_PAD, 62), data.get("subtitle", ""), self.font_small, colors.TEXT_MUTED)
         for text_val, ty, col in ((data.get("meta_right", ""), 30, colors.TEXT_MUTED),
@@ -281,7 +236,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
                 tw, _ = self._text_size(draw, text_val, self.font_small)
                 self._draw_text(draw, (_W - _PAD - tw, ty), text_val, self.font_small, col)
 
-        # ── Rows ─────────────────────────────────────────────────────────
         avatar_boxes = []
         y = head_h
         for row in rows:
@@ -295,7 +249,6 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             self._draw_text(d, ((_W - mw) // 2, y + 14), empty_label, self.font_label, colors.TEXT_MUTED)
             y += empty_h
 
-        # ── Pinned own row ───────────────────────────────────────────────
         if pinned:
             sep_y = y + 8
             ImageDraw.Draw(img).line([(_PAD, sep_y), (_W - _PAD, sep_y)],
@@ -316,21 +269,17 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             y = sep_y + note_h
 
         img = self._avatar_glow(img, avatar_boxes)
-        # The glow pass flattens the image, so re-draw the avatars' crisp pixels.
+
         for row, (ax, ay, size) in zip(rows + ([pinned] if pinned else []), avatar_boxes):
             self._avatar(img, ax, ay, size, row.get("avatar_data"), row.get("username", ""))
 
-        # ── Footer (centred) ─────────────────────────────────────────────
         fr = data.get("footer_right", "")
         if fr:
             self._text_centered(img, _W // 2, h - _PAD + 2, fr, self.font_small, (92, 90, 104))
 
         return self._save(img)
 
-
 _renderer = LeaderboardDeltaRenderer()
 
-
 def render_delta_leaderboard(data: dict) -> bytes:
-    """Render a leaderboard card and return PNG bytes."""
     return _renderer.render(data).getvalue()

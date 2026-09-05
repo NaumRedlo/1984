@@ -7,7 +7,6 @@ logger = get_logger("utils.aio")
 
 _background_tasks: set[asyncio.Task] = set()
 
-
 def spawn(coro: Coroutine, *, name: str | None = None) -> asyncio.Task:
     task = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)

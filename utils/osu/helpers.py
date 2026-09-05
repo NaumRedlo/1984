@@ -15,10 +15,8 @@ _community_stats_cache: dict = {}
 _community_stats_ts: float = 0.0
 _COMMUNITY_STATS_TTL = 300
 
-
 def remember_message_context(chat_id: int, message_id: int, context: Dict[str, Any]) -> None:
     _RECENT_CARD_CONTEXT[(chat_id, message_id)] = context
-
 
 def get_message_context(chat_id: int, message_id: int, *, strict: bool = False) -> Optional[Dict[str, Any]]:
     context = _RECENT_CARD_CONTEXT.get((chat_id, message_id))
@@ -28,7 +26,6 @@ def get_message_context(chat_id: int, message_id: int, *, strict: bool = False) 
         if stored_chat_id == chat_id and stored_context.get("beatmap_id"):
             return stored_context
     return None
-
 
 def extract_beatmap_id(text: str) -> Optional[str]:
     patterns = [
@@ -41,7 +38,6 @@ def extract_beatmap_id(text: str) -> Optional[str]:
         if match:
             return match.group(1)
     return None
-
 
 async def get_community_stats(session) -> Dict[str, int]:
     global _community_stats_cache, _community_stats_ts

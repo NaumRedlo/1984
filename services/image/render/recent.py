@@ -37,25 +37,20 @@ from utils.logger import get_logger
 
 logger = get_logger("services.image.render.recent")
 
-# Lazer star-rating gradient — osu!lazer's difficulty colour ramp, interpolated
-# between the anchor stars below. The duplicate 0.1 anchor is osu!'s hard step
-# from the "no difficulty" grey into the blue ramp. (Moved here from the
-# removed duel_pool_card.py — recent.py is the canonical SR-pill owner.)
 _SR_STOPS = [
-    (0.1, (170, 170, 170)),    # #aaaaaa
-    (0.1, (66, 144, 251)),     # #4290fb
-    (1.25, (79, 192, 255)),    # #4fc0ff
-    (2.0, (79, 255, 213)),     # #4fffd5
-    (2.5, (124, 255, 79)),     # #7cff4f
-    (3.3, (246, 240, 92)),     # #f6f05c
-    (4.2, (255, 128, 104)),    # #ff8068
-    (4.9, (255, 78, 111)),     # #ff4e6f
-    (5.8, (198, 69, 184)),     # #c645b8
-    (6.7, (101, 99, 222)),     # #6563de
-    (7.7, (24, 21, 142)),      # #18158e
-    (9.0, (0, 0, 0)),          # black
+    (0.1, (170, 170, 170)),
+    (0.1, (66, 144, 251)),
+    (1.25, (79, 192, 255)),
+    (2.0, (79, 255, 213)),
+    (2.5, (124, 255, 79)),
+    (3.3, (246, 240, 92)),
+    (4.2, (255, 128, 104)),
+    (4.9, (255, 78, 111)),
+    (5.8, (198, 69, 184)),
+    (6.7, (101, 99, 222)),
+    (7.7, (24, 21, 142)),
+    (9.0, (0, 0, 0)),
 ]
-
 
 def _sr_color(sr: float) -> tuple:
     sr = float(sr or 0.0)
@@ -69,14 +64,7 @@ def _sr_color(sr: float) -> tuple:
             return tuple(int(round(a + (b - a) * t)) for a, b in zip(c_lo, c_hi))
     return _SR_STOPS[-1][1]
 
-
 def _strain_y_at(series: List[float], frac: float) -> float:
-    """Catmull-Rom-interpolated value of `series` at position `frac` in
-    [0, 1] along its span (series[i] sits at i/(n-1)). Used for BOTH the
-    perf-graph's drawn curve and its fail-marker dot, so the dot always
-    lands exactly on the curve — evaluating them independently (e.g. the
-    dot snapping to the nearest raw sample while the curve draws a spline
-    through the same samples) let the two drift apart visually."""
     n = len(series)
     if n == 1:
         return series[0]
@@ -97,8 +85,6 @@ def _strain_y_at(series: List[float], frac: float) -> float:
         + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
     )
 
-
-# Beatmap status → (label colour). Ints are the osu! API ranked_status codes.
 _STATUS_COLORS = {
     "ranked": (80, 190, 90), "approved": (80, 190, 90), "qualified": (80, 150, 230),
     "loved": (230, 110, 170), "pending": (210, 190, 60), "wip": (210, 190, 60),
@@ -107,10 +93,6 @@ _STATUS_COLORS = {
 _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
                0: "pending", -1: "wip", -2: "graveyard"}
 
-# UI label translations (2026-07-02 pilot — see [[ui-language-english]]/its
-# successor). Status pills (RANKED/LOVED/...), PP, 300/100/50, FC/SS stay
-# untranslated in both languages: they're osu! jargon the RU community uses
-# in English/as loanwords as-is, not decorative UI text.
 _RECENT_STRINGS = {
     "en": {
         "header": "RECENT SCORE", "header_shared": "SCORE",
@@ -130,11 +112,9 @@ _RECENT_STRINGS = {
     },
 }
 
-
 def _fnt(path, size, fallback):
     p = _find_font(path)
     return ImageFont.truetype(p, size) if p else fallback
-
 
 class RecentCardMixin:
     def generate_recent_card(
@@ -146,20 +126,16 @@ class RecentCardMixin:
         player_cover: Optional[Image.Image] = None,
         strains: Optional[List[float]] = None,
     ) -> BytesIO:
-        # ── Canvas + fonts ──────────────────────────────────────────────────
+
         W, H = 1280, 652
-        M = 24            # outer margin
+        M = 24
         img = Image.new("RGB", (W, H), RECENT_BG)
         draw = ImageDraw.Draw(img)
 
-        # Custom font set — cached on the instance (stable ids) so the CJK-fallback
-        # registration below doesn't leak into _fb_map across repeated renders.
-        # Registering an MPLUS fallback per custom font makes JP/CJK titles/artists
-        # render instead of tofu (base fonts get this in BaseCardRenderer; ours don't).
         if not hasattr(self, "_rc_fonts"):
             from services.image.constants import MPLUS_BOLD, PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG
             mpb = _find_font(MPLUS_BOLD)
-            # Weight-matched Cyrillic fallback per Torus weight used below.
+
             proxima_for = {
                 TORUS_BOLD: _find_font(PROXIMA_BOLD),
                 TORUS_SEMI: _find_font(PROXIMA_SEMI),
@@ -195,7 +171,6 @@ class RecentCardMixin:
         def panel(x, y, w, h, r=14, fill=RECENT_PANEL):
             draw.rounded_rectangle((x, y, x + w, y + h), radius=r, fill=fill)
 
-        # ── Data ────────────────────────────────────────────────────────────
         artist = data.get("artist", "Unknown")
         title = data.get("title", "Unknown")
         version = data.get("version", "") or ""
@@ -226,13 +201,8 @@ class RecentCardMixin:
         raw_status = data.get("beatmap_status", "")
         status = _STATUS_INT.get(raw_status, "") if isinstance(raw_status, int) else (str(raw_status or "").lower())
 
-        # ── Header ──────────────────────────────────────────────────────────
         top = 18
-        # A score reached via a shared /scores/<id> link isn't necessarily
-        # that player's most RECENT play (could be months old) — "RECENT
-        # SCORE" would be actively misleading there, so card_mode="shared"
-        # swaps in a neutral header. Default (card_mode absent/"recent") is
-        # byte-identical to before this existed.
+
         head_txt = S["header_shared"] if data.get("card_mode") == "shared" else S["header"]
         _hicon = load_icon("rsicon", size=24)
         htw = self._text_size(draw, head_txt, f_head)[0]
@@ -257,22 +227,18 @@ class RecentCardMixin:
         if date_str:
             self._text_right(draw, W - M, top + 4, date_str, f_small, TEXT_SECONDARY)
 
-        # ── Hero panel ──────────────────────────────────────────────────────
         hero_y, hero_h = top + 40, 200
         hero_w = W - 2 * M
         panel(M, hero_y, hero_w, hero_h)
         pad = 20
 
-        # Duplicate the map cover across the whole hero — muted on the left,
-        # vivid on the right (unified cover-bleed standard, services/image/base.py).
         if cover:
             bled = self._cover_bleed(cover, hero_w, hero_h)
             img.paste(bled.convert("RGB"), (M, hero_y), bled)
             draw = ImageDraw.Draw(img)
 
-        # cover thumbnail (left) — wide landscape crop so the art isn't squished
-        cov_h = hero_h - 2 * pad            # 160
-        cov_w = int(cov_h * 1.85)           # ~296 wide, matches the cover's aspect
+        cov_h = hero_h - 2 * pad
+        cov_w = int(cov_h * 1.85)
         cov_x, cov_y = M + pad, hero_y + pad
         if cover:
             thumb = cover_center_crop(cover, cov_w, cov_h).convert("RGB")
@@ -281,19 +247,16 @@ class RecentCardMixin:
             panel(cov_x, cov_y, cov_w, cov_h, r=12, fill=(40, 40, 58))
         draw = ImageDraw.Draw(img)
 
-        # grade ring (right) — bigger completion arc + letter + inline % badge
         ring_r = 76
         ring_cx = W - M - pad - ring_r
         ring_cy = hero_y + hero_h // 2
         self._draw_grade_ring(img, ring_cx, ring_cy, ring_r, rank_grade, completion, is_passed, f_grade, f_pill)
         draw = ImageDraw.Draw(img)
 
-        # middle column
         mx = cov_x + cov_w + 26
         mid_right = ring_cx - ring_r - 24
         mid_w = mid_right - mx
 
-        # mapper row (shadowed — may sit over the faded cover)
         mav_sz = 28
         mrow_y = hero_y + 22
         if mapper_avatar:
@@ -305,7 +268,6 @@ class RecentCardMixin:
         self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y - 1), S["mapped_by"], f_lbl, TEXT_SECONDARY)
         self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
 
-        # title (truncate to mid_w)
         t_y = hero_y + 60
         disp = title
         while self._text_size(draw, disp + "…", f_title)[0] > mid_w and len(disp) > 4:
@@ -314,7 +276,6 @@ class RecentCardMixin:
             disp += "…"
         self._draw_text_shadow(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
 
-        # artist + difficulty/status pills inline right after it
         art_txt = artist
         while self._text_size(draw, art_txt + "…", f_artist)[0] > mid_w * 0.55 and len(art_txt) > 4:
             art_txt = art_txt[:-1]
@@ -330,7 +291,6 @@ class RecentCardMixin:
             self._text_center(draw, apx + vpw // 2, a_y + 3, vlabel, f_pill, (235, 240, 255))
         draw = ImageDraw.Draw(img)
 
-        # chips row: SR / length / BPM / objects
         chip_y = hero_y + hero_h - 48
         cx = mx
         def chip(icon_name, text):
@@ -342,11 +302,11 @@ class RecentCardMixin:
             d = ImageDraw.Draw(img)
             self._draw_text_shadow(d, (cx, chip_y), text, f_chip, TEXT_PRIMARY)
             cx += self._text_size(d, text, f_chip)[0] + 22
-        # canonical lazer SR pill — colour ramps with difficulty; star + value
+
         cx = self._draw_sr_pill(img, cx, chip_y, stars, f_chip)
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
         chip("bpm", f"{bpm:g}")
-        # map status pill — moved down to the chips row
+
         if status:
             slabel = status.upper()
             sc = _STATUS_COLORS.get(status, (110, 110, 130))
@@ -355,7 +315,6 @@ class RecentCardMixin:
             self._text_center(draw, cx + spw // 2, chip_y + 1, slabel, f_pill, (255, 255, 255))
         draw = ImageDraw.Draw(img)
 
-        # mod badges (top-right of hero, left of ring) — rectangular pills w/ big glyphs
         mods = data.get("mods", "")
         mod_list = self._normalize_mods(mods)
         if mod_list:
@@ -378,14 +337,11 @@ class RecentCardMixin:
                 bx -= 6
             draw = ImageDraw.Draw(img)
 
-        # ── Stats bar ───────────────────────────────────────────────────────
         stats_y, stats_h = hero_y + hero_h + 16, 108
         panel(M, stats_y, W - 2 * M, stats_h)
         inner_x = M + 24
         inner_w = W - 2 * M - 48
-        # weighted columns: PP, ACC, COMBO wider; then 300/100/50/MISS. Map max
-        # combo moved next to the combo value itself (as "/<max>x" in gray)
-        # instead of its own column, freeing this space for 300/100/50/MISS.
+
         weights = [1.5, 1.7, 1.4, 1.0, 1.0, 1.0, 1.0]
         tot = sum(weights)
         xs, acc_x = [], inner_x
@@ -407,7 +363,7 @@ class RecentCardMixin:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
 
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
-        # PP — big value = current pp; FC / SS badges below (restored old style).
+
         self._text_center(draw, centers[0], lbl_y, "PP", f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[0], val_y - 4, f"{pp:.0f}" if pp else "—", f_val, pp_color)
         pp_badges = []
@@ -429,14 +385,11 @@ class RecentCardMixin:
                 self._text_center(draw, bx + bw // 2, by + 2, lbl, f_lbl, (255, 255, 255))
                 bx += bw + 5
         draw = ImageDraw.Draw(img)
-        # ACCURACY
+
         self._text_center(draw, centers[1], lbl_y, S["accuracy"], f_lbl, TEXT_SECONDARY)
         self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
         bar(1, acc / 100.0, RECENT_LINE)
-        # COMBO — value in the usual accent colour, "/<map max>x" tacked on
-        # smaller and gray right after it (was its own "MAX COMBO" column
-        # further right). f_chip (20pt, well below the combo's own 32pt f_val)
-        # reads as a subordinate annotation and keeps the string narrower.
+
         self._text_center(draw, centers[2], lbl_y, S["combo"], f_lbl, TEXT_SECONDARY)
         combo_str = f"{combo}x"
         max_str = f"/{map_max_combo}x" if map_max_combo else ""
@@ -447,7 +400,7 @@ class RecentCardMixin:
         if max_str:
             self._draw_text_shadow(draw, (combo_x0 + combo_w, val_y + 3), max_str, f_chip, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
-        # counts
+
         counts = [
             ("300", n300, (120, 220, 130)),
             ("100", n100, (230, 205, 90)),
@@ -459,7 +412,6 @@ class RecentCardMixin:
             self._text_center(draw, c, lbl_y, lbl, f_lbl, col)
             self._text_center(draw, c, val_y, str(val), f_val2, TEXT_PRIMARY)
 
-        # ── Middle row: PERFORMANCE | DETAILS | PLAYER ──────────────────────
         mid_y = stats_y + stats_h + 16
         mid_h = H - mid_y - 22
         gap = 16
@@ -470,14 +422,12 @@ class RecentCardMixin:
         det_x = perf_x + perf_w + gap
         ply_x = det_x + det_w + gap
 
-        # PERFORMANCE
         panel(perf_x, mid_y, perf_w, mid_h)
         self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, RECENT_ACCENT)
         self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
                               strains, completion, is_passed, f_lbl, S)
         draw = ImageDraw.Draw(img)
 
-        # DETAILS (CS/AR/OD/HP)
         panel(det_x, mid_y, det_w, mid_h)
         self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, RECENT_ACCENT)
         params = [("CS", "cs", data.get("cs", 0.0)), ("AR", "ar", data.get("ar", 0.0)),
@@ -503,7 +453,6 @@ class RecentCardMixin:
             if frac > 0:
                 draw.rounded_rectangle((det_x + 18, by, det_x + 18 + int(bw * frac), by + 5), radius=2, fill=col)
 
-        # PLAYER
         panel(ply_x, mid_y, ply_w, mid_h)
         if player_cover or cover:
             pc = cover_center_crop(player_cover or cover, ply_w, mid_h)
@@ -532,10 +481,7 @@ class RecentCardMixin:
 
         return self._save(img)
 
-    # ── helpers ─────────────────────────────────────────────────────────────
-
     def _circle_crop(self, src: Image.Image, size: int) -> Image.Image:
-        """Center-crop `src` to a circular avatar of `size` px (anti-aliased)."""
         ss = 4
         sq = cover_center_crop(src, size * ss, size * ss).convert("RGBA")
         mask = Image.new("L", (size * ss, size * ss), 0)
@@ -545,29 +491,9 @@ class RecentCardMixin:
 
     def _draw_sr_pill(self, img, x, y, stars, f_chip, *, radius=None, height=None, center_y=None,
                       star_size=16):
-        """Canonical lazer star-rating pill: rounded fill coloured by the osu!
-        difficulty ramp, a star glyph and the SR value. On bright fills text/
-        glyph go dark; on dark fills they go gold. Returns the x cursor just
-        past the pill (with a gap).
-
-        radius/height: default to a full pill sized to the text (unchanged
-        for every existing caller); top_plays.py passes a small fixed radius
-        + an explicit height matching its mod pills' shape — an explicit
-        exception, not a change to the canonical look used everywhere else.
-
-        center_y: when given, use this as the pill's exact vertical centre
-        instead of deriving it from y + the text's own ink bbox — lets a
-        caller line this pill up EXACTLY with sibling elements (e.g. mod
-        pills) centred a different way. Defaults to the original ink-bbox
-        behaviour (lines up with plain text chips beside it) when omitted.
-
-        star_size: the glyph beside the value. Its default is the size every
-        card drew it at before this was a parameter; the map leaderboard sets
-        the value in a larger font and the star a little under it, so the
-        number leads the pill instead of sharing it."""
         col = _sr_color(stars)
         lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
-        # Gold only at the top end (SR>=6.5); below that plain dark/white by fill.
+
         if stars >= 6.5:
             fg = (255, 204, 64)
         else:
@@ -575,15 +501,10 @@ class RecentCardMixin:
         text = f"{stars:.2f}"
         d = ImageDraw.Draw(img)
         tw, th = self._text_size(d, text, f_chip)
-        # Torus glyphs sit low in the em box, so the drawn ink centre is not at
-        # y+th/2. Measure the real ink bbox and centre the pill on that instead,
-        # so it lines up with the plain timer/BPM chips beside it.
+
         bb = d.textbbox((0, 0), text, font=f_chip)
         ink_cy = center_y if center_y is not None else y + (bb[1] + bb[3]) / 2
-        # The text's own top-y that makes ITS ink centre land on ink_cy — was
-        # just `y` when ink_cy was derived from y in the first place, but that
-        # stops being true once center_y overrides ink_cy directly, so this
-        # has to be solved for explicitly instead of reusing y verbatim.
+
         text_top = ink_cy - (bb[1] + bb[3]) / 2
         star = load_icon("star", size=star_size)
         if star:
@@ -604,28 +525,24 @@ class RecentCardMixin:
         return x + w + 12
 
     def _draw_grade_ring(self, img, cx, cy, r, grade, completion, passed, f_grade, f_pct):
-        """Completion-arc ring (red) + centered grade letter + % badge inline on
-        the ring's bottom edge."""
         ss = 4
         big = r * 2 * ss
         layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         d = ImageDraw.Draw(layer)
         wdt = 7 * ss
         box = (wdt, wdt, big - wdt, big - wdt)
-        # Dark backing disc so the grade stays legible over a busy cover behind it.
+
         d.ellipse(box, fill=(10, 9, 13, 165))
         d.ellipse(box, outline=RECENT_TRACK + (255,), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
-        # Arc tinted by the achieved grade; a failed/incomplete run stays red as a
-        # "didn't clear it" signal rather than borrowing the grade's colour.
+
         arc_col = ACCENT_RED if (not passed or grade == "F") else GRADE_COLORS.get(grade, RECENT_ACCENT)
         mid = big / 2
-        rad = mid - 1.5 * wdt                    # centreline radius (track's stroke sits inward of box)
-        cap = wdt / 2                            # brush radius = half stroke width
+        rad = mid - 1.5 * wdt
+        cap = wdt / 2
 
         def _stroke(dd):
-            # arc() only draws flat butt ends, so paint the stroke as a chain of
-            # overlapping round brush dabs — the line itself gets rounded ends.
+
             fill = arc_col + (255,)
             steps = max(2, int(math.radians(sweep) * rad / cap))
             for i in range(steps + 1):
@@ -634,7 +551,7 @@ class RecentCardMixin:
                 dd.ellipse((px - cap, py - cap, px + cap, py + cap), fill=fill)
 
         if sweep > 0:
-            # Soft glow: a blurred copy of the arc on its own layer underneath.
+
             glow = Image.new("RGBA", (big, big), (0, 0, 0, 0))
             _stroke(ImageDraw.Draw(glow))
             glow = glow.filter(ImageFilter.GaussianBlur(wdt * 0.9))
@@ -652,20 +569,15 @@ class RecentCardMixin:
             bw = draw.textbbox((0, 0), lbl, font=f_pct)
             w = (bw[2] - bw[0]) + 16
             bh = 24
-            by = cy + r - 7 - bh // 2      # centered exactly on the ring's stroke line
+            by = cy + r - 7 - bh // 2
             col = ACCENT_RED if completion < 0.5 else (205, 180, 55)
             self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + bh), radius=7, fill=col)
             self._text_center(ImageDraw.Draw(img), cx, by + 4, lbl, f_pct, (255, 255, 255))
 
     def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl, S, *, show_axis: bool = True):
-        """The map's difficulty (strain) across its timeline. X = song progress
-        (0→100%); Y = relative difficulty (no % — strain isn't a percentage).
-        For a fail, a marker shows how far through the map the player got.
-        `show_axis=False` (the what-if card's usage) skips the 0/25/50/75/100%
-        ticks — there's never a fail marker to give them context for."""
         draw = ImageDraw.Draw(img)
         plot_x, plot_w = x, w
-        # faint horizontal gridlines only (no misleading Y-axis % labels)
+
         for gi in range(1, 4):
             gy = y + int(h * gi / 4)
             draw.line([(plot_x, gy), (plot_x + plot_w, gy)], fill=(44, 36, 42), width=1)
@@ -673,10 +585,7 @@ class RecentCardMixin:
             self._text_center(draw, x + w // 2, y + h // 2 - 8, S["no_data"], f_lbl, TEXT_SECONDARY)
             return
         n = len(series)
-        # Catmull-Rom spline through the raw (bucket-averaged) samples, resampled
-        # at high density — a straight polyline through only `n` points reads as
-        # a staircase whenever adjacent strain values jump; this smooths that
-        # out into an actual curve without changing the underlying data.
+
         SAMPLES_PER_SEGMENT = 8
         total = max(2, (n - 1) * SAMPLES_PER_SEGMENT + 1)
         pts = []
@@ -684,13 +593,11 @@ class RecentCardMixin:
             frac = j / (total - 1)
             v = max(0.0, min(1.0, _strain_y_at(series, frac)))
             pts.append((plot_x + plot_w * frac, y + h - h * v))
-        # Unified graph standard (services/image/base.py): supersampled +
-        # LANCZOS-downscaled line/fill so the curve's pixels don't show a
-        # staircase either, on top of the spline smoothing above.
+
         self._aa_graph_curve(img, plot_x, y, plot_w, h, pts,
                              line_color=RECENT_LINE, line_width=3, fill_color=RECENT_ACCENT + (70,))
         draw = ImageDraw.Draw(img)
-        # X-axis song-progress ticks so the fail marker reads as "% through the map"
+
         if show_axis:
             for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
                 tx = plot_x + int(plot_w * frac)
@@ -698,7 +605,7 @@ class RecentCardMixin:
                 lw = self._text_size(draw, lbl, f_lbl)[0]
                 lx = plot_x if frac == 0 else (plot_x + plot_w - lw if frac == 1 else tx - lw // 2)
                 draw.text((lx, y + h + 4), lbl, font=f_lbl, fill=(120, 108, 116))
-        # fail marker — where the player stopped along the map timeline
+
         if not passed and 0 < completion < 1.0:
             fx = int(plot_x + plot_w * completion)
             for yy in range(y, y + h, 6):
@@ -739,7 +646,6 @@ class RecentCardMixin:
 
     @staticmethod
     def _mods_str(mods) -> str:
-        """Coerce mods (str or list/dicts) into a concatenated 'HDDT' acronym string."""
         if isinstance(mods, str):
             return mods.replace("+", "").replace(",", "").replace(" ", "")
         if isinstance(mods, list):
@@ -752,17 +658,7 @@ class RecentCardMixin:
             return "".join(out)
         return ""
 
-
 def _pick_score_value(score: dict) -> int:
-    """Pick the best total score value from an osu! API score object.
-
-    osu! API v2 fields:
-      - total_score: standardised scoring (always present, lazer system)
-      - legacy_total_score: classic scoring (>0 for stable, null/0 for lazer)
-      - score: deprecated alias
-
-    For display: prefer legacy (classic) when available, otherwise use total_score.
-    """
     legacy = score.get("legacy_total_score")
     total = score.get("total_score")
     classic = score.get("score")
@@ -775,22 +671,13 @@ def _pick_score_value(score: dict) -> int:
         return int(classic)
     return 0
 
-
 def _detect_client(score: dict) -> str:
-    """Detect whether a score was set on stable or lazer.
-
-    With x-api-version: 20220705 header, API v2 returns new score format:
-      - build_id: non-null only for lazer-submitted scores
-      - legacy_total_score: >0 for stable, null/0 for lazer
-      - type: 'solo_score' for all scores in new format
-    """
     if score.get("build_id") is not None:
         return "lazer"
     legacy = score.get("legacy_total_score")
     if isinstance(legacy, (int, float)) and legacy > 0:
         return "stable"
     return "lazer"
-
 
 async def build_recent_card_data(
     raw_score: dict,
@@ -803,18 +690,6 @@ async def build_recent_card_data(
     card_mode: str = "recent",
     client=None,
 ) -> Dict:
-    """Turn a raw osu! API score object into the dict generate_recent_card
-    consumes. This is the field-mapping/PP-calculation logic that used to
-    live inline in bot/handlers/profile/recent.py's cmd_recent — now shared
-    by cmd_recent (card_mode="recent", the default) AND the score-link
-    auto-detect handler (card_mode="shared", swaps the header — see
-    generate_recent_card). Not pure: makes one network call via
-    utils.osu.pp_calculator.calculate_pp (cached .osu download).
-
-    `username`/`player_id`/`player_cover_url`/`requester_name`/`lang` are the
-    only externally-supplied inputs — everything else is derived from
-    `raw_score` itself (e.g. mapper_id/mapper_name come from its own
-    `beatmapset` field, not a parameter)."""
     beatmap = raw_score.get("beatmap", {}) or {}
     beatmapset = raw_score.get("beatmapset", {}) or {}
 
@@ -838,9 +713,6 @@ async def build_recent_card_data(
             mods_list.append(str(m))
     mods_joined = "".join(mods_list) if mods_list else ""
 
-    # A score is a classic one if it was imported from stable — which is what a
-    # legacy id means — or if it wore the Classic mod, which is lazer's way of
-    # asking for the same rules.
     is_classic = bool(raw_score.get("legacy_score_id")) or "CL" in mods_list
 
     stats = raw_score.get("statistics", {})
@@ -850,7 +722,6 @@ async def build_recent_card_data(
     count_50 = stats.get("meh") or stats.get("count_50") or 0
     beatmap_id = beatmap.get("id", 0)
 
-    # Apply mod adjustments to difficulty params
     raw_cs = float(beatmap.get("cs", 0) or 0)
     raw_ar = float(beatmap.get("ar", 0) or 0)
     raw_od = float(beatmap.get("accuracy", 0) or 0)
@@ -859,21 +730,16 @@ async def build_recent_card_data(
     raw_length = int(beatmap.get("total_length", 0) or 0)
     adjusted = apply_mods(raw_cs, raw_ar, raw_od, raw_hp, raw_bpm, raw_length, mods_joined)
 
-    # Calculate PP (current, if FC, if SS) via rosu-pp
     pp_if_fc = 0.0
     pp_if_ss = 0.0
     modded_stars = stars
-    # How many objects the map has, so a play that stopped partway can be
-    # scored against the part it reached. The card already knew this — it draws
-    # the completion ring from it — and the pp calculation did not, so a failed
-    # play was credited with the whole map's difficulty and came out at roughly
-    # twice its worth.
+
     total_objects = (
         (beatmap.get("count_circles", 0) or 0)
         + (beatmap.get("count_sliders", 0) or 0)
         + (beatmap.get("count_spinners", 0) or 0)
     )
-    # Map max combo — the recent-score API's compact beatmap often omits it.
+
     map_max_combo = int(beatmap.get("max_combo") or 0)
     try:
         pp_result = await calculate_pp(
@@ -886,65 +752,30 @@ async def build_recent_card_data(
             count_100=count_100,
             count_50=count_50,
             total_objects=total_objects,
-            # Whether this play was scored the old way, and what it scored.
-            #
-            # A stable score records neither the slider ends it dropped nor the
-            # ticks it missed, so read as a lazer one its combo losses vanish —
-            # a play that broke at 973 of 2354 with two misses reads as having
-            # broken exactly twice. Measured on that play: 263pp read as lazer,
-            # 243 read as what it is, and 243.34 is what the game says.
+
             classic=is_classic,
             legacy_total_score=raw_score.get("legacy_total_score") or None,
-            # What a lazer score knows about itself and a classic one cannot.
-            # These count towards accuracy as well as towards combo — a tail is
-            # worth 150 and a tick 30 — which is why the game calls this play
-            # 93.26% where the four judgements say 91.99%.
+
             slider_ends=stats.get("slider_tail_hit"),
             large_tick_misses=stats.get("large_tick_miss") or 0,
         )
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]
             pp_if_ss = pp_result["pp_if_ss"]
-            # Deliberately not rosu's `star_rating`. It used to be taken here
-            # and it is the port's figure, 0.20 to 0.82 stars away from the
-            # game's — and taking it threw away the API's own nominal rating,
-            # which arrives on the score and is exact. A play whose mods cannot
-            # move the rating then had nothing to ask ppy about and kept the
-            # port's wrong number: the pp on the card changed and the stars did
-            # not, which is how this was spotted.
+
             if not map_max_combo:
                 map_max_combo = int(pp_result.get("max_combo") or 0)
             if not pp:
-                # Nothing better to offer: the API leaves `pp` empty on loved
-                # and unranked maps, where no official figure exists at all.
+
                 pp = pp_result["pp_current"]
             elif pp_result.get("pp_current"):
-                # Anchor the two hypotheticals to the official figure.
-                #
-                # ppy will say what this play was worth and will not say what it
-                # would have been worth without the misses, so those two have to
-                # be worked out here, by the port. Fed the right statistics it
-                # lands within a few per cent of the API — measured across three
-                # map leaderboards, every player on them, it runs 1.00 to 1.06
-                # times ppy's figure.
-                #
-                # Nearly all of that is the map and the mods rather than the
-                # play: within one map and one mod set the factor holds to about
-                # a point or two however many misses the play had. So a ratio
-                # between two of the port's own figures cancels it, and what is
-                # shown is the official number with two hypotheticals in the
-                # proportion the port put them in — a point or two out rather
-                # than five.
+
                 anchor = pp / pp_result["pp_current"]
                 pp_if_fc = round(pp_if_fc * anchor, 2)
                 pp_if_ss = round(pp_if_ss * anchor, 2)
     except Exception:
         logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
 
-    # The rating, from ppy in both directions: the nominal one rides in on the
-    # score itself, and the one with mods on it is a question for the endpoint.
-    # rosu is not consulted about this at all — it keeps only the if-FC and
-    # if-SS figures, which ppy has no endpoint for.
     modded_stars = await star_rating.resolve(client, beatmap_id, mods_joined, stars)
 
     return {
@@ -965,33 +796,33 @@ async def build_recent_card_data(
         "beatmap_id": beatmap_id,
         "beatmapset_id": beatmapset.get("id", 0),
         "max_combo": map_max_combo,
-        # Mod-adjusted difficulty params
+
         "cs": adjusted["cs"],
         "ar": adjusted["ar"],
         "od": adjusted["od"],
         "hp": adjusted["hp"],
         "bpm": adjusted["bpm"],
         "total_length": adjusted["total_length"],
-        # Score details
+
         "total_score": _pick_score_value(raw_score),
         "score_client": _detect_client(raw_score),
-        # Mapper info
+
         "mapper_name": beatmapset.get("creator", "Unknown"),
         "mapper_id": beatmapset.get("user_id", 0),
-        # Player info
+
         "player_id": player_id,
         "player_cover_url": player_cover_url,
-        # Hit statistics
+
         "count_300": count_300,
         "count_100": count_100,
         "count_50": count_50,
         "pp_if_fc": pp_if_fc,
         "pp_if_ss": pp_if_ss,
-        # Requester info (who typed the command / triggered the lookup)
+
         "requester_name": requester_name,
         "beatmap_status": beatmap.get("status", ""),
         "played_at": raw_score.get("ended_at") or raw_score.get("created_at", ""),
-        # Pass/fail and total objects for completion %
+
         "passed": passed,
         "total_objects": total_objects,
     }

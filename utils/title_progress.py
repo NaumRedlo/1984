@@ -16,7 +16,6 @@ from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 S_OR_BETTER = ("S", "SH", "X", "XH")
 SS_RANKS = ("X", "XH")
 
-
 def _model_conds(M, user_id, crit, *, require_passed):
     conds = [M.user_id == user_id]
     if require_passed:
@@ -54,7 +53,6 @@ def _model_conds(M, user_id, crit, *, require_passed):
         conds.append(M.count_100 <= crit["max_100"])
     return conds
 
-
 async def _exists_best(session, user_id, **crit) -> int:
     for M, require_passed in ((UserBestScore, False), (UserMapAttempt, True)):
         conds = _model_conds(M, user_id, crit, require_passed=require_passed)
@@ -62,7 +60,6 @@ async def _exists_best(session, user_id, **crit) -> int:
         if n > 0:
             return 1
     return 0
-
 
 def _play_matches(play: Dict, **crit) -> bool:
     if not play.get("passed"):
@@ -93,7 +90,7 @@ def _play_matches(play: Dict, **crit) -> bool:
         fc = play.get("is_fc")
         if fc is False:
             return False
-        if fc is not True:  # unknown → fall back to the combo comparison
+        if fc is not True:
             mmc = play.get("map_max_combo")
             if (play.get("count_miss") or 0) != 0 or not mmc or (play.get("max_combo") or 0) < mmc:
                 return False
@@ -104,7 +101,6 @@ def _play_matches(play: Dict, **crit) -> bool:
     if crit.get("max_100") is not None and (n100 is None or n100 > crit["max_100"]):
         return False
     return True
-
 
 TITLE_CRITERIA: Dict[str, dict] = {
     "rank_d":         dict(ranks=("D",)),
@@ -120,7 +116,6 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "ss_hdfl_5":      dict(min_sr=5.0, ranks=SS_RANKS, mods_all=["HD", "FL"]),
     "ez_pass_7":      dict(min_sr=7.0, mods_all=["EZ"]),
 }
-
 
 async def _calc_doublethink(session, user_id: int) -> int:
     easy = await _exists_best(session, user_id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"])
@@ -139,7 +134,6 @@ async def _corpus_rank_map(session, uid):
             by_map.setdefault(bid, set()).add(rank)
     return by_map
 
-
 async def _calc_broken_record(session, uid) -> int:
     counts = (await session.execute(
         select(func.count()).select_from(UserMapAttempt)
@@ -147,7 +141,6 @@ async def _calc_broken_record(session, uid) -> int:
         .group_by(UserMapAttempt.beatmap_id)
     )).scalars().all()
     return max(counts) if counts else 0
-
 
 async def _calc_off_day(session, uid) -> int:
     counts = (await session.execute(
@@ -157,13 +150,11 @@ async def _calc_off_day(session, uid) -> int:
     )).scalars().all()
     return max(counts) if counts else 0
 
-
 async def _calc_perfectionist(session, uid) -> int:
     for ranks in (await _corpus_rank_map(session, uid)).values():
         if ranks & {"S", "SH"} and ranks & set(SS_RANKS):
             return 1
     return 0
-
 
 async def _calc_reeducated(session, uid) -> int:
     a_or_better = {"A"} | set(S_OR_BETTER)
@@ -171,7 +162,6 @@ async def _calc_reeducated(session, uid) -> int:
         if "D" in ranks and ranks & a_or_better:
             return 1
     return 0
-
 
 async def _calc_dejavu(session, uid) -> int:
     by_score: Dict[int, set] = {}
@@ -184,7 +174,6 @@ async def _calc_dejavu(session, uid) -> int:
             by_score.setdefault(sc, set()).add(bid)
     return 1 if any(len(bids) >= 2 for bids in by_score.values()) else 0
 
-
 async def _calc_wysi(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         combos = (await session.execute(
@@ -193,7 +182,6 @@ async def _calc_wysi(session, uid) -> int:
         if any("727" in str(c) for c in combos):
             return 1
     return 0
-
 
 async def _longest_run(session, uid, predicate, *, need_rank=False, need_acc=False):
     cols = [UserMapAttempt.played_at]
@@ -213,18 +201,14 @@ async def _longest_run(session, uid, predicate, *, need_rank=False, need_acc=Fal
             run = 0
     return best
 
-
 async def _calc_ss_streak(session, uid) -> int:
     return await _longest_run(session, uid, lambda r: r in SS_RANKS, need_rank=True)
-
 
 async def _calc_lowacc_streak(session, uid) -> int:
     return await _longest_run(session, uid, lambda a: a < 90.0, need_acc=True)
 
-
-_ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)   # ~12 years
+_ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)
 _ARCHIVIST_MIN_PEERS = 3
-
 
 async def _calc_graveyard(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -236,11 +220,10 @@ async def _calc_graveyard(session, uid) -> int:
             return 1
     return 0
 
-
 async def _calc_archaeologist(session, uid) -> int:
     cutoff = utcnow() - _ARCHAEOLOGY_AGE
     checks = (
-        (UserBestScore, [UserBestScore.user_id == uid]),                      # best = passes
+        (UserBestScore, [UserBestScore.user_id == uid]),
         (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
     )
     for M, conds in checks:
@@ -251,7 +234,6 @@ async def _calc_archaeologist(session, uid) -> int:
         if n:
             return 1
     return 0
-
 
 async def _calc_archivist(session, u) -> int:
     mine = u.ranked_score or 0
@@ -268,9 +250,7 @@ async def _calc_archivist(session, u) -> int:
     )).scalar() or 0
     return 1 if mine >= top else 0
 
-
 _SESSION_GAP = timedelta(minutes=30)
-
 
 async def _sessions(session, uid):
     rows = (await session.execute(
@@ -289,7 +269,6 @@ async def _sessions(session, uid):
         out.append(cur)
     return out
 
-
 async def _calc_clockwork(session, uid) -> int:
     best = 0
     for s in await _sessions(session, uid):
@@ -298,10 +277,8 @@ async def _calc_clockwork(session, uid) -> int:
             best = max(best, int(span))
     return best
 
-
 async def _calc_assembly_line(session, uid) -> int:
     return max((len(s) for s in await _sessions(session, uid)), default=0)
-
 
 async def _calc_stuck_loop(session, uid) -> int:
     best = 0
@@ -312,7 +289,6 @@ async def _calc_stuck_loop(session, uid) -> int:
             prev_bid = bid
             best = max(best, run)
     return best
-
 
 async def _stuck_loop_tail(session, uid):
     rows = (await session.execute(
@@ -332,10 +308,8 @@ async def _stuck_loop_tail(session, uid):
             break
     return run, target_bid
 
-
 _COMEBACK_GAP = timedelta(days=180)
 _WEEK = timedelta(days=7)
-
 
 def bump_profile_opens(user) -> None:
     today = utcnow().date()
@@ -344,7 +318,6 @@ def bump_profile_opens(user) -> None:
         user.profile_opens_count = 0
     user.profile_opens_count = (user.profile_opens_count or 0) + 1
     user.profile_opens_best = max(user.profile_opens_best or 0, user.profile_opens_count)
-
 
 def touch_activity_day(user) -> None:
     today = utcnow().date()
@@ -358,14 +331,12 @@ def touch_activity_day(user) -> None:
     user.active_day = today
     user.active_streak_best = max(user.active_streak_best or 0, user.active_streak)
 
-
 def detect_comeback(user) -> bool:
     last = user.last_seen_at
     if last is not None and not user.comeback_done and (utcnow() - last) >= _COMEBACK_GAP:
         user.comeback_done = True
         return True
     return False
-
 
 def update_weekly_plays(user) -> None:
     now = utcnow()
@@ -377,7 +348,6 @@ def update_weekly_plays(user) -> None:
         return
     delta = max(0, pc - (user.playcount_week_anchor or pc))
     user.week_plays_best = max(user.week_plays_best or 0, delta)
-
 
 async def unlock_title(user, code: str, session, *, value=None) -> bool:
     td = TITLE_REGISTRY.get(code)
@@ -399,11 +369,9 @@ async def unlock_title(user, code: str, session, *, value=None) -> bool:
     prog.unlocked_at = utcnow()
     return True
 
-
-_LAST_NOTE_PCT = 95.0          # fail this far in → "Last Note"
-_CHOKE_COMBO_RATIO = 0.95      # longest combo reached this far → break was late
-_CHOKE_MIN_ACC = 99.0          # "Not This Time" is a near-perfect choke
-
+_LAST_NOTE_PCT = 95.0
+_CHOKE_COMBO_RATIO = 0.95
+_CHOKE_MIN_ACC = 99.0
 
 async def _calc_magic7(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -413,7 +381,6 @@ async def _calc_magic7(session, uid) -> int:
         if any("777777" in str(sc) for sc in scores):
             return 1
     return 0
-
 
 async def _calc_choke(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -426,7 +393,6 @@ async def _calc_choke(session, uid) -> int:
         if any(_CHOKE_COMBO_RATIO * mmc <= mc < mmc for mc, mmc, _ in rows):
             return 1
     return 0
-
 
 async def _calc_last_note(session, uid) -> int:
     rows = (await session.execute(
@@ -444,7 +410,6 @@ async def _calc_last_note(session, uid) -> int:
             return 1
     return 0
 
-
 async def _calc_masks(session, uid) -> int:
     seen: set[str] = set()
     for M in (UserBestScore, UserMapAttempt):
@@ -457,7 +422,6 @@ async def _calc_masks(session, uid) -> int:
                     seen.add(ac)
     return len(seen)
 
-
 async def _calc_long_chain(session, uid) -> int:
     best = 0
     for M in (UserBestScore, UserMapAttempt):
@@ -467,20 +431,16 @@ async def _calc_long_chain(session, uid) -> int:
         best = max(best, v)
     return best
 
-
 _ACCOUNT_AGE_2Y = timedelta(days=730)
-
 
 def _account_age_ok(u) -> int:
     jd = getattr(u, "join_date", None)
     return 1 if jd and (utcnow() - jd) >= _ACCOUNT_AGE_2Y else 0
 
-
 def _row_is_fc(is_fc, miss, mc, mmc) -> bool:
     if is_fc is True:
         return True
     return is_fc is None and miss == 0 and bool(mmc) and mc is not None and mc >= mmc
-
 
 def _eff_bpm(bpm, mods) -> float:
     if not bpm:
@@ -492,12 +452,10 @@ def _eff_bpm(bpm, mods) -> float:
         return float(bpm) * 0.75
     return float(bpm)
 
-
 def _eff_ar(base_ar, mods) -> float:
     if base_ar is None:
         return 0.0
     return apply_mods(0.0, float(base_ar), 0.0, 0.0, 0.0, 0, (mods or "").replace(",", ""))["ar"]
-
 
 async def _calc_heavy_hand(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -509,7 +467,6 @@ async def _calc_heavy_hand(session, uid) -> int:
             if _row_is_fc(is_fc, miss, mc, mmc) and _eff_ar(ar, mods) >= 10.3:
                 return 1
     return 0
-
 
 async def _calc_sr10(session, uid) -> int:
     checks = (
@@ -525,7 +482,6 @@ async def _calc_sr10(session, uid) -> int:
             return 1
     return 0
 
-
 async def _calc_watchmaker(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
@@ -536,7 +492,6 @@ async def _calc_watchmaker(session, uid) -> int:
             if (eff or 0) >= 6.0 and _eff_bpm(bpm, mods) >= 240.0:
                 return 1
     return 0
-
 
 async def _calc_double_sentence(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -550,7 +505,6 @@ async def _calc_double_sentence(session, uid) -> int:
                 return 1
     return 0
 
-
 async def _calc_rapid_fire(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
@@ -561,7 +515,6 @@ async def _calc_rapid_fire(session, uid) -> int:
             if _eff_bpm(bpm, mods) >= 240.0 and _row_is_fc(is_fc, miss, mc, mmc):
                 return 1
     return 0
-
 
 async def _calc_overdrive(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -575,12 +528,10 @@ async def _calc_overdrive(session, uid) -> int:
                 return 1
     return 0
 
-
 def _crit_calc(crit):
     async def _c(u, uid, s):
         return await _exists_best(s, uid, **crit)
     return _c
-
 
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
 _CALCULATORS.update({
@@ -624,7 +575,6 @@ _CALCULATORS.update({
     "fc_bpm_250": lambda u, uid, s: _calc_overdrive(s, uid),
 })
 
-
 async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
     crit = TITLE_CRITERIA.get(code)
     if crit is not None:
@@ -647,8 +597,7 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
         mc = play.get("max_combo") or 0
         acc = play.get("accuracy") or 0
         return bool(mmc) and _CHOKE_COMBO_RATIO * mmc <= mc < mmc and acc >= _CHOKE_MIN_ACC
-    return False  # registered / played_100k aren't per-play unlocks
-
+    return False
 
 async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:
     if not plays:
@@ -684,10 +633,8 @@ async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[
         newly.append(td)
     return newly
 
-
 async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
     return await evaluate_recent_plays(user, [play], session)
-
 
 async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dict]:
     stmt = select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
@@ -745,7 +692,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
 
     return progress_list
 
-
 def build_titles_summary(progress_list: List[Dict]) -> Dict:
     total = len(progress_list)
     unlocked_items = [p for p in progress_list if p["unlocked"]]
@@ -784,7 +730,6 @@ def build_titles_summary(progress_list: List[Dict]) -> Dict:
         "next_up": next_up,
     }
 
-
 async def calc_title_rarity(title_code: str, session) -> float:
     total_stmt = (
         select(func.count())
@@ -800,7 +745,7 @@ async def calc_title_rarity(title_code: str, session) -> float:
         .select_from(UserTitleProgress)
         .where(
             UserTitleProgress.title_code == title_code,
-            UserTitleProgress.unlocked == True,  # noqa: E712
+            UserTitleProgress.unlocked == True,
         )
     )
     unlocked = (await session.execute(unlocked_stmt)).scalar() or 0

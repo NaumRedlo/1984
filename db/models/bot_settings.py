@@ -2,7 +2,6 @@ from sqlalchemy import Column, String
 
 from db.database import Base
 
-
 class BotSettings(Base):
     __tablename__ = "bot_settings"
 

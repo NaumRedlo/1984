@@ -1,12 +1,3 @@
-"""TOP PLAYS dashboard — `tpp`. Paged list of the player's best scores ranked
-by weighted pp (osu!'s own rank-N-counts-0.95**(N-1) system), with pp-delta
-badges ("+14pp 2 days ago" / "NEW").
-
-Also reachable from `/pf` via an inline button (tpp|open), which swaps the
-profile photo in place and offers a "back to profile" button (tpp|back) —
-see bot/handlers/profile/handlers.py's keyboard.
-"""
-
 from datetime import timedelta
 from typing import Dict, Optional
 
@@ -38,15 +29,12 @@ from utils.timeutils import utcnow
 router = Router(name="top_plays")
 logger = get_logger("handlers.top_plays")
 
-# ── Per-viewer nav cache — mirrors bot/handlers/titles/handlers.py ──
 _NAV_CACHE: Dict[int, dict] = {}
 _TTL = timedelta(minutes=15)
-
 
 def _store_nav(uid: int, payload: dict) -> None:
     payload["expires_at"] = utcnow() + _TTL
     _NAV_CACHE[uid] = payload
-
 
 def _get_nav(uid: int) -> Optional[dict]:
     rec = _NAV_CACHE.get(uid)
@@ -57,19 +45,12 @@ def _get_nav(uid: int) -> Optional[dict]:
         return None
     return rec
 
-
 def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
 
-
 def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
                   subject_tg_id: Optional[int] = None, lang: str = "en") -> InlineKeyboardMarkup:
-    """`uid` is always the VIEWER (whoever is allowed to page through this —
-    checked against callback.from_user.id by every handler below), never the
-    profile subject. `subject_tg_id` is only needed for the "back to
-    profile" button, which has to know whose profile to rebuild — it can
-    differ from uid when this was opened from someone else's /pf."""
     rows = []
     if total_pages > 1:
         rows.append([
@@ -84,20 +65,12 @@ def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
                                           callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-# ── Data assembly ────────────────────────────────────────────────────────
-
 async def _fetch_best_scores(session, user_id: int):
     stmt = select(UserBestScore).where(UserBestScore.user_id == user_id)
     result = await session.execute(stmt)
     return result.scalars().all()
 
-
 def _flatten_raw_score(raw: dict) -> dict:
-    """Adapt a raw osu! API best-score payload into the flat shape
-    build_top_plays_list expects. Only used for unregistered public lookups —
-    there's no DB row, so no pp-delta history either (previous_pp always None,
-    so these rows never show a NEW/changed badge — expected and correct)."""
     beatmapset = raw.get("beatmapset") or {}
     beatmap = raw.get("beatmap") or {}
     mods_list = raw.get("mods") or []
@@ -121,13 +94,8 @@ def _flatten_raw_score(raw: dict) -> dict:
         "pp_changed_at": None,
     }
 
-
 async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str], *,
                           public_lookup: bool = False, viewer_tg_id: Optional[int] = None) -> dict:
-    """viewer_tg_id: whoever is looking at this card right now — it renders
-    in THEIR language, not the profile subject's (2026-07-05 fix; previously
-    used the subject's own language even for a cross-lookup, e.g. `tpp
-    <nickname>` showing in the looked-up player's language)."""
     if public_lookup:
         raw_scores = await osu_api_client.get_user_best_scores(user["id"], limit=100) if osu_api_client else []
         built = build_top_plays_list([_flatten_raw_score(r) for r in raw_scores])
@@ -135,10 +103,7 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         country_field = user.get("country")
         country = country_field.get("code") if isinstance(country_field, dict) else country_field
         avatar_url = user.get("avatar_url")
-        # user_data here is the already-flattened dict from
-        # OsuApiClient.get_user_data (cover_url/global_rank/pp/accuracy are
-        # top-level keys there, not nested cover{}/statistics{} — that
-        # nesting only exists in the raw API response it was built from).
+
         cover_url = user.get("cover_url")
         global_rank = user.get("global_rank")
         player_pp = user.get("pp")
@@ -166,23 +131,14 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         "accuracy": accuracy,
         "lang": card_lang,
         "has_back": False,
-        # For the star ratings, which are asked for a page at a time in
-        # `_render` rather than for the whole hundred here.
+
         "client": osu_api_client,
     }
 
-
 async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) -> None:
-    # The rating each play actually had, for the five rows about to be drawn.
-    #
-    # Here rather than when the list was built: a top-100 is a hundred plays and
-    # the card shows five of them, so asking about the whole list would be
-    # twenty pages of lookups to draw one. The client caches by map and mods, so
-    # paging back and forth costs nothing after the first look.
+
     built = payload.get("built") or []
-    # Clamped the way `build_top_plays_card_data` clamps it, so the rows looked
-    # up are the rows drawn — an out-of-range page would otherwise resolve
-    # nothing and draw the nominal figures.
+
     total_pages = max(1, (len(built) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     shown = max(0, min(page, total_pages - 1))
     page_rows = built[shown * ROWS_PER_PAGE:(shown + 1) * ROWS_PER_PAGE]
@@ -207,9 +163,6 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
             await message.answer_photo(photo=file, reply_markup=kb)
     except Exception as e:
         logger.debug(f"top plays render send failed: {e}")
-
-
-# ── Command ────────────────────────────────────────────────────────────────
 
 @router.message(TextTriggerFilter("tpp"))
 async def show_top_plays(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
@@ -264,9 +217,6 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
             logger.error(f"Error in /tpp for {tg_id}: {e}", exc_info=True)
             await message.answer(t("tpp.load_error", lang))
 
-
-# ── Callbacks ──────────────────────────────────────────────────────────────
-
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|p|"))
 async def on_tpp_page(callback: types.CallbackQuery) -> None:
     parts = callback.data.split("|", 3)
@@ -292,21 +242,12 @@ async def on_tpp_page(callback: types.CallbackQuery) -> None:
     await callback.answer()
     await _render(callback.message, uid, page, payload, edit=True)
 
-
 @router.callback_query(lambda c: c.data == "tpp|x")
 async def on_tpp_noop(callback: types.CallbackQuery) -> None:
     await callback.answer()
 
-
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|open|"))
 async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> None:
-    """callback_data is `tpp|open|<viewer_tg_id>|<subject_tg_id>` — separate
-    ids since 2026-07-05 (see _pf_keyboard's docstring): the ownership check
-    below must match whoever clicked (the viewer), while the profile to
-    fetch is the subject's — conflating the two into one id broke this
-    button for every cross-profile /pf lookup (clicking it as the viewer
-    always failed the check unless you were looking at your own profile,
-    since viewer == subject only in that one case)."""
     parts = callback.data.split("|", 3)
     if len(parts) != 4:
         await callback.answer()
@@ -328,13 +269,7 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
         if not user:
             await callback.answer(t("tpp.profile_not_found", lang), show_alert=True)
             return
-        # callback.from_user is the VIEWER, not necessarily the subject — their
-        # @handle is only correct to show here when they're the same person
-        # (opened this from your own /pf). Otherwise there's no live Telegram
-        # identity for the subject available in this DB row, so pass None and
-        # let the renderer fall back to the osu! username (its existing,
-        # always-correct default) instead of mislabelling the card with the
-        # viewer's own handle.
+
         tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
         payload = await _build_payload(session, user, None, tg_handle, viewer_tg_id=viewer_tg_id)
     payload["has_back"] = True
@@ -342,12 +277,8 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
     _store_nav(viewer_tg_id, payload)
     await _render(callback.message, viewer_tg_id, 0, payload, edit=True)
 
-
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|back|"))
 async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None) -> None:
-    """callback_data is `tpp|back|<viewer_tg_id>|<subject_tg_id>` — same
-    viewer/subject split as on_tpp_open, for the same reason (the profile
-    being returned to isn't necessarily the clicker's own)."""
     parts = callback.data.split("|", 3)
     if len(parts) != 4:
         await callback.answer()
@@ -364,16 +295,14 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
         await callback.answer(t("tpp.not_your_profile", lang), show_alert=True)
         return
     await callback.answer()
-    # Deliberately no live API refresh here — /pf just did one moments ago;
-    # re-reads the same (already fresh) DB row.
+
     from bot.handlers.profile.handlers import _build_page_data, _pf_keyboard
     async with get_db_session() as session:
         user = await get_registered_user(session, subject_tg_id, tenant_chat_id)
         if not user:
             await callback.answer(t("tpp.profile_not_found", lang), show_alert=True)
             return
-        # See on_tpp_open's identical note: callback.from_user is the VIEWER,
-        # only a valid @handle for the subject when they're the same person.
+
         tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
         data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=viewer_tg_id)
     buf = await card_renderer.generate_profile_dashboard_async(data)
@@ -383,6 +312,5 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
         await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=kb)
     except Exception as e:
         logger.debug(f"back-to-profile render send failed: {e}")
-
 
 __all__ = ["router"]

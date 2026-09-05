@@ -26,43 +26,35 @@ from services.image.utils import (
     cover_center_crop,
 )
 
-
-# ── Dashboard geometry — one wide landscape card mirroring the osu! mockup ──
 DASH_W = 1280
 DASH_H = 900
-CARD_M = 16                       # black margin around the main card
+CARD_M = 16
 CARD_PAD = 28
-INNER_L = CARD_M + CARD_PAD       # 44
-INNER_R = DASH_W - CARD_M - CARD_PAD   # 1236
+INNER_L = CARD_M + CARD_PAD
+INNER_R = DASH_W - CARD_M - CARD_PAD
 
-# Band coordinates (top-down) chosen to match the mockup's proportions.
 HERO_BOTTOM = 300
 STATS_Y0, STATS_Y1 = 316, 430
 MID_Y0 = 446
-PANEL_Y1 = 846                    # both big panels share this bottom edge
-SPLIT_X = 680                     # divider between left/right big panels
-LEFT_X0, LEFT_X1 = INNER_L, SPLIT_X - 8      # 44 .. 672
-RIGHT_X0, RIGHT_X1 = SPLIT_X + 8, INNER_R    # 688 .. 1236
+PANEL_Y1 = 846
+SPLIT_X = 680
+LEFT_X0, LEFT_X1 = INNER_L, SPLIT_X - 8
+RIGHT_X0, RIGHT_X1 = SPLIT_X + 8, INNER_R
 
-# ── Palette (red 1984 theme) — sourced from services/image/colors.py, the
-# shared design-system module this card's own palette became the basis for.
 COL_BG = colors.BG
 COL_CARD = colors.CARD
 COL_CARD_BORDER = colors.CARD_BORDER
 COL_PANEL = colors.PANEL
 COL_PANEL_BORDER = colors.PANEL_BORDER
-COL_RED = colors.ACCENT            # section titles / accents
-COL_CORAL = colors.ACCENT_PP       # pp value, country rank
+COL_RED = colors.ACCENT
+COL_CORAL = colors.ACCENT_PP
 COL_WHITE = colors.TEXT_PRIMARY
 COL_MUTED = colors.TEXT_MUTED
 COL_GREEN = colors.POSITIVE
 COL_TRACK = colors.TRACK
 COL_DIVIDER = colors.DIVIDER
-COL_HEART = colors.HEART           # osu!supporter pink heart
+COL_HEART = colors.HEART
 
-# The five grades osu! actually reports, low→high: A, S, silver S (SH), SS,
-# silver SS (SSH). Each pulls its own count — gold and silver variants are
-# distinguished purely by colour (gold = X/S, silver = XH/SH).
 GRADES = [
     ("A", "a", GRADE_COLORS["A"]),
     ("S", "s", GRADE_COLORS["S"]),
@@ -71,7 +63,6 @@ GRADES = [
     ("SS", "ssh", GRADE_COLORS["XH"]),
 ]
 
-# UI label translations (2026-07-02b — see [[card-language-preference]]).
 _PF_STRINGS = {
     "en": {
         "global_ranking": "Global Ranking", "country_ranking": "Country Ranking",
@@ -90,16 +81,12 @@ _PF_STRINGS = {
         "hours_suffix": "h",
     },
     "ru": {
-        # performance/accuracy/play_count sit in fixed-width columns and
-        # join_date/last_seen in a right-aligned block (see `jx` below) — long
-        # translations here can overflow; measure against Torus at the actual
-        # draw size before widening a label.
         "global_ranking": "Мировой рейтинг", "country_ranking": "Рейтинг страны",
         "unknown_country": "Неизвестно", "level": "Уровень", "performance": "PP",
         "accuracy": "Точность", "play_count": "Игр сыграно",
         "join_date": "Зарегистрирован", "last_seen": "В сети",
         "online": "Сейчас", "hidden": "Скрыто",
-        
+
         "grades": "ОЦЕНКИ", "top_plays": "ТОП ИГР", "player_stats": "СТАТИСТИКА ИГРОКА",
         "rank_history": "ИСТОРИЯ РЕЙТИНГА", "total_maps": "ВСЕГО ПОЛУЧЕНО ОЦЕНОК:",
         "total_hits": "Всего попаданий", "avg_hits": "Ср. попаданий на игру",
@@ -112,22 +99,17 @@ _PF_STRINGS = {
     },
 }
 
-
 def _pf_lang(data) -> dict:
     lang = (data.get("lang") or "en").lower()
     return _PF_STRINGS.get(lang, _PF_STRINGS["en"])
 
-
 def _sp(n) -> str:
-    """Thousands-separated with a thin space, like the mockup (15 392)."""
     try:
         return f"{int(n):,}".replace(",", " ")
     except Exception:
         return str(n)
 
-
 def _fmt_date(iso: Optional[str]) -> str:
-    """ISO timestamp → DD.MM.YYYY, or em-dash when missing/unparseable."""
     if not iso:
         return "—"
     try:
@@ -137,11 +119,7 @@ def _fmt_date(iso: Optional[str]) -> str:
     except Exception:
         return "—"
 
-
 def _fmt_last_seen(iso: Optional[str], lang: str = "en") -> str:
-    """Last-visit timestamp → coarse relative age ("5m ago" … "3w ago"), an
-    absolute date once it's months old, or "Hidden" when osu! reports no
-    last_visit (the user hides their online presence)."""
     S = _PF_STRINGS.get((lang or "en").lower(), _PF_STRINGS["en"])
     if not iso:
         return S["hidden"]
@@ -166,30 +144,16 @@ def _fmt_last_seen(iso: Optional[str], lang: str = "en") -> str:
         return f"{int(days // 7)}нед назад" if ru else f"{int(days // 7)}w ago"
     return _fmt_date(iso)
 
-
 def _grade_color(g: str):
-    """Grade rank → osu! canonical colour. Silver (XH/SH) and gold (X/S)
-    variants keep their own colour; SS/SSH aliases map onto X/XH."""
     g = (g or "").upper()
     key = {"SS": "X", "SSH": "XH"}.get(g, g)
     return GRADE_COLORS.get(key, GRADE_COLORS["F"])
 
-
 def _grade_letter(g: str) -> str:
-    """Display letter for an osu! rank: silver/gold share a letter (the silver
-    'H' suffix is dropped, the colour alone marks it). X/XH→X, S/SH→S. Was
-    X/XH→"SS" (2 chars) until 2026-07-15 — that ran wide enough to collide
-    with the pp/accuracy text in the ~105px top-play poster tiles; "X" is
-    osu!'s own single-character code for the same rank and needs no special
-    kerning treatment, same as every other grade."""
     g = (g or "").upper()
     return {"X": "X", "XH": "X", "S": "S", "SH": "S"}.get(g, g)
 
-
 class ProfileCardMixin:
-    """Single rich profile dashboard — one wide card, no inline pages."""
-
-    # ── Profile-specific fonts (lazy, cached on the instance) ──
 
     def _pf_fonts(self) -> dict:
         cache = getattr(self, "_pf_font_cache", None)
@@ -229,8 +193,6 @@ class ProfileCardMixin:
             "total": mk(s, 17, self.font_stat_label),
         }
 
-        # Register CJK fallbacks for the fonts that render user-supplied text
-        # (username / handle), so cyrillic / kana don't tofu.
         mpb = _find_font(MPLUS_BOLD)
         mpr = _find_font(MPLUS_REG) or mpb
 
@@ -246,9 +208,6 @@ class ProfileCardMixin:
             fb_map[id(f["handle"])] = mfb(mpr, 28)
             fb_map[id(f["country"])] = mfb(mpr, 23)
 
-        # Cyrillic-specific fallback (2026-07-02b): ProximaSoft, weight-matched
-        # per slot, for every slot that can now carry translated UI text or an
-        # RU active-title name — takes priority over the CJK fallback above.
         pxb = _find_font(PROXIMA_BOLD)
         pxs = _find_font(PROXIMA_SEMI) or pxb
         pxr = _find_font(PROXIMA_REG) or pxb
@@ -266,8 +225,6 @@ class ProfileCardMixin:
         self._pf_font_cache = f
         return f
 
-    # ── Public entrypoints ──
-
     def generate_profile_dashboard(
         self,
         data: Dict,
@@ -279,7 +236,6 @@ class ProfileCardMixin:
         img, draw = self._create_canvas(W, H)
         draw.rectangle([(0, 0), (W, H)], fill=COL_BG)
 
-        # Outer card frame.
         self._pf_panel(img, (CARD_M, CARD_M, W - CARD_M, H - CARD_M),
                        radius=24, fill=COL_CARD, border=COL_CARD_BORDER)
         draw = ImageDraw.Draw(img)
@@ -290,8 +246,6 @@ class ProfileCardMixin:
         self._pf_left_panel(img, data, top_bg_images, fonts)
         self._pf_right_panel(img, data, fonts)
 
-        # Re-stroke the outer frame last so the hero banner (pasted over the top
-        # corners) can't paint over the card's border.
         self._aa_rounded_outline(img, (CARD_M, CARD_M, W - CARD_M, H - CARD_M),
                                  radius=24, outline=COL_CARD_BORDER, width=1)
 
@@ -325,8 +279,6 @@ class ProfileCardMixin:
             self.generate_profile_dashboard, data, avatar, cover, top_bg_images
         )
 
-    # ── Shared primitives ──
-
     def _pf_panel(self, img, box, *, radius=16, fill=COL_PANEL, border=COL_PANEL_BORDER):
         self._aa_rounded_fill(img, box, radius=radius, fill=fill)
         if border:
@@ -335,18 +287,11 @@ class ProfileCardMixin:
     def _pf_section_title(self, draw, x, y, text, fonts):
         self._draw_text(draw, (x, y), text, fonts["title"], COL_RED)
 
-    # ── Hero band ──
-
     def _pf_hero(self, img, data, avatar, cover, fonts):
         S = _pf_lang(data)
         cw = DASH_W - 2 * CARD_M
         hero_h = HERO_BOTTOM - CARD_M
 
-        # Banner image, bled across the whole hero — muted on the left, vivid
-        # on the right (unified cover-bleed standard, services/image/base.py).
-        # Fully rounded on all 4 corners (radius=24, matching the outer
-        # card's own) so it reads as its own tidy panel, consistent with the
-        # stat/grade panels below it, rather than a flat-bottomed cutout.
         if cover:
             try:
                 bled = self._cover_bleed(cover, cw, hero_h, darken_alpha=96, radius=24)
@@ -355,7 +300,6 @@ class ProfileCardMixin:
                 pass
         draw = ImageDraw.Draw(img)
 
-        # Avatar — huge circular portrait with a warm red glow ring.
         d = 212
         ax, ay = 46, 46
         glow = Image.new("RGBA", (d + 80, d + 80), (0, 0, 0, 0))
@@ -373,7 +317,6 @@ class ProfileCardMixin:
         self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=(228, 76, 76), width=7)
         draw = ImageDraw.Draw(img)
 
-        # Name + osu!supporter badge + handle.
         nx = ax + d + 28
         name = str(data.get("username", "???"))
         self._draw_text_shadow(draw, (nx, 50), name, fonts["name"], COL_WHITE)
@@ -381,10 +324,9 @@ class ProfileCardMixin:
         if data.get("is_supporter"):
             self._pf_supporter_badge(img, nx + nw + 12, 80)
             draw = ImageDraw.Draw(img)
-        # Subtitle stack under the name: @handle, then the active title
-        # (evenly spaced between the handle and the flag), then flag+country.
+
         sy = 110
-        handle = data.get("handle")  # Telegram @handle, only when known.
+        handle = data.get("handle")
         if handle:
             self._draw_text(draw, (nx, sy), handle, fonts["handle"], (188, 150, 152))
             sy += 40
@@ -395,7 +337,6 @@ class ProfileCardMixin:
             sy += 44
             draw = ImageDraw.Draw(img)
 
-        # Flag + country. Rides up close to the name when nothing sits above it.
         flag = load_flag(str(data.get("country", "") or ""), height=30)
         has_subtitle = bool(title) or bool(handle)
         fy = sy + 2 if has_subtitle else 128
@@ -415,8 +356,6 @@ class ProfileCardMixin:
         _, ch = self._text_size(draw, cname, fonts["country"])
         self._draw_text_shadow(draw, (cur, fy + (30 - ch) // 2), cname, fonts["country"], COL_WHITE)
 
-        # Rankings, LEFT-aligned at ~68% width. Drawn with a drop shadow so they
-        # stay legible where they overlap a light cover banner.
         rank_x = 872
         gr = data.get("global_rank", 0) or 0
         cr = data.get("country_rank", 0) or 0
@@ -426,11 +365,6 @@ class ProfileCardMixin:
         self._draw_text_shadow(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
 
     def _pf_supporter_badge(self, img, x, cy):
-        """osu!supporter badge — a pink capsule with a white heart glyph.
-
-        The heart is `assets/icons/heart.png` (a white silhouette), recoloured
-        white over the pink capsule fill, with a soft pink glow behind it.
-        """
         ph, pw = 40, 64
         y0 = cy - ph // 2
         glow = Image.new("RGBA", (pw + 40, ph + 40), (0, 0, 0, 0))
@@ -446,15 +380,10 @@ class ProfileCardMixin:
             img.paste(white, (x + (pw - heart.width) // 2, y0 + (ph - heart.height) // 2), white)
 
     def _pf_title_text(self, img, x, y, title, color, font):
-        """Active title under the name: flat text in the rarity colour, with only
-        the same subtle drop shadow as the name. No outline or glow — the name
-        stays clean and readable, so a title reads by its words, not just its tier."""
         if not title:
             return
         draw = ImageDraw.Draw(img)
         self._draw_text_shadow(draw, (x, y), title, font, color)
-
-    # ── Stats strip ──
 
     def _pf_stats_strip(self, img, data, fonts):
         S = _pf_lang(data)
@@ -473,7 +402,6 @@ class ProfileCardMixin:
             self._draw_text(draw, (x, y_lbl), label, fonts["stat_lbl"], COL_MUTED)
             self._draw_text(draw, (x, y_val), value, fonts["stat_val"], vcol)
 
-        # Level — number in the accent colour, then the progress bar level with it.
         lx = 700
         level = data.get("level", 0) or 0
         prog = data.get("level_progress", 0) or 0
@@ -484,8 +412,7 @@ class ProfileCardMixin:
 
         bar_x0, bar_x1 = lx + lvw + 18, 968
         bar_h = 10
-        # Centre the bar on the number's visual ink mid-line (not the text box,
-        # which sits high due to ascent padding) so the two read on one level.
+
         try:
             _, gy0, _, gy1 = fonts["stat_val"].getbbox(lvl_str)
         except Exception:
@@ -496,12 +423,11 @@ class ProfileCardMixin:
         if inner > 6:
             self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, (200, 52, 52), (240, 124, 96), radius=5)
         draw = ImageDraw.Draw(img)
-        # Percent sits just above the right end of the progress bar.
+
         pct = f"{int(prog)}%"
         pct_w, pct_h = self._text_size(draw, pct, fonts["count"])
         self._draw_text(draw, (bar_x1 - pct_w, bar_y - pct_h - 2), pct, fonts["count"], COL_CORAL)
 
-        # Join Date / Last Seen, right-aligned block.
         jx = 1020
         self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
         self._draw_text(draw, (jx, STATS_Y0 + 34), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
@@ -513,8 +439,6 @@ class ProfileCardMixin:
             seen_text = _fmt_last_seen(data.get("last_visit"), lang)
             seen_col = COL_MUTED if seen_text == S["hidden"] else COL_WHITE
         self._draw_text(draw, (jx, STATS_Y0 + 82), seen_text, fonts["ps_val"], seen_col)
-
-    # ── Left big panel: RANKED SCORE + RECENT TOP PLAYS ──
 
     def _pf_left_panel(self, img, data, top_bg_images, fonts):
         S = _pf_lang(data)
@@ -533,17 +457,14 @@ class ProfileCardMixin:
         slot = width / len(GRADES)
         circ_top = MID_Y0 + 52
         cd = 52
-        # Big borderless grade letters with a coloured glow. All glow shapes go
-        # on one layer that's blurred once and composited twice (brighter halo),
-        # then the crisp letters are drawn on top.
+
         cyl = circ_top + cd // 2
         glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
         gdraw = ImageDraw.Draw(glow)
         letters = []
         for i, (letter, key, color) in enumerate(GRADES):
             cc = int(cx0 + slot * i + slot / 2)
-            # Centre each letter on its actual ink bbox (not the text box) so the
-            # grades sit level with one another regardless of glyph differences.
+
             try:
                 bx0, by0, bx1, by1 = fonts["grade"].getbbox(letter)
             except Exception:
@@ -561,15 +482,11 @@ class ProfileCardMixin:
             self._draw_text(draw, (lx_, ly_), letter, fonts["grade"], color)
             self._text_center(draw, cc, circ_top + cd + 8, _sp(cnt), fonts["count"], COL_WHITE)
 
-        # Grade-distribution bar — proportional split across the five grades.
         bar_y = circ_top + cd + 40
         segments = [(gcount(key), color) for (letter, key, color) in GRADES]
         self._pf_grade_bar(img, cx0, bar_y, width, 14, segments)
         draw = ImageDraw.Draw(img)
 
-        # Total maps played — label and value are independently positioned
-        # (each on its own ink mid-line, not a common top edge) so one can move
-        # without dragging the other.
         total = data.get("total_maps", 0) or 0
         label, val = S["total_maps"], _sp(total)
         cy_label = bar_y + 44
@@ -586,7 +503,6 @@ class ProfileCardMixin:
         lw, _ = self._text_size(draw, label, fonts["total"])
         self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"], cy_val)), val, fonts["ps_val"], COL_WHITE)
 
-        # Divider, then RECENT TOP PLAYS posters.
         div_y = bar_y + 62
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
         self._pf_section_title(draw, cx0, div_y + 14, S["top_plays"], fonts)
@@ -611,7 +527,7 @@ class ProfileCardMixin:
                 crop = Image.new("RGBA", (w, h), (46, 36, 38, 255))
         else:
             crop = Image.new("RGBA", (w, h), (44, 34, 36, 255))
-        # Darken toward the bottom so the grade/pp text reads.
+
         grad = Image.new("L", (w, h), 0)
         gd = ImageDraw.Draw(grad)
         for gy in range(h):
@@ -629,18 +545,12 @@ class ProfileCardMixin:
         grade = _grade_letter(rank)
         pp = sc.get("pp") or 0
         acc = sc.get("accuracy", 0) or 0
-        # Big grade letter in the bottom-left corner, raised slightly off the edge.
+
         gcol = _grade_color(rank)
         gw, gh = self._text_size(draw, grade, fonts["poster_grade"])
         gy = y + h - 14 - gh
         self._draw_text_shadow(draw, (x + 9, gy), grade, fonts["poster_grade"], gcol)
-        # pp (smaller) over accuracy — both horizontally centred in the space
-        # freed up to the right of the grade letter (not pinned to the tile's
-        # right edge). Accuracy is skipped for the top grade (X, osu!'s "SS")
-        # — it's always ~100% there anyway, so it was redundant; with it
-        # gone, pp alone is also ink-centred vertically on the grade
-        # letter's own middle instead of sitting at the old stacked-on-top
-        # position with empty space below it.
+
         free_x0, free_x1 = x + 9 + gw + 6, x + w - 10
         free_cx = (free_x0 + free_x1) // 2
         pp_txt = f"{int(pp)}pp"
@@ -650,8 +560,6 @@ class ProfileCardMixin:
         else:
             self._text_center(draw, free_cx, y + h - 40, pp_txt, fonts["poster_pp"], COL_WHITE, shadow=True)
             self._text_center(draw, free_cx, y + h - 21, f"{acc:.2f}%", fonts["poster_acc"], (205, 203, 214), shadow=True)
-
-    # ── Right big panel: PLAY STATS + PERFORMANCE HISTORY ──
 
     def _pf_right_panel(self, img, data, fonts):
         S = _pf_lang(data)
@@ -682,28 +590,23 @@ class ProfileCardMixin:
                 img.paste(icon, (cx0, ry + 2), icon)
                 draw = ImageDraw.Draw(img)
                 tx = cx0 + 32
-            # Vertically centre both the label and the value on the icon.
+
             _, lh = self._text_size(draw, label, fonts["ps_lbl"])
             ty = ry + (icon_sz - lh) // 2
             self._draw_text(draw, (tx, ty), label, fonts["ps_lbl"], (208, 206, 222))
             self._text_right(draw, cx1, ty, value, fonts["ps_val"], COL_WHITE)
             ry += step
 
-        # Divider, then RANK HISTORY graph. osu! only exposes a 90-day global
-        # rank series (no pp history), so this plots rank — lower is better, so
-        # the axis is inverted inside `_pf_graph` (is_rank=True).
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
         self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], COL_RED)
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
-        gx0 = cx0 + 42                       # leave room for y-axis labels
+        gx0 = cx0 + 42
         gx1 = cx1
         gy0 = div_y + 46
-        gy1 = PANEL_Y1 - 48                  # leave room for x-axis labels
-        # Width available to a y-axis label: from just inside the panel's left
-        # border up to the gap before the plot. Lets `_pf_graph` shrink the axis
-        # font so 6–7 digit ranks don't spill past the frame.
+        gy1 = PANEL_Y1 - 48
+
         label_w = (gx0 - 10) - (RIGHT_X0 + 6)
         if len(rank_history) >= 2:
             self._pf_graph(img, list(rank_history), gx0, gy0, gx1 - gx0, gy1 - gy0,
@@ -733,9 +636,6 @@ class ProfileCardMixin:
             g = v / 1000.0
             return (f"{g:.1f}".rstrip("0").rstrip(".") + "k") if v >= 1000 else str(int(v))
 
-        # The 4 y-axis label values, then a font sized so the widest of them fits
-        # the available gutter (`label_w`) — large ranks (6–7 digits) would
-        # otherwise overflow past the frame at the fixed axis size.
         axis_vals = [(lo + rng * gi / 3) if is_rank else (hi - rng * gi / 3) for gi in range(4)]
         axis_labels = [_fmt(v) for v in axis_vals]
         axis_font = fonts["axis"]
@@ -749,9 +649,6 @@ class ProfileCardMixin:
                     axis_font = ImageFont.truetype(path, size)
                     widest = max(self._text_size(draw, s, axis_font)[0] for s in axis_labels)
 
-        # Horizontal gridlines + y-axis labels. The rank axis is inverted (a
-        # better = smaller rank sits higher), so its labels ascend downward to
-        # match the plotted line.
         for gi in range(4):
             gy = y + int(h * gi / 3)
             draw.line([(x, gy), (x + w, gy)], fill=(46, 38, 40), width=1)
@@ -760,10 +657,6 @@ class ProfileCardMixin:
         step = w / (len(vals) - 1)
         coords = [(int(x + i * step), _y(v)) for i, v in enumerate(vals)]
 
-        # Catmull-Rom through the (few, sparse) raw points, then the unified
-        # graph standard (services/image/base.py) for the fill+line render —
-        # a straight polyline through only 4 points read as a hard "staircase"
-        # at every bend, and PIL's plain draw.line isn't anti-aliased either.
         smooth = self._smooth_points(coords)
         self._aa_graph_curve(img, x, y, w, h, smooth,
                              line_color=(236, 92, 92), line_width=3, fill_color=(228, 72, 72, 55))
@@ -771,7 +664,6 @@ class ProfileCardMixin:
         ex, ey = coords[-1]
         draw.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=(245, 120, 120))
 
-        # X-axis labels.
         labels = [S["axis_90d"], S["axis_60d"], S["axis_30d"], S["axis_now"]]
         for i, lbl in enumerate(labels):
             lx = x + int(w * i / 3)
@@ -781,8 +673,6 @@ class ProfileCardMixin:
                 self._text_right(draw, x + w, y + h + 8, lbl, fonts["axis"], COL_MUTED)
             else:
                 self._text_center(draw, lx, y + h + 8, lbl, fonts["axis"], COL_MUTED)
-
-    # ── Gradient helpers ──
 
     def _pf_hgrad(self, img, x, y, w, h, c0, c1, *, radius=0):
         if w <= 0:
@@ -797,20 +687,12 @@ class ProfileCardMixin:
         img.paste(strip, (x, y), mask)
 
     def _pf_grade_bar(self, img, x, y, w, h, segments):
-        """Proportional grade-distribution bar with smooth colour transitions.
-
-        `segments` is ``[(count, color)]``. Each grade's colour dominates a band
-        proportional to its count, but neighbouring colours blend smoothly into
-        one another (a colour stop sits at each band's centre) for a rainbow-like
-        gradient instead of hard edges. All-zero → flat track."""
         total = sum(max(0, c) for c, _ in segments)
         mask = self._rounded_mask((w, h), h // 2)
         strip = Image.new("RGB", (w, h), COL_TRACK)
         nz = [(c, col) for c, col in segments if c > 0]
         if total > 0 and nz:
-            # Each grade holds its solid colour across its proportional band; the
-            # blend is confined to a short zone (BLEND px each side) around every
-            # boundary, clamped so it never exceeds half of either band.
+
             BLEND = 9.0
             starts, widths = [], []
             cur = 0.0
@@ -819,7 +701,7 @@ class ProfileCardMixin:
                 starts.append(cur)
                 widths.append(seg_w)
                 cur += seg_w
-            edges = []  # (boundary_x, left_color, right_color, radius)
+            edges = []
             for i in range(len(nz) - 1):
                 pos = starts[i] + widths[i]
                 radius = min(BLEND, widths[i] / 2.0, widths[i + 1] / 2.0)

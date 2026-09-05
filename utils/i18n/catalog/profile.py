@@ -1,5 +1,4 @@
 CATALOG = {
-    # ── cmp (compare command) ────────────────────────────────────────────
     "cmp.usage": {
         "en": ("Usage: <code>cmp &lt;nickname or ID&gt;</code>\n"
                "Or: <code>cmp user1 vs user2</code>\n"
@@ -51,7 +50,6 @@ CATALOG = {
                "  • {u2}: <code>{pc2}</code>"),
     },
 
-    # ── pf (profile dashboard) / rf (refresh) ────────────────────────────
     "pf.kb.osu_profile": {"en": "osu! profile", "ru": "Профиль osu!"},
     "pf.kb.top_plays": {"en": "Top plays", "ru": "Топ-плеи"},
     "pf.user_not_found": {
@@ -91,7 +89,6 @@ CATALOG = {
         "ru": "Произошла ошибка при обновлении. Проверьте логи.",
     },
 
-    # ── tpp (top plays) ──────────────────────────────────────────────────
     "tpp.kb.page": {"en": "Page {page}/{total}", "ru": "Стр. {page}/{total}"},
     "tpp.kb.back_to_profile": {"en": "◀ Back to profile", "ru": "◀ Назад к профилю"},
     "tpp.refreshing_cached_fallback": {
@@ -119,7 +116,6 @@ CATALOG = {
         "ru": "Профиль не найден.",
     },
 
-    # ── rs (recent play) ──────────────────────────────────────────────────
     "rs.searching_player": {
         "en": "Searching for player <b>{name}</b>…",
         "ru": "Поиск игрока <b>{name}</b>...",

@@ -1,6 +1,3 @@
-"""Title section (`st:tt`): pick the active title shown on /profile from the
-titles the caller has unlocked (or clear it)."""
-
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
@@ -18,16 +15,14 @@ router = Router(name="settings_titles")
 
 _TITLES_PER_PAGE = 5
 
-
 async def _unlocked_title_codes(session, user_id: int) -> set:
     rows = await session.execute(
         select(UserTitleProgress.title_code).where(
             UserTitleProgress.user_id == user_id,
-            UserTitleProgress.unlocked == True,  # noqa: E712
+            UserTitleProgress.unlocked == True,
         )
     )
     return {r[0] for r in rows.all()}
-
 
 async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en"):
     async with get_db_session() as session:
@@ -42,7 +37,6 @@ async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en
         td = TITLE_REGISTRY.get(active)
         active_name = td.name if td else active
 
-    # Registry order keeps titles grouped by rarity.
     ordered = [c for c in TITLE_REGISTRY if c in codes]
     text = t("sts.title.header", lang, name=escape_html(active_name) if active_name else t("sts.title.none", lang))
     rows = []
@@ -74,7 +68,6 @@ async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en
     rows.append(_nav_row(lang))
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 async def _show_title_page(callback: types.CallbackQuery, tenant_chat_id, page: int, lang: str = "en"):
     text, kb = await _title_view(callback.from_user.id, tenant_chat_id, page, lang)
     if text is None:
@@ -86,7 +79,6 @@ async def _show_title_page(callback: types.CallbackQuery, tenant_chat_id, page: 
         pass
     return True
 
-
 @router.callback_query(F.data == "st:tt")
 async def cb_title(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
@@ -94,11 +86,9 @@ async def cb_title(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
     await _show_title_page(callback, tenant_chat_id, 0, lang)
     await callback.answer()
 
-
 @router.callback_query(F.data == "st:tt:nop")
 async def cb_title_nop(callback: types.CallbackQuery, tenant_chat_id=None):
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("st:tt:pg:"))
 async def cb_title_page(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
@@ -111,10 +101,7 @@ async def cb_title_page(callback: types.CallbackQuery, tenant_chat_id=None, lang
     await _show_title_page(callback, tenant_chat_id, page, lang)
     await callback.answer()
 
-
 async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code, page: int, lang: str = "en"):
-    """Persist active_title_code (validated unlocked, or None to clear) and refresh
-    the same page."""
     async with get_db_session() as session:
         user = await get_registered_user(session, callback.from_user.id, tenant_chat_id)
         if not user:
@@ -134,12 +121,11 @@ async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code,
         td = TITLE_REGISTRY.get(code)
         await callback.answer(t("sts.title.set_alert", lang, name=td.name if td else code))
 
-
 @router.callback_query(F.data.startswith("st:tt:set:"))
 async def cb_title_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
         return
-    parts = callback.data.split(":", 4)  # st:tt:set:<page>:<code>
+    parts = callback.data.split(":", 4)
     if len(parts) != 5:
         await callback.answer()
         return
@@ -148,7 +134,6 @@ async def cb_title_set(callback: types.CallbackQuery, tenant_chat_id=None, lang:
     except ValueError:
         page = 0
     await _set_active_title(callback, tenant_chat_id, parts[4], page, lang)
-
 
 @router.callback_query(F.data.startswith("st:tt:off:"))
 async def cb_title_off(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):

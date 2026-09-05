@@ -44,45 +44,34 @@ from services.image.render.profile import (
 from services.image.render.recent import _sr_color
 from utils.titles import RARITY_ORDER, RARITY_META, rarity_label_for
 
-# ── Geometry — landscape "collection" card mirroring the titlescollection mockup ─
 TT_W = 1280
 TT_H = 900
-INNER_L = CARD_M + 28                 # 44
-INNER_R = TT_W - CARD_M - 28          # 1236
+INNER_L = CARD_M + 28
+INNER_R = TT_W - CARD_M - 28
 
-# Header band. Filter tabs sit on their OWN row below the title/subtitle (not
-# squeezed onto the title's line) — Russian rarity words (ЛЕГЕНДАРНЫЙ,
-# МИФИЧЕСКИЙ...) run far wider than the English tab labels and collided with
-# the header title when they shared a row (2026-07-02).
 HEAD_Y0 = CARD_M
 HEAD_Y1 = 140
-LEFT_X0, LEFT_X1 = INNER_L, 408        # left column
-RIGHT_X0, RIGHT_X1 = 424, INNER_R      # right column (rows)
+LEFT_X0, LEFT_X1 = INNER_L, 408
+RIGHT_X0, RIGHT_X1 = 424, INNER_R
 BODY_Y0 = 156
-BOTTOM_Y0 = 800                        # bottom "latest / next reward" bar
-BOTTOM_Y1 = TT_H - CARD_M - 12         # 872
-BODY_Y1 = BOTTOM_Y0 - 12               # columns bottom
+BOTTOM_Y0 = 800
+BOTTOM_Y1 = TT_H - CARD_M - 12
+BODY_Y1 = BOTTOM_Y0 - 12
 
 ROWS_PER_PAGE = 10
 
 def _tt_tabs(lang: str = "en"):
-    """Filter tabs (code, label). "all" first, then rarities ascending. A
-    function (not a module constant) since the labels are lang-aware."""
     all_label = "ALL" if (lang or "en").lower() != "ru" else "ВСЕ"
     return [("all", all_label)] + [
         (r, rarity_label_for(r, lang).upper()) for r in RARITY_ORDER
     ]
 
+COL_DESC = (224, 222, 228)
+COL_FC = (88, 204, 108)
+COL_PASS = (240, 120, 70)
+COL_INK_DARK = (24, 18, 12)
+COL_INK_LIGHT = (250, 248, 252)
 
-COL_DESC = (224, 222, 228)               # title description text (white, bold)
-COL_FC = (88, 204, 108)                  # the word "FC" — green (a full combo)
-COL_PASS = (240, 120, 70)                # the word "Pass" — orange-red (a clear)
-COL_INK_DARK = (24, 18, 12)              # text on light pills
-COL_INK_LIGHT = (250, 248, 252)          # text on dark pills
-
-# Tokens inside a description that render specially: star-rating ("6.5*+") as a
-# lazer-spectrum pill, mod clusters ("HDDT") as mod-icon pills, grade letters
-# ("SS"/"S") as coloured text. Everything else is plain white.
 _DESC_RE = re.compile(
     r"(?P<sr>\d+(?:\.\d+)?\*\+?)"
     r"|(?P<mod>(?<![A-Za-z])(?:HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF|TD)+(?![A-Za-z]))"
@@ -91,18 +80,13 @@ _DESC_RE = re.compile(
     r"|(?P<grade>(?<![A-Za-z])(?:SS|S|A|B|C|D)(?![A-Za-z]))"
 )
 
-
 def _lum(c) -> float:
     return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
 
-
 def _ink_for(fill) -> tuple:
-    """Contrast ink (dark on light fills, light on dark) for pills."""
     return COL_INK_DARK if _lum(fill) > 140 else COL_INK_LIGHT
 
-
 def _tokenize_desc(text: str):
-    """Split a description into (segment, kind) runs: 'sr', 'mod', 'grade', 'text'."""
     out, i = [], 0
     for m in _DESC_RE.finditer(text):
         if m.start() > i:
@@ -113,9 +97,7 @@ def _tokenize_desc(text: str):
         out.append((text[i:], "text"))
     return out
 
-
 def _fmt_dt(dt) -> str:
-    """datetime / ISO string → DD.MM.YYYY, em-dash when missing."""
     if not dt:
         return "—"
     if isinstance(dt, datetime):
@@ -127,23 +109,13 @@ def _fmt_dt(dt) -> str:
     except Exception:
         return "—"
 
-
 def _dim(color, k=0.34):
-    """Desaturate a rarity colour toward the panel tone (locked emblems)."""
     base = (44, 38, 44)
     return tuple(int(color[i] * k + base[i] * (1 - k)) for i in range(3))
-
 
 def _mix(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
-
-# UI label translations (2026-07-02, extended 2026-07-02b — see
-# [[card-language-preference]]). Rarity-tier vocabulary (_tt_tabs,
-# "STATISTICS" row labels via rarity_label_for) and TITLE_REGISTRY
-# name/description (utils/titles.py's name_for/description_for) are now
-# translated too, baked in by refresh_user_titles(lang=...) before this
-# renderer ever sees them.
 _TT_STRINGS = {
     "en": {
         "header": "TITLES COLLECTION", "subheader": "Show off your achievements",
@@ -169,22 +141,11 @@ _TT_STRINGS = {
     },
 }
 
-
 def _tt_lang(data) -> dict:
     lang = (data.get("lang") or "en").lower()
     return _TT_STRINGS.get(lang, _TT_STRINGS["en"])
 
-
 class TitlesCardMixin:
-    """TITLES COLLECTION dashboard — one wide card, red 1984 theme.
-
-    Layout follows the titlescollection mockup: a profile/stats column on the
-    left, a paged list of title rows on the right, and a latest/next-reward bar
-    along the bottom. Rarity filtering and pagination are driven by Telegram
-    inline buttons; the card draws the *current* filter/page state.
-    """
-
-    # ── Fonts (lazy, cached; every slot gets a Cyrillic fallback) ──
 
     def _tt_fonts(self) -> dict:
         cache = getattr(self, "_tt_font_cache", None)
@@ -226,7 +187,6 @@ class TitlesCardMixin:
             "note":      mk(r, 14, self.font_small),
         }
 
-        # CJK fallback for every slot — the whole card can carry foreign content.
         mpb = _find_font(MPLUS_BOLD)
         mpr = _find_font(MPLUS_REG) or mpb
 
@@ -251,9 +211,6 @@ class TitlesCardMixin:
             for key, (path, size) in sizes.items():
                 fb_map[id(f[key])] = mfb(path, size)
 
-        # Cyrillic-specific fallback (2026-07-02): ProximaSoft, weight-matched
-        # to each slot's own primary weight (b/s/r above). Takes priority over
-        # the CJK fallback for Cyrillic-block characters.
         pxb = _find_font(PROXIMA_BOLD)
         pxs = _find_font(PROXIMA_SEMI) or pxb
         pxr = _find_font(PROXIMA_REG) or pxb
@@ -274,8 +231,6 @@ class TitlesCardMixin:
 
         self._tt_font_cache = f
         return f
-
-    # ── Public entrypoints ──
 
     def generate_titles_card(self, data: Dict, avatar: Optional[Image.Image] = None) -> BytesIO:
         W, H = TT_W, TT_H
@@ -298,18 +253,12 @@ class TitlesCardMixin:
         avatar = results[0] if results and not isinstance(results[0], Exception) else None
         return await asyncio.to_thread(self.generate_titles_card, data, avatar)
 
-    # ── Header ──
-
     def _tt_header(self, img, data, fonts):
         draw = ImageDraw.Draw(img)
         S = _tt_lang(data)
         self._draw_text(draw, (INNER_L, HEAD_Y0 + 18), S["header"], fonts["h_title"], COL_WHITE)
         self._draw_text(draw, (INNER_L, HEAD_Y0 + 62), S["subheader"], fonts["h_sub"], COL_MUTED)
 
-        # Filter tabs, right-aligned, on their own row below the title/subtitle.
-        # Active tab filled with its rarity colour (red for "all"); the rest
-        # are faint outlines. These mirror the inline buttons under the photo —
-        # the image shows the current selection.
         active = data.get("filter", "all")
         pad_x, gap, th = 12, 8, 30
         ty = HEAD_Y0 + 94
@@ -320,7 +269,7 @@ class TitlesCardMixin:
         for code, lbl, w in widths:
             col = COL_RED if code == "all" else RARITY_META[code]["color"]
             box = (tx, ty, tx + w, ty + th)
-            # Every tab carries its category's rarity colour; the active one fills.
+
             if code == active:
                 self._aa_rounded_fill(img, box, radius=th // 2, fill=_mix(col, COL_CARD, 0.30))
                 self._aa_rounded_outline(img, box, radius=th // 2, outline=col, width=1)
@@ -333,8 +282,6 @@ class TitlesCardMixin:
                               lbl, fonts["tab"], tcol)
             tx += w + gap
 
-    # ── Left column ──
-
     def _tt_left(self, img, data, avatar, fonts):
         self._pf_panel(img, (LEFT_X0, BODY_Y0, LEFT_X1, BODY_Y1), radius=16)
         draw = ImageDraw.Draw(img)
@@ -343,7 +290,6 @@ class TitlesCardMixin:
         cx1 = LEFT_X1 - 22
         y = BODY_Y0 + 24
 
-        # Profile mini — circular avatar with red ring, name, handle, flag.
         d = 86
         ax, ay = cx0, y
         glow = Image.new("RGBA", (d + 60, d + 60), (0, 0, 0, 0))
@@ -371,7 +317,6 @@ class TitlesCardMixin:
             img.paste(flag, (tx, ay + 66), flag)
             draw = ImageDraw.Draw(img)
 
-        # TITLES UNLOCKED — big count + progress bar.
         y = ay + d + 30
         s = data.get("summary", {}) or {}
         unlocked = s.get("unlocked", 0)
@@ -392,7 +337,6 @@ class TitlesCardMixin:
             self._pf_hgrad(img, cx0, y, inner, bar_h, (200, 52, 52), (240, 124, 96), radius=5)
         draw = ImageDraw.Draw(img)
 
-        # RAREST TITLE — hardest-tier unlocked title in a small framed sub-card.
         y += 34
         self._draw_text(draw, (cx0, y), S["rarest_hdr"], fonts["sec"], COL_RED)
         y += 26
@@ -411,7 +355,6 @@ class TitlesCardMixin:
         else:
             self._text_center(draw, (cx0 + cx1) // 2, y + rh // 2 - 8, S["none_yet"], fonts["rare_sub"], COL_MUTED)
 
-        # STATISTICS — per-rarity counts.
         y += rh + 26
         self._draw_text(draw, (cx0, y), S["stats_hdr"], fonts["sec"], COL_RED)
         y += 30
@@ -422,7 +365,7 @@ class TitlesCardMixin:
             b = by.get(r, {"unlocked": 0, "total": 0})
             rows.append((rarity_label_for(r, lang), RARITY_META[r]["color"], b["unlocked"], b["total"]))
         sw = 13
-        # Spread the eight rows evenly across the column's remaining height.
+
         step = max(26.0, ((BODY_Y1 - 14) - y) / len(rows))
         for i, (label, col, u, t) in enumerate(rows):
             yc = int(y + step * i + step / 2)
@@ -432,7 +375,6 @@ class TitlesCardMixin:
             self._text_right(draw, cx1, self._tt_cy(val, fonts["stat_val"], yc), val, fonts["stat_val"], COL_WHITE)
 
     def _tt_cy(self, text, font, yc):
-        """Top-y that vertically centres `text`'s ink box on the line `yc`."""
         try:
             _, a, _, b = font.getbbox(text)
         except Exception:
@@ -440,9 +382,6 @@ class TitlesCardMixin:
         return int(yc - (a + b) / 2)
 
     def _tt_desc(self, img, x, dcy, text, fonts, *, dim=False):
-        """Draw a title description as a single line centred on `dcy`: star-rating
-        tokens become lazer pills, mod clusters become mod-icon discs, grades are
-        coloured text, the rest plain white. Returns the end x."""
         draw = ImageDraw.Draw(img)
         font = fonts["row_desc"]
         for seg, kind in _tokenize_desc(text):
@@ -468,9 +407,6 @@ class TitlesCardMixin:
         return x
 
     def _tt_sr_pill(self, img, x, dcy, token, fonts, *, dim=False):
-        """Lazer-style star-rating pill, contrast-aware: fill is the SR-spectrum
-        colour; star (left) + value + optional "+" use dark ink on light fills,
-        light ink on dark. Dark fills also get a faint outline for edge definition."""
         body = token.rstrip("+")
         plus = "+" if token.endswith("+") else ""
         try:
@@ -486,7 +422,7 @@ class TitlesCardMixin:
             ink = _mix(ink, (120, 116, 120), 0.35)
 
         font = fonts["pill_sr"]
-        label = f"{body[:-1]}{plus}"           # "6.5" or "6.5+"
+        label = f"{body[:-1]}{plus}"
         draw = ImageDraw.Draw(img)
         tw = self._text_size(draw, label, font)[0]
         star = load_icon("star", 15)
@@ -506,8 +442,6 @@ class TitlesCardMixin:
         return x + w
 
     def _tt_mod_pill(self, img, x, dcy, mod, *, dim=False):
-        """A plain rounded mod pill: the mod's colour fill with its glyph inside,
-        glyph inverted (dark) on light fills so it stays readable. Returns end x."""
         col = MOD_COLORS.get(mod, (110, 110, 130))
         ink = _ink_for(col)
         if dim:
@@ -528,8 +462,6 @@ class TitlesCardMixin:
             self._text_center(draw, x + w // 2, self._tt_cy(mod, f, dcy), mod, f, ink)
         return x + w
 
-    # ── Right column: paged title rows ──
-
     def _tt_rows(self, img, data, fonts):
         rows = data.get("rows", []) or []
         S = _tt_lang(data)
@@ -543,22 +475,19 @@ class TitlesCardMixin:
     def _tt_row(self, img, x, y, w, h, t, fonts, S):
         unlocked = t["unlocked"]
         color = t["color"]
-        # Row plate — unlocked high tiers (legendary+) get a colour-tinted plate
-        # and accent; everything else a faint neutral panel.
+
         high = unlocked and RARITY_ORDER.index(t["rarity"]) >= RARITY_ORDER.index("legendary")
         fill = _mix(COL_PANEL, color, 0.16) if high else (COL_PANEL if unlocked else (26, 22, 27))
         border = color if high else COL_PANEL_BORDER
         self._pf_panel(img, (x, y, x + w, y + h), radius=12, fill=fill, border=border)
         draw = ImageDraw.Draw(img)
 
-        # Emblem.
         sz = h - 16
         ex = x + 10
         ey = y + (h - sz) // 2
         self._tt_emblem(img, ex, ey, sz, color, unlocked=unlocked, secret=t["secret"], fonts=fonts)
         draw = ImageDraw.Draw(img)
 
-        # Name + description (secret locked titles stay masked).
         tx = ex + sz + 16
         masked = t["secret"] and not unlocked
         name = S["hidden_title"] if masked else t["name"]
@@ -571,7 +500,6 @@ class TitlesCardMixin:
         else:
             self._tt_desc(img, tx, mid + 11, desc, fonts, dim=not unlocked)
 
-        # Rarity badge pill (right-of-centre).
         label = (S["secret_badge"] if masked else t["rarity_label"]).upper()
         bw = self._text_size(draw, label, fonts["badge"])[0] + 22
         bx1 = x + w - 168
@@ -583,7 +511,6 @@ class TitlesCardMixin:
         self._text_center(draw, (bx0 + bx1) // 2, self._tt_cy(label, fonts["badge"], by + bh // 2),
                           label, fonts["badge"], color if unlocked else _dim(color, 0.6))
 
-        # Status column (far right): получено+дата, прогресс N/M, or lock.
         sxr = x + w - 16
         if unlocked:
             self._text_right(draw, sxr, mid - 18, S["unlocked"], fonts["st_lbl"], COL_MUTED)
@@ -595,9 +522,6 @@ class TitlesCardMixin:
             self._text_right(draw, sxr, mid - 8, S["locked"], fonts["st_lbl"], COL_MUTED)
 
     def _tt_emblem(self, img, x, y, sz, color, *, unlocked, secret, fonts=None):
-        """Rarity gem tile — vertical gradient of the rarity colour, rounded,
-        with a white star. Locked tiles are desaturated; locked secrets show a
-        question mark instead of the star."""
         top = color if unlocked else _dim(color)
         bot = _mix(top, (0, 0, 0), 0.45)
         tile = Image.new("RGB", (sz, sz), top)
@@ -628,8 +552,6 @@ class TitlesCardMixin:
             white.putalpha(star.split()[3])
             img.paste(white, (x + (sz - star.width) // 2, y + (sz - star.height) // 2), white)
 
-    # ── Bottom bar: recently unlocked + next reward ──
-
     def _tt_bottom(self, img, data, fonts):
         self._pf_panel(img, (INNER_L, BOTTOM_Y0, INNER_R, BOTTOM_Y1), radius=14)
         draw = ImageDraw.Draw(img)
@@ -637,18 +559,15 @@ class TitlesCardMixin:
         s = data.get("summary", {}) or {}
         cy = (BOTTOM_Y0 + BOTTOM_Y1) // 2
 
-        # Two divider lines split the bar into three zones.
         zx0 = INNER_L + 360
         zx1 = INNER_L + 720
         for zx in (zx0, zx1):
             draw.line([(zx, BOTTOM_Y0 + 16), (zx, BOTTOM_Y1 - 16)], fill=COL_DIVIDER, width=1)
 
-        # Emblem top-y and ink-centre line shared by zones 1 & 2.
         emb = 28
         emb_y = cy - 3
         emb_c = emb_y + emb // 2
 
-        # Zone 1 — latest unlocked. Name + date ride the emblem's centre line.
         latest = s.get("latest")
         x = INNER_L + 22
         self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["recently_unlocked"], fonts["bot_lbl"], COL_MUTED)
@@ -665,7 +584,6 @@ class TitlesCardMixin:
         else:
             self._draw_text(draw, (x, self._tt_cy("—", fonts["bot_val"], emb_c)), "—", fonts["bot_val"], COL_MUTED)
 
-        # Zone 2 — next reward (title closest to unlocking). Emblem + name.
         nxt = s.get("next_up")
         x = zx0 + 22
         self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["next_reward"], fonts["bot_lbl"], COL_MUTED)
@@ -680,7 +598,6 @@ class TitlesCardMixin:
             self._draw_text(draw, (x, self._tt_cy(S["all_unlocked"], fonts["bot_val"], emb_c)),
                             S["all_unlocked"], fonts["bot_val"], COL_CORAL)
 
-        # Zone 3 — progress to that next reward.
         x = zx1 + 22
         rx = INNER_R - 22
         self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["progress_to_unlock"], fonts["bot_lbl"], COL_MUTED)
@@ -696,7 +613,6 @@ class TitlesCardMixin:
                 self._pf_hgrad(img, x, bar_y, inner, 8, (200, 52, 52), (240, 124, 96), radius=4)
             draw = ImageDraw.Draw(img)
 
-
 def build_titles_card_data(
     username: str,
     handle: Optional[str],
@@ -709,11 +625,6 @@ def build_titles_card_data(
     avatar_url: Optional[str] = None,
     rarest_global_pct: Optional[float] = None,
 ) -> Dict:
-    """Assemble the dict consumed by generate_titles_card from a refresh result.
-
-    Applies the active rarity filter and pagination to the row list; the summary
-    (left column + bottom bar) always reflects the full collection.
-    """
     items = progress_list if filter == "all" else [p for p in progress_list if p["rarity"] == filter]
     total_pages = max(1, (len(items) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))

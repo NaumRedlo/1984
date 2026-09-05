@@ -1,7 +1,6 @@
 from services.image.core import CardRenderer
 from utils.osu import pp_calculator
 
-
 def _sample(passed=True, title="Anoyo-iki no Bus ni Notte Saraba."):
     return {
         "artist": "TUYU", "title": title, "version": "Hard", "mapper_name": "SnowNiNo_",
@@ -15,11 +14,9 @@ def _sample(passed=True, title="Anoyo-iki no Bus ni Notte Saraba."):
         "played_at": "2026-06-28T16:38:00+00:00", "bpm": 180,
     }
 
-
 def _render(data, strains):
     buf = CardRenderer().generate_recent_card(data, None, None, None, None, strains)
     return buf.getvalue()
-
 
 def test_renders_fail_and_pass():
     strains = [i / 63 for i in range(64)]
@@ -27,34 +24,29 @@ def test_renders_fail_and_pass():
         png = _render(_sample(passed=passed), strains)
         assert png.startswith(b"\x89PNG") and len(png) > 2000
 
-
 def test_renders_without_strains():
-    # None strains -> the graph shows NO DATA but the card still renders.
+
     png = _render(_sample(passed=False), None)
     assert png.startswith(b"\x89PNG")
 
-
 def test_renders_japanese_title():
-    # Non-Latin title must not raise (CJK fallback font path).
+
     png = _render(_sample(title="ここからはじまるプロローグ。"), [0.5] * 64)
     assert png.startswith(b"\x89PNG")
 
-
 def test_renders_russian_lang():
-    # lang="ru" swaps the UI labels to Russian (Cyrillic fallback font path).
+
     data = _sample(passed=False)
     data["lang"] = "ru"
     png = _render(data, [0.5] * 64)
     assert png.startswith(b"\x89PNG") and len(png) > 2000
 
-
 def test_renders_default_lang_when_missing():
-    # No "lang" key at all -> defaults to English, same as before this feature.
+
     data = _sample(passed=True)
     assert "lang" not in data
     png = _render(data, [0.5] * 64)
     assert png.startswith(b"\x89PNG")
-
 
 async def test_calculate_strains_none_when_download_fails(monkeypatch):
     async def _no_download(_bid):
@@ -62,9 +54,8 @@ async def test_calculate_strains_none_when_download_fails(monkeypatch):
     monkeypatch.setattr(pp_calculator, "_download_osu_file", _no_download)
     assert await pp_calculator.calculate_strains(123, "HDDT") is None
 
-
 def test_strains_sync_normalizes_and_downsamples(monkeypatch):
-    # Fake rosu so the pure downsample/normalize logic is testable offline.
+
     class _S:
         aim = [float(i) for i in range(200)]
         speed = [0.0] * 200

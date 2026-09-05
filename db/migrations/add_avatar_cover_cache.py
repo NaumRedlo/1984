@@ -1,8 +1,3 @@
-"""
-Migration: add avatar_data, cover_data BLOB columns to users table.
-Safe for SQLite — checks column existence before ALTER TABLE.
-"""
-
 import logging
 from sqlalchemy import text
 
@@ -13,9 +8,7 @@ NEW_COLUMNS = [
     ("cover_data", "BLOB"),
 ]
 
-
 async def run_avatar_cache_migration(engine):
-    """Add avatar_data/cover_data BLOB columns to users table. Idempotent."""
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(users)"))
         existing = {row[1] for row in result.fetchall()}

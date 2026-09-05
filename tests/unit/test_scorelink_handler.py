@@ -1,13 +1,8 @@
-"""The score-link auto-detect handler (bot/handlers/scorelink/handlers.py).
-Direct handler calls with SimpleNamespace messages + fake async deps, no
-full aiogram dispatch."""
-
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import bot.handlers.scorelink.handlers as sl
-
 
 def _msg(text, chat_type="group"):
     sent = SimpleNamespace(chat=SimpleNamespace(id=1), message_id=99)
@@ -19,7 +14,6 @@ def _msg(text, chat_type="group"):
         text=text, from_user=SimpleNamespace(id=1, first_name="Tester", username="tester"),
         chat=SimpleNamespace(id=1, type=chat_type), answer_photo=answer_photo,
     ), sent
-
 
 def _raw_score(**overrides):
     score = {
@@ -36,7 +30,6 @@ def _raw_score(**overrides):
     score.update(overrides)
     return score
 
-
 async def test_no_ref_found_is_a_noop():
     message, _ = _msg("just chatting, no links here")
     api = SimpleNamespace()
@@ -49,7 +42,6 @@ async def test_no_ref_found_is_a_noop():
     await sl.on_score_link(message, api)
     assert called == []
 
-
 async def test_get_score_none_is_silent():
     message, _ = _msg("https://osu.ppy.sh/scores/555")
 
@@ -57,9 +49,7 @@ async def test_get_score_none_is_silent():
         return None
     api = SimpleNamespace(get_score=fake_get_score)
 
-    # Should not raise, and should not attempt to send anything.
     await sl.on_score_link(message, api)
-
 
 async def test_happy_path_remembers_context():
     message, sent = _msg("https://osu.ppy.sh/scores/555")
@@ -89,7 +79,6 @@ async def test_happy_path_remembers_context():
     assert (chat_id, message_id) == (1, 99)
     assert data["card_mode"] == "shared"
     assert data["username"] == "scoreowner"
-
 
 async def test_slash_command_carrying_a_score_link_is_ignored():
     message, _ = _msg("/somecommand https://osu.ppy.sh/scores/555")

@@ -1,10 +1,3 @@
-"""Account section: osu! link / relink / unlink, and card language (EN/RU).
-
-Both are global per Telegram identity (OAuth is per Telegram id, language drives
-both card text and the Telegram UI) — not per-chat — so no tenant_chat_id /
-ensure_dm_tenant is involved here.
-"""
-
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -18,12 +11,7 @@ from bot.handlers.profile.settings_menu.common import _nav_row
 
 router = Router(name="settings_account")
 
-
-# ── Account section (osu! link / relink / unlink) ──────────────────────────
-
 async def _account_view(tg_id: int, lang: str = "en"):
-    """Build (text, keyboard) for the Account section from the caller's global
-    identity (OAuth is per Telegram id, not per group)."""
     from services.oauth.token_manager import has_oauth
     async with get_db_session() as session:
         user = await get_registered_identity_user(session, tg_id)
@@ -46,7 +34,6 @@ async def _account_view(tg_id: int, lang: str = "en"):
     rows.append(_nav_row(lang))
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 @router.callback_query(F.data == "st:acc")
 async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     if not await ensure_dm_tenant(callback, tenant_chat_id):
@@ -58,11 +45,6 @@ async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None, lang: s
         pass
     await callback.answer()
 
-
-# ── Language (card text — EN/RU) ────────────────────────────────────────────
-# Global per Telegram identity, same as Account/OAuth — not a per-chat setting,
-# so no tenant_chat_id / ensure_dm_tenant involved.
-
 def _language_kb(current: str, lang: str = "en") -> InlineKeyboardMarkup:
     def mark(code):
         return "● " if current == code else ""
@@ -71,7 +53,6 @@ def _language_kb(current: str, lang: str = "en") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"{mark('RU')}🇷🇺 Русский", callback_data="st:lang:set:RU")],
         _nav_row(lang),
     ])
-
 
 @router.callback_query(F.data == "st:lang")
 async def cb_language(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
@@ -83,7 +64,6 @@ async def cb_language(callback: types.CallbackQuery, tenant_chat_id=None, lang: 
         pass
     await callback.answer()
 
-
 @router.callback_query(F.data.startswith("st:lang:set:"))
 async def cb_language_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     new_card_lang = callback.data.split(":", 3)[3]
@@ -91,8 +71,7 @@ async def cb_language_set(callback: types.CallbackQuery, tenant_chat_id=None, la
         await callback.answer()
         return
     await set_language(callback.from_user.id, new_card_lang)
-    # The Telegram UI itself follows the same setting, so re-render this
-    # screen in the language just chosen rather than the stale injected one.
+
     ui_lang = new_card_lang.lower()
     try:
         await callback.message.edit_text(
@@ -103,10 +82,7 @@ async def cb_language_set(callback: types.CallbackQuery, tenant_chat_id=None, la
         pass
     await callback.answer(t("sts.lang.set_alert", ui_lang, lang=new_card_lang))
 
-
 async def _send_oauth_link(callback: types.CallbackQuery, relink: bool, lang: str = "en"):
-    """Send a fresh OAuth authorization link as a new message. For relink, drop
-    the stored token first so a clean re-authorization is possible."""
     from services.oauth.server import generate_oauth_url, track_link_message
     tg_id = callback.from_user.id
     if relink:
@@ -125,20 +101,17 @@ async def _send_oauth_link(callback: types.CallbackQuery, relink: bool, lang: st
     track_link_message(tg_id, sent.chat.id, sent.message_id)
     await callback.answer(t("sts.acc.link_sent", lang))
 
-
 @router.callback_query(F.data == "st:acc:link")
 async def cb_account_link(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     await _send_oauth_link(callback, relink=False, lang=lang)
-
 
 @router.callback_query(F.data == "st:acc:relink")
 async def cb_account_relink(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     await _send_oauth_link(callback, relink=True, lang=lang)
 
-
 @router.callback_query(F.data == "st:acc:unlink")
 async def cb_account_unlink(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    # Destructive — confirm first.
+
     text = t("sts.acc.unlink_confirm", lang)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t("sts.kb.confirm_unlink", lang), callback_data="st:acc:unlinkyes")],
@@ -149,7 +122,6 @@ async def cb_account_unlink(callback: types.CallbackQuery, tenant_chat_id=None, 
     except Exception:
         pass
     await callback.answer()
-
 
 @router.callback_query(F.data == "st:acc:unlinkyes")
 async def cb_account_unlink_confirm(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):

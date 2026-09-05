@@ -2,27 +2,20 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-# osu!'s canonical top-100 weighting: rank 1 counts 100%, each next rank
-# multiplies by this factor (rank N -> WEIGHT_DECAY**(N-1)).
 WEIGHT_DECAY = 0.95
 
-# A pp-delta badge ("+14pp 2 days ago") older than this is simply not shown —
-# not flagged as stale, it just quietly stops being interesting.
 MAX_DELTA_AGE = timedelta(days=30)
-
 
 def _get(score: Any, field: str, default=None):
     if isinstance(score, dict):
         return score.get(field, default)
     return getattr(score, field, default)
 
-
 @dataclass(frozen=True)
 class ScoreDelta:
-    kind: str          # "new" or "changed"
-    amount: float = 0.0    # pp change (only for "changed"); positive = went up
+    kind: str
+    amount: float = 0.0
     at: Optional[datetime] = None
-
 
 def _classify_delta(score: Any, now: datetime) -> Optional[ScoreDelta]:
     changed_at = _get(score, "pp_changed_at")
@@ -37,7 +30,6 @@ def _classify_delta(score: Any, now: datetime) -> Optional[ScoreDelta]:
         return ScoreDelta(kind="new", at=changed_at)
     pp = _get(score, "pp", 0.0) or 0.0
     return ScoreDelta(kind="changed", amount=pp - previous_pp, at=changed_at)
-
 
 def build_top_plays_list(best_scores, *, now: Optional[datetime] = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
@@ -71,7 +63,6 @@ def build_top_plays_list(best_scores, *, now: Optional[datetime] = None) -> list
             "delta": delta,
         })
     return out
-
 
 def total_weighted_pp(built_list: list[dict]) -> float:
     return sum(row["weighted_pp"] for row in built_list)

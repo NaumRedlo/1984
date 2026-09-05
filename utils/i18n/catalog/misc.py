@@ -1,5 +1,4 @@
 CATALOG = {
-    # ── help (help menu) ─────────────────────────────────────────────────
     "help.home": {
         "en": ("<b>Help — Project 1984</b>\n\n"
                "Pick a section to see its commands:"),
@@ -37,7 +36,7 @@ CATALOG = {
                "<code>st снять</code> — снять\n"
                "<code>rf</code> — принудительная синхронизация с osu! API"),
     },
-    # ── start (welcome) ──────────────────────────────────────────────────
+
     "start.welcome": {
         "en": ("<b>1984 | Global & Competitive</b>\n"
                "{sep}\n\n"
@@ -91,10 +90,6 @@ CATALOG = {
                "<code>start</code> / <code>help</code> — приветствие / эта справка"),
     },
 
-    # ── help: Dossier ────────────────────────────────────────────────────
-    # Shown only to whoever the render gate lets through, the same as the
-    # commands themselves: a category where every line answers "not for you"
-    # is worse than no category.
     "help.sec.dossier.label": {"en": "Dossier", "ru": "Dossier"},
     "help.sec.dossier.body": {
         "en": ("<b>Dossier — replay rendering</b>\n\n"

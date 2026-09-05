@@ -1,7 +1,4 @@
-"""Migration: add last_seen_at to users table."""
-
 from sqlalchemy import text
-
 
 async def run_last_seen_migration(engine) -> None:
     async with engine.begin() as conn:

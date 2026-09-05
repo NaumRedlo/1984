@@ -1,6 +1,4 @@
-
 from utils.formatting.text import escape_html, safe_html, format_error, format_success
-
 
 class TestEscapeHtml:
     def test_angle_brackets(self):
@@ -20,7 +18,6 @@ class TestEscapeHtml:
 
     def test_empty_string(self):
         assert escape_html("") == ""
-
 
 class TestSafeHtml:
     def test_bold(self):
@@ -65,11 +62,10 @@ class TestSafeHtml:
         assert "• item" in result
         assert result.endswith("base")
 
-
 class TestFormatMessages:
     def test_error(self):
-        assert format_error("fail") == "Error! fail"          # EN default
-        assert format_error("fail", "ru") == "Ошибка! fail"   # localised prefix
+        assert format_error("fail") == "Error! fail"
+        assert format_error("fail", "ru") == "Ошибка! fail"
 
     def test_success(self):
         assert format_success("ok") == "Success! ok"

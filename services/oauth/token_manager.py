@@ -1,7 +1,3 @@
-"""
-Token lifecycle: get a valid token (refreshing if needed), revoke tokens.
-"""
-
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -29,16 +25,9 @@ PERMANENT_OAUTH_ERRORS = frozenset({
     "unsupported_grant_type",
 })
 
-# Per-user lock to serialize refresh attempts and avoid racing the refresh token.
 _refresh_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-
 async def get_valid_token(telegram_id: int) -> Optional[str]:
-    """Return a valid access token for telegram_id, refreshing if expired. None if no token.
-
-    OAuth is keyed by Telegram identity (global across groups), not per-tenant
-    users.id — so this takes the user's telegram_id.
-    """
     async with _refresh_locks[telegram_id]:
         async with get_db_session() as session:
             stmt = select(OAuthToken).where(OAuthToken.telegram_id == telegram_id)
@@ -100,7 +89,7 @@ async def get_valid_token(telegram_id: int) -> Optional[str]:
 
             new_refresh = new_tokens.get("refresh_token")
             if not new_refresh:
-                # osu! always rotates — missing refresh_token is unexpected.
+
                 logger.warning(
                     f"Refresh response missing refresh_token for telegram_id={telegram_id}; "
                     f"keeping previous (next refresh may fail)."
@@ -116,20 +105,13 @@ async def get_valid_token(telegram_id: int) -> Optional[str]:
             logger.info(f"Token refreshed for telegram_id={telegram_id}")
             return new_access
 
-
 async def has_oauth(telegram_id: int) -> bool:
-    """Check if a Telegram user has a stored OAuth token (global, group-agnostic)."""
     async with get_db_session() as session:
         stmt = select(OAuthToken.id).where(OAuthToken.telegram_id == telegram_id)
         result = (await session.execute(stmt)).scalar_one_or_none()
         return result is not None
 
-
 async def _refresh_access_token(refresh_token: str) -> tuple[Optional[dict], bool]:
-    """
-    Returns (tokens_dict_or_None, is_permanent_failure).
-    permanent=True means the refresh token will never work again (revoked, rotated out).
-    """
     try:
         async with aiohttp.ClientSession(timeout=REFRESH_HTTP_TIMEOUT) as session:
             data = {
@@ -147,7 +129,6 @@ async def _refresh_access_token(refresh_token: str) -> tuple[Optional[dict], boo
                         logger.error(f"Refresh response not JSON: {e} body={body[:200]}")
                         return None, False
 
-                # Try to parse OAuth error code from body.
                 err_code = ""
                 try:
                     import json as _json

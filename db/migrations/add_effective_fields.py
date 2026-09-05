@@ -1,17 +1,3 @@
-"""
-Migration: effective-difficulty fields on both score tables.
-
-Batch II's hardest titles gate on mod-adjusted difficulty, which the bot didn't
-keep:
-- ar      — base approach rate; effective AR (via apply_mods) drives "Heavy Hand"
-- eff_sr  — mod-adjusted star rating (from osu! API beatmap attributes WITH mods),
-            for "Double Digit Threat" / "Watchmaker" / "Double Sentence"
-
-Both additive and backfilled lazily as users re-sync (eff_sr falls back to the
-nominal star rating when no speed/diff mod applies or the API call fails). Safe
-for SQLite — checks column existence before each ALTER TABLE.
-"""
-
 import logging
 from sqlalchemy import text
 
@@ -24,9 +10,7 @@ _COLUMNS = [
     ("user_map_attempts", "eff_sr", "FLOAT"),
 ]
 
-
 async def run_effective_fields_migration(engine):
-    """Add ar / eff_sr on both score tables. Idempotent."""
     async with engine.begin() as conn:
         for table, column, sqltype in _COLUMNS:
             result = await conn.execute(text(f"PRAGMA table_info({table})"))

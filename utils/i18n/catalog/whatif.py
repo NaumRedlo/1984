@@ -1,10 +1,4 @@
-"""whatif message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
-    # ── wif (map / what-if command) ──────────────────────────────────────
     "wif.kb.mods": {"en": "Mods", "ru": "Моды"},
     "wif.kb.acc": {"en": "Accuracy", "ru": "Точность"},
     "wif.usage": {

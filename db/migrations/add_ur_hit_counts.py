@@ -1,21 +1,3 @@
-"""Migration: add n300/n100/n50/ur_est to submissions.
-
-Persists the raw hit counts from osu! `score.statistics` so we can:
-  - compute UR_est (Manifest Part I) at submission time for HPS payout (Ω),
-  - backfill historical submissions by re-fetching osu! scores.
-
-All columns are nullable: existing rows stay valid until the backfill script
-runs, and rows where the source data is missing (very old API payloads, manual
-admin entries) remain explicitly NULL rather than zeroed-out.
-
-(The legacy per-round hit-count columns on ``bsk_duel_rounds`` were dropped in
-the BSK→DUEL overhaul along with that table; the new ``DuelRound`` does not
-track per-player hit counts.)
-
-``submissions`` itself belongs to a removed feature, so it is absent on a fresh
-database and this migration then does nothing.
-"""
-
 import logging
 
 from sqlalchemy import text
@@ -24,10 +6,9 @@ from db.migrations._utils import existing_columns, table_exists
 
 logger = logging.getLogger(__name__)
 
-
 async def run_ur_hit_counts_migration(engine) -> None:
     async with engine.begin() as conn:
-        # ── submissions: per-submission hit counts + UR ────────────────────
+
         if not await table_exists(conn, "submissions"):
             logger.debug("Migration: no submissions table — skipping hit counts")
             return

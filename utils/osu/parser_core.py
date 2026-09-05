@@ -1,9 +1,6 @@
 import math
 from typing import Optional
 
-
-# ─── Hit-object / timing-point parsers ───────────────────────────────────────
-
 def _parse_hitobjects(osu_text: str) -> list[dict]:
     objects: list[dict] = []
     in_section = False
@@ -35,7 +32,7 @@ def _parse_hitobjects(osu_text: str) -> list[dict]:
                     "repeats": 1,
                     "length":  0.0,
                 }
-                # Slider params: parts[5]=path, parts[6]=repeats, parts[7]=length
+
                 if obj["slider"] and len(parts) >= 8:
                     try:
                         obj["repeats"] = max(1, int(parts[6]))
@@ -49,7 +46,6 @@ def _parse_hitobjects(osu_text: str) -> list[dict]:
             except (ValueError, IndexError):
                 continue
     return objects
-
 
 def _parse_timing_points(osu_text: str) -> list[dict]:
     points: list[dict] = []
@@ -76,19 +72,14 @@ def _parse_timing_points(osu_text: str) -> list[dict]:
                 continue
     return points
 
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
 def _dist(a: dict, b: dict) -> float:
     return math.sqrt((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2)
-
 
 def _build_beat_lookup(timing_points: list[dict]) -> list[tuple[int, float]]:
     return sorted(
         [(tp["t"], tp["beat_len"]) for tp in timing_points if tp["uninherited"] and tp["beat_len"] > 0],
         key=lambda x: x[0],
     )
-
 
 def _beat_at(t: int, uninherited: list[tuple[int, float]]) -> tuple[int, float]:
     if not uninherited:
@@ -100,33 +91,31 @@ def _beat_at(t: int, uninherited: list[tuple[int, float]]) -> tuple[int, float]:
         last = tp
     return last
 
-
 def _classify_subdivision(interval_ms: float, beat_len: float) -> Optional[str]:
     if interval_ms <= 0 or beat_len <= 0:
         return None
-    ratio = beat_len / interval_ms          # notes per beat
-    # Standard subdivisions (notes per beat)
+    ratio = beat_len / interval_ms
+
     candidates = [
-        (0.5,  "1/2_slow"),  # half-note interval (slow)
-        (1.0,  "1/1"),        # quarter
-        (2.0,  "1/2"),        # eighth
-        (3.0,  "1/3"),        # triplet
-        (4.0,  "1/4"),        # sixteenth
-        (6.0,  "1/6"),        # sextuplet
-        (8.0,  "1/8"),        # 32nd
-        (16.0, "1/16"),       # 64th
+        (0.5,  "1/2_slow"),
+        (1.0,  "1/1"),
+        (2.0,  "1/2"),
+        (3.0,  "1/3"),
+        (4.0,  "1/4"),
+        (6.0,  "1/6"),
+        (8.0,  "1/8"),
+        (16.0, "1/16"),
     ]
     best_name, best_err = None, 1e9
     for target, name in candidates:
-        # Relative error
+
         err = abs(ratio - target) / target
         if err < best_err:
             best_err = err
             best_name = name
-    if best_err > 0.10:                       # >10% off any standard → custom rhythm
+    if best_err > 0.10:
         return "other"
     return best_name
-
 
 def _find_stream_runs(intervals: list[float], threshold: int = 110) -> list[int]:
     runs: list[int] = []
@@ -142,7 +131,6 @@ def _find_stream_runs(intervals: list[float], threshold: int = 110) -> list[int]
         runs.append(run_len + 1)
     return runs
 
-
 def _sv_variance(timing_points: list[dict]) -> float:
     sv_vals = []
     for tp in timing_points:
@@ -154,9 +142,6 @@ def _sv_variance(timing_points: list[dict]) -> float:
     mean_sv = sum(sv_vals) / len(sv_vals)
     std_sv  = math.sqrt(sum((sv - mean_sv) ** 2 for sv in sv_vals) / len(sv_vals))
     return min(std_sv / (mean_sv + 1e-9), 1.0)
-
-
-# ─── New per-skill feature extractors ────────────────────────────────────────
 
 def _subdivision_features(
     objects: list[dict],
@@ -176,7 +161,6 @@ def _subdivision_features(
         if sub:
             subdivs.append(sub)
 
-        # How far is this note from the 1/4 grid?
         rel_t = (objects[i]["t"] - offset) % beat_len
         quarter = beat_len / 4
         snap_err = min(rel_t % quarter, quarter - (rel_t % quarter))
@@ -185,7 +169,6 @@ def _subdivision_features(
     if not subdivs:
         return 0.0, 0.0, 0.0
 
-    # ── Entropy ──
     counts: dict[str, int] = {}
     for s in subdivs:
         counts[s] = counts.get(s, 0) + 1
@@ -196,7 +179,6 @@ def _subdivision_features(
     )
     entropy_norm = min(entropy / math.log(8), 1.0)
 
-    # ── Polyrhythm density: 4s sliding windows with 50% overlap ──
     poly_windows = total_windows = 0
     window_ms = 4000
     rare_subs = {"1/3", "1/6", "1/8", "1/16", "other"}
@@ -226,13 +208,11 @@ def _subdivision_features(
 
     poly_density = poly_windows / total_windows if total_windows else 0.0
 
-    # ── Off-beat ratio (mean) ──
     off_beat = sum(off_beat_distances) / len(off_beat_distances) if off_beat_distances else 0.0
-    # Normalize: snap_err/quarter is in [0..0.5]; multiply by 2 → [0..1]
+
     off_beat = min(off_beat * 2.0, 1.0)
 
     return entropy_norm, poly_density, off_beat
-
 
 def _jack_density(
     objects: list[dict],
@@ -251,7 +231,6 @@ def _jack_density(
             jack_count += 1
     return jack_count / max(n - 1, 1)
 
-
 def _slider_tail_demand(objects: list[dict]) -> float:
     if not objects:
         return 0.0
@@ -264,20 +243,19 @@ def _slider_tail_demand(objects: list[dict]) -> float:
         slider_count += 1
         length  = obj.get("length", 0.0)
         repeats = obj.get("repeats", 1)
-        # 200 osu-px ≈ one full quarter-beat at SV 1.0; cap at 4× that
+
         len_factor    = min(length / 200.0, 4.0)
-        repeat_factor = math.log1p(repeats - 1)         # repeats=1 → 0, =2 → 0.69, =4 → 1.39
+        repeat_factor = math.log1p(repeats - 1)
         score += len_factor * (1.0 + repeat_factor)
     if not slider_count:
         return 0.0
-    # Normalize by note count, soft-cap to [0..1]
+
     raw = score / n
     return raw / (raw + 1.0)
 
-
 def _flow_break_density(
     objects: list[dict],
-    angle_threshold: float = 2.36,    # ≈135°
+    angle_threshold: float = 2.36,
     distance_min: float = 100.0,
 ) -> float:
     n = len(objects)
@@ -302,7 +280,6 @@ def _flow_break_density(
             breaks += 1
     return breaks / triplets if triplets else 0.0
 
-
 def _bpm_relative_speed(
     intervals: list[float],
     beat_lengths: list[float],
@@ -315,17 +292,16 @@ def _bpm_relative_speed(
         if bl <= 0 or dt <= 20.0:
             continue
         counted += 1
-        ratio = bl / dt   # notes per beat
-        if ratio >= 3.5:          # ~1/4 beat or faster
+        ratio = bl / dt
+        if ratio >= 3.5:
             score += 1.0
-        elif ratio >= 2.5:        # ~1/3 beat
+        elif ratio >= 2.5:
             score += 0.8
-        elif ratio >= 1.8:        # ~1/2 beat
+        elif ratio >= 1.8:
             score += 0.4
-        elif ratio >= 1.3:        # borderline 1/2
+        elif ratio >= 1.3:
             score += 0.15
     return score / counted if counted else 0.0
-
 
 def _intensity_floor(
     objects: list[dict],
@@ -363,7 +339,6 @@ def _intensity_floor(
     mx = max(densities)
     return mn / mx if mx > 0 else 0.0
 
-
 def _pattern_repetition(objects: list[dict], block_size: int = 8) -> float:
     n = len(objects)
     if n < block_size * 2:
@@ -389,28 +364,24 @@ def _pattern_repetition(objects: list[dict], block_size: int = 8) -> float:
     repeats = sum(c - 1 for c in counts.values() if c > 1)
     return min(repeats / len(sigs), 1.0)
 
-
-# ─── Empty / fallback ─────────────────────────────────────────────────────────
-
 def _empty_features(n: int) -> dict:
     return {
-        # ── shared ──
         "note_count":            n,
         "duration_seconds":      0,
         "rhythm_complexity":     0.0,
         "stream_density":        0.0,
-        # ── aim ──
+
         "jump_density":          0.0,
         "avg_jump_velocity":     0.0,
         "back_forth_ratio":      0.0,
         "angle_variance":        0.0,
         "flow_break_density":    0.0,
-        # ── speed ──
+
         "burst_density":         0.0,
         "full_stream_density":   0.0,
         "death_stream_density":  0.0,
         "bpm_rel_speed":         0.0,
-        # ── acc ──
+
         "subdiv_entropy":        0.0,
         "polyrhythm_density":    0.0,
         "off_beat_ratio":        0.0,
@@ -418,14 +389,11 @@ def _empty_features(n: int) -> dict:
         "slider_tail_demand":    0.0,
         "sv_variance":           0.0,
         "slider_density":        0.0,
-        # ── cons ──
+
         "density_variance":      0.0,
         "intensity_floor":       0.0,
         "pattern_repetition":    0.0,
     }
-
-
-# ─── Main feature extractor ───────────────────────────────────────────────────
 
 def extract_features(osu_text: str) -> dict:
     objects       = _parse_hitobjects(osu_text)
@@ -451,7 +419,6 @@ def extract_features(osu_text: str) -> dict:
         beat_lengths.append(bl)
     n_iv = len(intervals)
 
-    # ── Stream / burst (SPEED) ──
     runs = _find_stream_runs(intervals, threshold=110)
     total_burst       = sum(r for r in runs if 2 <= r <= 4)
     total_stream      = sum(r for r in runs if 5 <= r <= 15)
@@ -463,7 +430,6 @@ def extract_features(osu_text: str) -> dict:
     stream_density       = (total_burst + total_stream + total_deathstream) / n
     bpm_rel = _bpm_relative_speed(intervals, beat_lengths)
 
-    # ── Jump (AIM) ──
     jump_velocities: list[float] = []
     jump_count = 0
     for dt, d in zip(intervals, distances):
@@ -474,7 +440,6 @@ def extract_features(osu_text: str) -> dict:
     avg_jump_velocity = sum(jump_velocities) / len(jump_velocities) if jump_velocities else 0.0
     avg_jump_velocity = min(avg_jump_velocity / 3.0, 1.0)
 
-    # ── Angle / flow-break (AIM) ──
     angles: list[float] = []
     for i in range(1, n - 1):
         dx1 = objects[i]["x"]     - objects[i - 1]["x"]
@@ -496,17 +461,14 @@ def extract_features(osu_text: str) -> dict:
         angle_variance = min(std_a / (math.pi / 2), 1.0)
     flow_break = _flow_break_density(objects)
 
-    # ── Slider features (ACC / SPEED) ──
     slider_count   = sum(1 for o in objects if o.get("slider"))
     slider_density = slider_count / n
     sv_var         = _sv_variance(timing_points)
     slider_tail    = _slider_tail_demand(objects)
 
-    # ── Subdivision / rhythm (ACC) ──
     subdiv_entropy, polyrhythm_density, off_beat = _subdivision_features(objects, uninherited)
     jack_dens = _jack_density(objects)
 
-    # ── Rhythm complexity (general — kept for ML feature vector) ──
     if intervals:
         mean_dt = sum(intervals) / n_iv
         std_dt  = math.sqrt(sum((dt - mean_dt) ** 2 for dt in intervals) / n_iv)
@@ -514,7 +476,6 @@ def extract_features(osu_text: str) -> dict:
     else:
         rhythm_complexity = 0.0
 
-    # ── Density variance + floor + repetition (CONS) ──
     density_variance = 0.0
     if duration_s > 2:
         t0 = objects[0]["t"]
@@ -530,23 +491,22 @@ def extract_features(osu_text: str) -> dict:
     pattern_repetition = _pattern_repetition(objects)
 
     return {
-        # shared
         "note_count":            n,
         "duration_seconds":      int(duration_s),
         "rhythm_complexity":     round(rhythm_complexity, 4),
         "stream_density":        round(stream_density, 4),
-        # aim
+
         "jump_density":          round(jump_density, 4),
         "avg_jump_velocity":     round(avg_jump_velocity, 4),
         "back_forth_ratio":      round(back_forth_ratio, 4),
         "angle_variance":        round(angle_variance, 4),
         "flow_break_density":    round(flow_break, 4),
-        # speed
+
         "burst_density":         round(burst_density, 4),
         "full_stream_density":   round(full_stream_density, 4),
         "death_stream_density":  round(death_stream_density, 4),
         "bpm_rel_speed":         round(bpm_rel, 4),
-        # acc
+
         "subdiv_entropy":        round(subdiv_entropy, 4),
         "polyrhythm_density":    round(polyrhythm_density, 4),
         "off_beat_ratio":        round(off_beat, 4),
@@ -554,12 +514,11 @@ def extract_features(osu_text: str) -> dict:
         "slider_tail_demand":    round(slider_tail, 4),
         "sv_variance":           round(sv_var, 4),
         "slider_density":        round(slider_density, 4),
-        # cons
+
         "density_variance":      round(density_variance, 4),
         "intensity_floor":       round(intensity_floor, 4),
         "pattern_repetition":    round(pattern_repetition, 4),
     }
-
 
 __all__ = [
     "extract_features",

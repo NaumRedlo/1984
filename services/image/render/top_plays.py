@@ -35,29 +35,22 @@ from services.image.render.profile import (
     _sp,
 )
 
-# ── Geometry — single wide dashboard, same tone as titles.py/profile.py.
-# 2026-07-04 redesign: compact text-only rows (no cover art, no delta
-# tracking, no per-row weighted-pp bar) per a user-supplied mockup
-# (osu_top_plays_floating_panels.html) — much shorter than the old
-# cover-art-driven layout, so the whole card shrank with it.
-TP_W = 820                              # narrower than the other 1280px cards —
-                                         # no cover art means the content doesn't
-                                         # need nearly that much width
+TP_W = 820
+
 TP_H = 660
-INNER_L = CARD_M + 28                  # 44
-INNER_R = TP_W - CARD_M - 28           # 776
+INNER_L = CARD_M + 28
+INNER_R = TP_W - CARD_M - 28
 
 HEAD_Y0 = CARD_M
 HEAD_Y1 = 76
 STRIP_Y0 = 92
 STRIP_Y1 = 176
 BODY_Y0 = 192
-BODY_Y1 = TP_H - CARD_M - 12            # 628 — no footer bar, rows use the full rest
+BODY_Y1 = TP_H - CARD_M - 12
 
 ROWS_PER_PAGE = 5
 ROW_CORNER_R = 12
-GRADE_BADGE_R = 26                      # plain outlined circle, not the arc-completion ring
-
+GRADE_BADGE_R = 26
 
 _TP_STRINGS = {
     "en": {
@@ -70,19 +63,11 @@ _TP_STRINGS = {
     },
 }
 
-
 def _tp_lang(data) -> dict:
     lang = (data.get("lang") or "en").lower()
     return _TP_STRINGS.get(lang, _TP_STRINGS["en"])
 
-
 class TopPlaysCardMixin:
-    """TOP PLAYS dashboard — ranked list of the player's best scores by pp,
-    weighted the same way osu!'s own profile does (rank N counts 0.95**(N-1)).
-    Layout mirrors titles.py (paged rows, same red 1984 theme, same font-cache
-    + Cyrillic-fallback pattern)."""
-
-    # ── Fonts (lazy, cached; every slot gets a Cyrillic fallback) ──
 
     def _tp_fonts(self) -> dict:
         cache = getattr(self, "_tp_font_cache", None)
@@ -106,7 +91,7 @@ class TopPlaysCardMixin:
             "row_artist": mk(r, 14, self.font_small),
             "version_pill": mk(b, 12, self.font_stat_label),
             "row_meta": mk(s, 14, self.font_stat_label),
-            "sr_chip": mk(b, 14, self.font_label),         # consumed by self._draw_sr_pill
+            "sr_chip": mk(b, 14, self.font_label),
             "grade_badge": mk(b, 24, self.font_label),
             "pp_big": mk(b, 24, self.font_row),
             "pp_lbl": mk(s, 13, self.font_stat_label),
@@ -146,8 +131,6 @@ class TopPlaysCardMixin:
         self._tp_font_cache = f
         return f
 
-    # ── Public entrypoints ──
-
     def generate_top_plays_card(self, data: Dict, avatar: Optional[Image.Image] = None,
                                  covers: Optional[List[Optional[Image.Image]]] = None,
                                  player_cover: Optional[Image.Image] = None) -> BytesIO:
@@ -186,9 +169,6 @@ class TopPlaysCardMixin:
         covers = [_ok(r) for r in results[2:]]
         return await asyncio.to_thread(self.generate_top_plays_card, data, avatar, covers, player_cover)
 
-    # ── Header — icon + title centred on the full width, a small label
-    # pinned to the right (mockup: 3-column grid, empty / centred / right).
-
     def _tp_header(self, img, data, fonts):
         draw = ImageDraw.Draw(img)
         S = _tp_lang(data)
@@ -208,11 +188,6 @@ class TopPlaysCardMixin:
         self._draw_text(draw, (start_x + gap, head_y + 10), title, fonts["h_title"], COL_WHITE)
 
     def _tp_bg_wash(self, img, cover, x, y, w, h, *, radius, darken):
-        """A cover image, centre-cropped to (w, h), darkened, and masked to
-        the same rounded corners as the panel it sits behind — used for both
-        the player strip (their own profile cover) and each row (the map's
-        cover), a much subtler version of the old cover-thumbnail layout.
-        No-op if there's no cover to show."""
         if not cover or w <= 0 or h <= 0:
             return
         try:
@@ -222,8 +197,6 @@ class TopPlaysCardMixin:
         bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (16, 12, 14, darken)))
         mask = self._rounded_mask((w, h), radius)
         img.paste(bg.convert("RGB"), (x, y), mask)
-
-    # ── Player summary strip ──
 
     def _tp_strip(self, img, data, avatar, player_cover, fonts):
         self._pf_panel(img, (INNER_L, STRIP_Y0, INNER_R, STRIP_Y1), radius=14)
@@ -260,8 +233,6 @@ class TopPlaysCardMixin:
             img.paste(flag, (label_x, yy + 2), flag)
             draw = ImageDraw.Draw(img)
 
-    # ── Paged rows ──
-
     def _tp_rows(self, img, data, fonts, covers: List[Optional[Image.Image]]):
         rows = data.get("rows", []) or []
         S = _tp_lang(data)
@@ -278,11 +249,6 @@ class TopPlaysCardMixin:
             self._tp_row(img, INNER_L, ry, INNER_R - INNER_L, int(rh) - 9, rows[i], fonts, cover)
 
     def _tp_row(self, img, x, y, w, h, t, fonts, cover=None):
-        """One row = one score, compact single-block layout: grade badge,
-        title/artist/diff + chips, pp value — no rank number, no pp-delta
-        (dropped per the mockup this redesign follows); the map's own cover
-        is back as a subtle darkened background wash (2026-07-05), not the
-        prominent square thumbnail the pre-redesign layout had."""
         self._pf_panel(img, (x, y, x + w, y + h), radius=ROW_CORNER_R, fill=COL_PANEL, border=COL_PANEL_BORDER)
         self._tp_bg_wash(img, cover, x, y, w, h, radius=ROW_CORNER_R, darken=200)
         mid = y + h // 2
@@ -295,9 +261,7 @@ class TopPlaysCardMixin:
         pp_right = x + w - 18
         pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
         suffix_w = self._text_size(draw, "pp", fonts["pp_lbl"])[0]
-        # "pp" pinned to the value's own bottom-right corner (its bottom edge
-        # matches the big number's bottom edge) rather than floating centred
-        # beside it.
+
         pp_top = self._tp_cy(pp_txt, fonts["pp_big"], mid)
         _, pa, _, pb = fonts["pp_big"].getbbox(pp_txt)
         pp_bottom = pp_top + pb
@@ -311,12 +275,6 @@ class TopPlaysCardMixin:
         self._tp_row_text_and_chips(img, text_x, y, h, text_right, t, fonts)
 
     def _tp_grade_badge(self, img, cx, cy, grade, fonts):
-        """Plain outlined circle (not the arc-completion ring used elsewhere)
-        — colour keyed off GRADE_COLORS same as everywhere else, just a
-        simpler badge to match the mockup's compact rows. A soft colour glow
-        behind it (same GaussianBlur technique as the avatar's) plus a
-        darkened interior fill make the ring itself the accent, not just an
-        outline sitting on the row's own background."""
         col = GRADE_COLORS.get(grade, GRADE_COLORS.get("F", COL_MUTED))
         r = GRADE_BADGE_R
         pad = 10
@@ -332,11 +290,6 @@ class TopPlaysCardMixin:
         self._text_center(draw, cx, self._tp_cy(label, fonts["grade_badge"], cy), label, fonts["grade_badge"], col)
 
     def _tp_row_text_and_chips(self, img, x, y, h, right_limit, t, fonts):
-        """Title + a difficulty-name pill right after it (same pill style as
-        recent.py's, but placed next to the TITLE here rather than the
-        artist), then "— Artist" on its own line, then a chip row: SR pill
-        (rectangular here, an explicit exception — see _draw_sr_pill's radius
-        note), mods, accuracy, combo."""
         draw = ImageDraw.Draw(img)
         max_w = right_limit - x
         t_y = y + 6
@@ -369,15 +322,7 @@ class TopPlaysCardMixin:
 
         chip_y = y + h - 28
         chip_cy = chip_y + 10
-        # Exception to the canonical (fully-rounded, text-sized) SR pill: a
-        # small fixed radius + the same fixed height as the mod pills beside
-        # it, so the two read as one family instead of two different shapes.
-        # center_y=chip_cy lines its vertical centre up EXACTLY with the mod
-        # pills beside it, rather than the two independently-derived centres
-        # coming out a pixel or two apart.
-        # `eff_sr` is the rating the play actually had — the map with its mods
-        # on. `star_rating` is the map with nothing on it, which is the wrong
-        # number for every DT, HD or HR play and so for most of a top hundred.
+
         sr = t.get("eff_sr") or t.get("star_rating", 0.0)
         cxp = self._draw_sr_pill(img, x, chip_y, sr, fonts["sr_chip"],
                                  radius=6, height=24, center_y=chip_cy)
@@ -392,7 +337,6 @@ class TopPlaysCardMixin:
         self._draw_text(draw, (cxp, self._tp_cy(combo_txt, fonts["row_meta"], chip_cy)), combo_txt, fonts["row_meta"], COL_MUTED)
 
     def _tp_cy(self, text, font, yc):
-        """Top-y that vertically centres `text`'s ink box on the line `yc`."""
         try:
             _, a, _, b = font.getbbox(text)
         except Exception:
@@ -400,16 +344,12 @@ class TopPlaysCardMixin:
         return int(yc - (a + b) / 2)
 
     def _tp_ellipsize(self, draw, text, font, max_w):
-        """Shrink `text` character by character (with a trailing "…") until it
-        fits `max_w`. Long beatmap titles/artists are common; the pp block to
-        the right must never be run into."""
         if max_w <= 0 or self._text_size(draw, text, font)[0] <= max_w:
             return text
         disp = text
         while len(disp) > 1 and self._text_size(draw, disp + "…", font)[0] > max_w:
             disp = disp[:-1]
         return disp + "…"
-
 
 def build_top_plays_card_data(
     username: str,
@@ -425,13 +365,6 @@ def build_top_plays_card_data(
     player_pp: Optional[float] = None,
     accuracy: Optional[float] = None,
 ) -> Dict:
-    """Assemble the dict consumed by generate_top_plays_card from an already
-    pp-sorted/weighted list (utils.best_scores.build_top_plays_list).
-
-    global_rank/player_pp/accuracy are the player's OVERALL profile numbers
-    (same ones /pf shows) — the summary strip shows these, not stats derived
-    from this list, per the 2026-07-04 redesign. cover_url is the player's
-    own profile cover/banner image, used as a background wash on the strip."""
     total_pages = max(1, (len(built_list) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
     rows = built_list[page * ROWS_PER_PAGE:(page + 1) * ROWS_PER_PAGE]

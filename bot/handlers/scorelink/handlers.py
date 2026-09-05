@@ -1,13 +1,3 @@
-"""Auto score-card: when an osu! score link is pasted in chat, fetch that
-score for ANY player (app-level token, same pattern as maplink's beatmap
-lookups) and render it as a recent-score-style card ("shared" header, since
-a linked score isn't necessarily that player's most recent play).
-
-Structural mirror of bot/handlers/maplink/handlers.py's on_beatmap_link:
-reacts to any message carrying a score link, resolves+renders, fails silent
-(this is a passive background reaction, not a command the user typed).
-"""
-
 from __future__ import annotations
 
 from aiogram import Router, types, F
@@ -29,12 +19,7 @@ router = Router(name="scorelink")
 
 _LINK_FILTER = F.text.func(lambda t: bool(t) and bool(LINK_HINT_RE.search(t)))
 
-
 async def _resolve_score_owner(osu_api_client, raw_score: dict) -> tuple[str, int, str]:
-    """(username, user_id, cover_url). Prefers the score's own embedded
-    `user` (no extra call); falls back to get_user_data(user_id) when the
-    embed is missing a cover — osu!'s embedded UserCompact isn't guaranteed
-    to carry one, so this fallback is load-bearing, not decorative."""
     embedded = raw_score.get("user") or {}
     user_id = raw_score.get("user_id") or embedded.get("id")
     username = embedded.get("username")
@@ -51,12 +36,11 @@ async def _resolve_score_owner(osu_api_client, raw_score: dict) -> tuple[str, in
         return data.get("username") or username or "???", user_id, data.get("cover_url") or cover_url or ""
     return username or "???", user_id, cover_url or ""
 
-
 @router.message(_LINK_FILTER, F.chat.type.in_({"private", "group", "supergroup"}))
 async def on_score_link(message: types.Message, osu_api_client):
     text = message.text or ""
     if text.lstrip().startswith("/"):
-        return  # a command carrying a link — let its own handler own it
+        return
     ref = extract_score_ref(text)
     if not ref:
         return
@@ -69,7 +53,7 @@ async def on_score_link(message: types.Message, osu_api_client):
         logger.warning("scorelink: fetch failed", exc_info=True)
         return
     if not raw_score:
-        return  # unknown/private score — stay silent, mirrors maplink
+        return
 
     try:
         username, player_id, cover_url = await _resolve_score_owner(osu_api_client, raw_score)
@@ -102,6 +86,5 @@ async def on_score_link(message: types.Message, osu_api_client):
         remember_message_context(sent.chat.id, sent.message_id, data)
     except Exception:
         logger.warning("scorelink: send_photo failed", exc_info=True)
-
 
 __all__ = ["router"]

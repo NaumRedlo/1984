@@ -4,7 +4,6 @@ from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, Date
 
 from db.database import Base
 
-
 class UserMapAttempt(Base):
     __tablename__ = "user_map_attempts"
 
@@ -23,23 +22,23 @@ class UserMapAttempt(Base):
     title = Column(String(255), nullable=True)
     version = Column(String(255), nullable=True)
     creator = Column(String(255), nullable=True)
-    star_rating = Column(Float, nullable=True)       # nominal (base) SR
-    ar = Column(Float, nullable=True)                # base approach rate ("Heavy Hand")
-    eff_sr = Column(Float, nullable=True)            # mod-adjusted SR (effective-SR titles)
-    # Per-play fields for live title evaluation (titles = best_scores ∪ attempts).
+    star_rating = Column(Float, nullable=True)
+    ar = Column(Float, nullable=True)
+    eff_sr = Column(Float, nullable=True)
+
     bpm = Column(Float, nullable=True)
-    length = Column(Integer, nullable=True)            # seconds (map total_length)
+    length = Column(Integer, nullable=True)
     map_max_combo = Column(Integer, nullable=True)
-    count_300 = Column(Integer, nullable=True)         # for completion % on fails ("Last Note")
+    count_300 = Column(Integer, nullable=True)
     count_100 = Column(Integer, nullable=True)
     count_50 = Column(Integer, nullable=True)
     count_miss = Column(Integer, nullable=True)
-    total_objects = Column(Integer, nullable=True)      # map object count (circles+sliders+spinners)
-    is_fc = Column(Boolean, nullable=True)             # API perfect-combo flag (primary FC signal)
-    status = Column(String(20), nullable=True)         # beatmap status (graveyard/ranked/loved/…)
-    ranked_date = Column(DateTime, nullable=True)      # beatmapset ranked date (for the "12y+" title)
-    passed = Column(Boolean, nullable=True)            # False = a logged fail
-    played_at = Column(DateTime, nullable=True)        # real play time (score ended_at)
+    total_objects = Column(Integer, nullable=True)
+    is_fc = Column(Boolean, nullable=True)
+    status = Column(String(20), nullable=True)
+    ranked_date = Column(DateTime, nullable=True)
+    passed = Column(Boolean, nullable=True)
+    played_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

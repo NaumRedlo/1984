@@ -5,16 +5,14 @@ from utils.logger import get_logger
 
 logger = get_logger("utils.osu.star_rating")
 
-
 async def resolve(client, beatmap_id, mods, nominal) -> Optional[float]:
     if client is None or not beatmap_id:
         return nominal
     try:
         return await client.effective_sr(beatmap_id, mods, nominal)
-    except Exception:  # noqa: BLE001 — a flaky endpoint must not lose the card
+    except Exception:
         logger.debug("star rating lookup failed for %s (%s)", beatmap_id, mods, exc_info=True)
         return nominal
-
 
 async def fill(
     client,
@@ -42,6 +40,5 @@ async def fill(
     for row, rating in zip(wanted, found):
         if rating is not None:
             row[sr_key] = rating
-
 
 __all__ = ["fill", "resolve"]

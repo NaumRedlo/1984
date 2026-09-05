@@ -1,5 +1,3 @@
-"""Leaderboard card generators."""
-
 import asyncio
 from io import BytesIO
 from typing import Dict, Optional
@@ -18,17 +16,10 @@ from services.image.utils import (
 )
 from services.image.base import BaseCardRenderer
 
-
-
 class LeaderboardCardGenerator(BaseCardRenderer):
-    """Leaderboard-specific PNG card."""
-
-
-
 
     @staticmethod
     def _image_from_bytes(data: Optional[bytes]) -> Optional[Image.Image]:
-        """Open an Image from raw bytes, or return None."""
         if not data:
             return None
         try:
@@ -53,7 +44,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         elif mapper_id:
             mapper_avatar = await download_image(f"https://a.ppy.sh/{mapper_id}")
 
-        # Pre-download avatars for extended rows
         all_rows = data.get("rows") or []
         page = int(data.get("page", 0) or 0)
         if page == 0:
@@ -85,15 +75,13 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
     @staticmethod
     def _filter_mods(mods_str: str) -> str:
-        """Filter out CL (Classic) mod from display — it's auto-added by lazer."""
         if not mods_str or mods_str == "—":
             return mods_str
         parts = [m.strip() for m in mods_str.replace("+", "").split(",") if m.strip() and m.strip() != "CL"]
         return ",".join(parts) if parts else "—"
 
-    # Pagination constants for map leaderboard
-    LBM_FIRST_PAGE_ROWS = 6   # positions 4-9 on page 0 (with podium)
-    LBM_PAGE_ROWS = 5         # rows per subsequent page
+    LBM_FIRST_PAGE_ROWS = 6
+    LBM_PAGE_ROWS = 5
 
     def generate_map_leaderboard_card(self, data: Dict) -> BytesIO:
         map_title = data.get("map_title", "Unknown Map")
@@ -114,7 +102,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             draw_obj.text((sx + 1, sy + 1), text, font=font, fill=(0, 0, 0))
             draw_obj.text((sx, sy), text, font=font, fill=fill)
 
-        # Determine which rows to show on this page
         is_first_page = page == 0
         if is_first_page:
             show_podium = True
@@ -133,18 +120,16 @@ class LeaderboardCardGenerator(BaseCardRenderer):
         sep_h = 2 if (show_podium and extended_rows) else 0
         card_h = header_h + hero_h + podium_h + sep_h + len(extended_rows) * row_h + footer_h
         if not is_first_page and not extended_rows:
-            card_h = header_h + footer_h + 48  # empty page
+            card_h = header_h + footer_h + 48
 
         img = Image.new("RGB", (W, card_h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
-        # ── HEADER ──
         self._draw_header(draw, "PROJECT 1984 — MAP LEADERBOARD", "", W)
 
         status_color = ACCENT_RED
         content_y = header_h
 
-        # ── HERO / COVER (only page 0) ──
         if is_first_page:
             hero_y = content_y
             if cover:
@@ -157,7 +142,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             else:
                 draw.rectangle([(0, hero_y), (W, hero_y + hero_h)], fill=HEADER_BG)
 
-            # Map title
             title_text = map_title
             title_bbox = draw.textbbox((0, 0), title_text, font=self.font_row)
             if title_bbox[2] - title_bbox[0] > 540:
@@ -167,7 +151,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 title_text += "..."
             _shadow_text(draw, (PADDING_X, hero_y + 8), title_text, self.font_row, TEXT_PRIMARY)
 
-            # Mapper avatar + name
             mapper_name = data.get("mapper_name", "Unknown")
             mapper_avatar = data.get("mapper_avatar_data")
             mav = mapper_avatar if isinstance(mapper_avatar, Image.Image) else self._image_from_bytes(mapper_avatar)
@@ -182,7 +165,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             else:
                 _shadow_text(draw, (PADDING_X, mav_y + 4), f"mapped by {mapper_name}", self.font_small, TEXT_SECONDARY)
 
-            # Stars / BPM / Length
             info_y = hero_y + 70
             info_x = PADDING_X
             for icon_name, val in [
@@ -199,7 +181,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 val_bbox = draw.textbbox((0, 0), val, font=self.font_label)
                 info_x += val_bbox[2] - val_bbox[0] + 16
 
-            # [version] + status badge
             version = map_version
             ver_y = hero_y + 94
             ver_text = f"[{version}]"
@@ -233,7 +214,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 self._aa_rounded_fill(img, (status_x, ver_y + 1, status_x + sb_w, ver_y + 19), radius=4, fill=status_color)
                 self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
 
-            # Beatmap ID top-right
             id_text = f"ID: {beatmap_id}"
             id_bbox = draw.textbbox((0, 0), id_text, font=self.font_small)
             _shadow_text(draw, (W - PADDING_X - (id_bbox[2] - id_bbox[0]), hero_y + 8), id_text, self.font_small, TEXT_SECONDARY)
@@ -241,7 +221,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             draw.line([(0, hero_y + hero_h), (W, hero_y + hero_h)], fill=status_color, width=2)
             content_y = hero_y + hero_h
 
-        # ── PODIUM (page 0 only) ──
         if show_podium:
             podium_y = content_y + 6
             top_rows = all_rows[:3]
@@ -275,10 +254,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                         draw_cover_background(panel, cover_img, 0, height, width)
                         ov = Image.new("RGBA", (width, height), (0, 0, 0, 160))
                         panel.paste(ov.convert("RGB"), (0, 0), ov)
-                    # Round the panel's corners to match the frame, otherwise the
-                    # square background pokes out past the rounded outline.
+
                     img.paste(panel, (x, y), self._rounded_mask((width, height), radius=14))
-                    # AA podium-panel border on top of the pasted panel.
+
                     self._aa_rounded_outline(img, (x, y, x + width, y + height), radius=14, outline=stripe, width=2)
                     draw = ImageDraw.Draw(img)
 
@@ -326,7 +304,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     else:
                         self._text_center(draw, x + width // 2, cur_text_y, display_name, name_font, stripe)
 
-                    # PP centered between name and bottom detail — same layout for all ranks
                     pp_val = float(row.get("pp", 0) or 0)
                     pp_color = TOP_COLORS.get(rank, TEXT_PRIMARY)
                     pp_font = self.font_stat_value if rank == 1 else self.font_row
@@ -338,13 +315,11 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     primary_str = row.get("primary_str") or f"{pp_val:.0f}pp"
                     self._text_center(draw, x + width // 2, pp_y, primary_str, pp_font, pp_color)
 
-                    # Accuracy + combo — same position for all ranks
                     acc_val = float(row.get("accuracy", 0) or 0)
                     combo_val = int(row.get("combo", 0) or 0)
                     detail_y = y + height - 26
                     self._text_center(draw, x + width // 2, detail_y, f"{acc_val:.2f}%  {combo_val}x", self.font_stat_label, TEXT_SECONDARY)
 
-                    # Grade badge at top-right (mini version of rs card badge)
                     grade = row.get("rank", "F")
                     grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
                     badge_r = 14
@@ -353,8 +328,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     glow_r = int(grade_color[0] * 0.15)
                     glow_g = int(grade_color[1] * 0.15)
                     glow_b = int(grade_color[2] * 0.15)
-                    # Supersample the small grade badge so the outer disc edge
-                    # and the inner outline ring both come out cleanly.
+
                     ss = 4
                     big = badge_r * 2 * ss
                     badge_img = Image.new('RGBA', (big, big), (0, 0, 0, 0))
@@ -373,9 +347,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     gty = badge_cy - gth // 2 - gb[1]
                     draw.text((gtx, gty), grade, font=grade_font, fill=grade_color)
 
-                    # Mod badges vertical — circular disc with osu-web SVG glyph.
-                    # Stack from top-left of the podium cell; cap at half cell height
-                    # so we never overlap the score row below.
                     mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
                     if mods_raw and mods_raw != "—":
                         mod_x = x + 6
@@ -390,20 +361,17 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             content_y = podium_y + podium_h
 
-        # Red separator between podium and extended rows
         if show_podium and extended_rows:
             draw.line([(0, content_y), (W, content_y)], fill=ACCENT_RED, width=2)
             content_y += 2
 
-        # ── EXTENDED ROWS ──
-        av_sz = 30  # avatar size for extended rows
-        av_r = 8    # avatar corner radius
+        av_sz = 30
+        av_r = 8
         list_y = content_y
         for i, row in enumerate(extended_rows):
             y_top = list_y + i * row_h
             row_bg = ROW_EVEN if i % 2 == 0 else ROW_ODD
 
-            # Cover background behind row (dimmed)
             row_cover_img = self._image_from_bytes(row.get("cover_data")) if row.get("cover_data") else None
             if row_cover_img:
                 rc = cover_center_crop(row_cover_img, W, row_h)
@@ -420,13 +388,11 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             pos = row.get("position", i + 4)
             y_text = y_top + (row_h - 22) // 2
 
-            # Position number
             pos_text = f"#{pos}"
             pos_bbox = draw.textbbox((0, 0), pos_text, font=self.font_row)
             pos_w = pos_bbox[2] - pos_bbox[0]
             draw.text((12, y_text), pos_text, font=self.font_row, fill=TEXT_PRIMARY)
 
-            # Avatar (small, rounded, red outline)
             av_x = 12 + pos_w + 8
             av_y = y_top + (row_h - av_sz) // 2
             avatar_img = row.get("_avatar_img")
@@ -452,24 +418,20 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
             draw.text((name_x, y_text), row.get("username", "???"), font=self.font_row, fill=TEXT_PRIMARY)
 
-            # Right-aligned: grade | pp acc combo [mod badges]
             pp_val = float(row.get("pp", 0) or 0)
             acc_val = float(row.get("accuracy", 0) or 0)
             combo_val = int(row.get("combo", 0) or 0)
             mods_raw = self._filter_mods(str(row.get("mods", "")).strip())
 
-            # Grade
             grade = row.get("rank", "F")
             grade_color = GRADE_COLORS.get(grade, TEXT_SECONDARY)
             gb = draw.textbbox((0, 0), grade, font=self.font_row)
             grade_w = gb[2] - gb[0]
             draw.text((VALUE_RIGHT_X - grade_w, y_text), grade, font=self.font_row, fill=grade_color)
 
-            # Stats: pp/score bold, then acc combo smaller, then mod badges
             pp_str = row.get("primary_str") or f"{pp_val:.0f}pp"
             detail_str = f"{acc_val:.2f}%  {combo_val}x"
 
-            # Measure mod badges width to lay out right-to-left
             mod_badges_w = 0
             mod_names = []
             if mods_raw and mods_raw != "—":
@@ -478,7 +440,7 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                     mb = draw.textbbox((0, 0), mn, font=self.font_stat_label)
                     mod_badges_w += (mb[2] - mb[0] + 10) + 4
                 if mod_badges_w > 0:
-                    mod_badges_w += 4  # gap before badges
+                    mod_badges_w += 4
 
             pp_bbox = draw.textbbox((0, 0), pp_str, font=self.font_row)
             pp_w = pp_bbox[2] - pp_bbox[0]
@@ -497,7 +459,6 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
         rows_bottom_y = list_y + len(extended_rows) * row_h
 
-        # ── FOOTER ──
         footer_y = rows_bottom_y
         draw.line([(0, footer_y), (W, footer_y)], fill=ACCENT_RED, width=1)
         footer_text = f"{unique_players} players \u00b7 {total_plays} plays"
@@ -505,7 +466,4 @@ class LeaderboardCardGenerator(BaseCardRenderer):
 
         return self._save(img)
 
-
-
-# Backward-compatible singleton; imported by services.image.__init__
 leaderboard_gen = LeaderboardCardGenerator()

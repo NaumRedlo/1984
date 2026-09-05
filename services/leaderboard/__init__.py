@@ -1,9 +1,4 @@
-"""Leaderboard domain services (data fetch + formatting).
-
-This package intentionally contains no aiogram-specific code.
-"""
-
-from services.leaderboard.service import (  # noqa: F401
+from services.leaderboard.service import (
     CATEGORIES,
     build_absolute_board,
     build_absolute_card,
@@ -24,4 +19,3 @@ __all__ = [
     "map_leaderboard_usage",
     "schedule_stale_refresh",
 ]
-

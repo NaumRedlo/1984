@@ -1,12 +1,3 @@
-"""Render the TITLES COLLECTION card to /tmp/ for visual inspection.
-
-Usage:
-    PYTHONPATH=. python scripts/render_titles_demo.py
-
-Synthetic data — no DB or network. Builds a fake progress list straight from
-the registry, so it shows the full 7-tier rarity spread.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -16,12 +7,9 @@ from services.image.render.titles import build_titles_card_data
 from utils.titles import TITLE_REGISTRY
 from utils.title_progress import build_titles_summary
 
-
-# Codes left LOCKED, to show a realistic mix (the rest unlock).
 _LOCKED = {"ss_8star", "ss_hddt_75star", "fc_marathon_30m", "td_4star"}
-# Code shown mid-progress (counts toward a large target).
-_PARTIAL = "played_100k"
 
+_PARTIAL = "played_100k"
 
 def _synthetic_progress():
     base = datetime(2026, 6, 1, 12, 0, 0)
@@ -49,7 +37,6 @@ def _synthetic_progress():
         })
     return out
 
-
 def main():
     progress = _synthetic_progress()
     summary = build_titles_summary(progress)
@@ -66,7 +53,6 @@ def main():
             f.write(buf.getvalue())
         print("wrote", path)
 
-    # A filtered view (mythic only) to sanity-check the tab highlight + filter.
     data = build_titles_card_data(
         username="Stepa", handle="@stepaa", country="kz",
         progress_list=progress, summary=summary,
@@ -77,7 +63,6 @@ def main():
         f.write(buf.getvalue())
     print("wrote /tmp/titles_dashboard_mythic.png")
     print(f"pages={summary_pages} unlocked={summary['unlocked']}/{summary['total']}")
-
 
 if __name__ == "__main__":
     main()

@@ -1,21 +1,3 @@
-"""Render section (`st:rnd`): how a replay render is made, and who sees it.
-
-These used to live on a keyboard hung off the replay itself, which meant the
-settings only existed while a replay did: they were reachable after uploading a
-file and nowhere else, and a question like "what will this render at" had no
-answer until you had something to render. They belong with the rest of a
-person's settings, so here they are.
-
-Two different kinds of thing sit here, and they are stored differently on
-purpose. Size, frame rate and sound are *preferences*, held in memory beside
-the pending renders — losing them to a restart costs a tap. Sharing replays is
-*permission*, and permission is written down: a restart may forget that someone
-wanted 60fps and must not forget whether they agreed to hand over their files.
-
-The fine control this will grow into does not exist yet. What is here is what
-the engine already reads.
-"""
-
 from dataclasses import replace
 
 from aiogram import Router, F, types
@@ -34,13 +16,6 @@ from dossier import skins as skin_store
 
 router = Router(name="settings_render")
 
-# The settings you pick one of, and how each reads. Kept as strings because that
-# is what a callback carries, and parsed in one place.
-#
-# Laid out in rows here rather than in the keyboard: five resolutions in one row
-# is six buttons wide once the label is counted, which Telegram renders as six
-# unreadable slivers. The rows are the layout, and the layout belongs beside the
-# values it is a layout for.
 OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
     "size": [
         [("854x480", "480p"), ("1280x720", "720p"), ("1920x1080", "1080p")],
@@ -49,29 +24,17 @@ OPTIONS: dict[str, list[list[tuple[str, str]]]] = {
     "fps": [[("30", "30 fps"), ("60", "60 fps"), ("120", "120 fps")]],
 }
 
-# The settings that are simply on or off. One button apiece that offers the
-# opposite of what is set, the way the consent box already worked — two buttons
-# for a yes/no is twice the width to say the same thing.
 TOGGLES: tuple[str, ...] = ("mute", "background", "bare", "map_hitsounds", "leaderboard")
-
-# How far the map's artwork may be darkened. Steps rather than a slider, the way
-# the sound levels are — Telegram has no slider, and nobody has wanted 63%.
 
 def _values(key: str) -> set[str]:
     return {value for row in OPTIONS.get(key, []) for value, _ in row}
 
-
 def _current(choices: renders.Choices, key: str) -> str:
-    """What this setting is set to, as the callback data spells it."""
     if key in TOGGLES:
         return "1" if getattr(choices, key) else "0"
     return str(getattr(choices, key))
 
-
 def _apply(choices: renders.Choices, key: str, value: str) -> bool:
-    """Set one option. False when the pair is not one this menu offers — a
-    callback is user input, and an old keyboard can outlive the option it was
-    drawn for."""
     if key in TOGGLES:
         if value not in ("0", "1"):
             return False
@@ -85,15 +48,11 @@ def _apply(choices: renders.Choices, key: str, value: str) -> bool:
         choices.size = value
     return True
 
-
 def _option_rows(choices: renders.Choices) -> list:
-    """The pick-one settings, as the rows `OPTIONS` lays them out."""
     return [
         [
             InlineKeyboardButton(
-                # The chosen one is marked rather than hidden: a settings screen
-                # that shows only what you can change makes you tap something to
-                # find out what is already true.
+
                 text=f"{'● ' if value == _current(choices, key) else ''}{shown}",
                 callback_data=f"st:rnd:{key}:{value}",
             )
@@ -103,46 +62,29 @@ def _option_rows(choices: renders.Choices) -> list:
         for row in OPTIONS[key]
     ]
 
-
 def _quality_kb(choices: renders.Choices, lang: str = "en") -> InlineKeyboardMarkup:
-    """The quality sub-tab: how big and how smooth.
 
-    Kept in this module rather than given one of its own, unlike the movement
-    and sound sub-tabs. Those own their settings; this one shows `OPTIONS`, and
-    a size is still set by the same `st:rnd:size:` callback and still checked
-    against the same ration. Moving five rows to another file would have moved
-    the table, the ration and the handler with them.
-    """
-    # Size and frame rate typed rather than picked. The named steps could not
-    # say 1600×900 and took three rows to offer five answers; see `typed.py`,
-    # and `rationed` below for the guard both ways share.
     rows = [
         [typed.value_button(choices, "size", lang)],
         [typed.value_button(choices, "fps", lang)],
     ]
-    # What is *in* the picture, under what it is drawn at: the map's artwork
-    # behind the play, and the field with nothing on it that talks about the
-    # play. Both are about what the frame contains, which is this screen.
+
     rows.append(switch_row(choices, ("background", "bare"), lang))
     rows.append(switch_row(choices, ("leaderboard",), lang))
-    # And how far that artwork is darkened, which is only a question once it is
-    # there — so it sits under the switch that puts it there.
+
     if choices.background:
         rows.append([typed.value_button(choices, "dim", lang)])
         rows.append([typed.value_button(choices, "blur", lang)])
-    # The meter is not about the picture, it is about the readout over it — so
-    # it sits below the picture's own settings rather than among them, and
-    # unlike the dim it is always offered: there is no switch it depends on.
+
     rows.append([typed.value_button(choices, "meter", lang)])
     rows.append([typed.value_button(choices, "cursor", lang)])
     rows.append(sub_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def _render_kb(
     choices: renders.Choices, sharing: bool, lang: str = "en"
 ) -> InlineKeyboardMarkup:
-    # Four sub-tabs on two rows: how the file comes out, then what is inside it.
+
     rows = [
         [
             InlineKeyboardButton(text=t("sts.qly.tab", lang), callback_data="st:qly"),
@@ -151,7 +93,6 @@ def _render_kb(
         [effects.tab_button(lang), skins.tab_button(lang)],
     ]
 
-    # What is left here is the one permission that belongs to nothing else.
     rows.append([
         InlineKeyboardButton(
             text=f"{'☑️' if sharing else '⬜️'} {t('sts.rnd.share', lang)}",
@@ -161,23 +102,17 @@ def _render_kb(
     rows.append(_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 async def _ration(tg_id: int, tenant_chat_id) -> int:
-    """How many renders above 1080p60 this person has left today."""
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         return renders.heavy_left(user)
-
 
 async def _sharing(tg_id: int, tenant_chat_id) -> bool:
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         return bool(user and user.share_replays)
 
-
 async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
-    """Returns whether it could be written — an unlinked account has nowhere to
-    keep a permission, and saying so beats a toggle that silently forgets."""
     async with get_db_session() as session:
         user = await get_registered_user(session, tg_id, tenant_chat_id)
         if not user:
@@ -186,16 +121,12 @@ async def _set_sharing(tg_id: int, tenant_chat_id, on: bool) -> bool:
         await session.commit()
         return True
 
-
 def _text(choices: renders.Choices, sharing: bool, lang: str) -> str:
     body = t("sts.rnd.body", lang, summary=choices.summary(lang))
     if sharing:
-        # Restated where it applies rather than only at the moment of turning it
-        # on: this is the screen somebody opens months later wondering what the
-        # bot has of theirs.
+
         body += "\n\n" + t("sts.rnd.share_on", lang)
     return body
-
 
 async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> None:
     choices = renders.choices(callback.from_user.id)
@@ -206,18 +137,14 @@ async def _show(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> Non
             parse_mode="HTML",
             reply_markup=_render_kb(choices, sharing, lang),
         )
-    except Exception:  # noqa: BLE001 — an unchanged message is not an error
+    except Exception:
         pass
 
-
 def _quality_text(choices: renders.Choices, lang: str, left: int) -> str:
-    # The ration moved here with the buttons it is about. On the render screen
-    # it was a sentence about 4K beside no way to choose 4K; here it is beside
-    # the two buttons that spend it.
+
     return t("sts.qly.body", lang, summary=choices.summary(lang)) + "\n" + t(
         "sts.rnd.ration", lang, left=left, total=renders.HEAVY_PER_DAY
     )
-
 
 async def _show_quality(callback: types.CallbackQuery, tenant_chat_id, lang: str) -> None:
     choices = renders.choices(callback.from_user.id)
@@ -228,16 +155,13 @@ async def _show_quality(callback: types.CallbackQuery, tenant_chat_id, lang: str
             parse_mode="HTML",
             reply_markup=_quality_kb(choices, lang),
         )
-    except Exception:  # noqa: BLE001 — an unchanged message is not an error
+    except Exception:
         pass
-
 
 @router.callback_query(F.data == "st:qly")
 async def cb_quality(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    """Open the screen. Everything numeric on it is typed — see `typed.py`."""
     await callback.answer()
     await _show_quality(callback, tenant_chat_id, lang)
-
 
 @router.callback_query(F.data == "st:rnd")
 async def cb_render(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
@@ -245,20 +169,15 @@ async def cb_render(callback: types.CallbackQuery, tenant_chat_id=None, lang: st
     await _show(callback, tenant_chat_id, lang)
     await callback.answer()
 
-
 @router.callback_query(F.data == "st:rnd:noop")
 async def cb_label(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
-    """Row labels are buttons because Telegram has no other way to put text on a
-    keyboard row. Tapping one does nothing, quietly."""
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("st:rnd:skin:"))
 async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     wanted = callback.data.split(":", 3)[3]
     if wanted != skins.DEFAULT_SKIN and not skin_store.folder_of(wanted):
-        # The store is the authority, not the button: a keyboard outlives the
-        # skin it was drawn for.
+
         await callback.answer(t("sts.rnd.skin_gone", lang), show_alert=True)
         await skins.show(callback, await _load(callback.from_user.id, tenant_chat_id), lang)
         return
@@ -266,9 +185,8 @@ async def cb_skin(callback: types.CallbackQuery, tenant_chat_id=None, lang: str 
     choices.skin = None if wanted == skins.DEFAULT_SKIN else wanted
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(wanted)
-    # Back to the list it was chosen from.
-    await skins.show(callback, choices, lang)
 
+    await skins.show(callback, choices, lang)
 
 @router.callback_query(F.data.startswith("st:rnd:share:"))
 async def cb_share(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
@@ -276,28 +194,14 @@ async def cb_share(callback: types.CallbackQuery, tenant_chat_id=None, lang: str
     if not await _set_sharing(callback.from_user.id, tenant_chat_id, wanted):
         await callback.answer(t("sts.rnd.share_needs_account", lang), show_alert=True)
         return
-    # Spelled out on the way in and not on the way out: agreeing is the half
-    # worth being sure about. A short wording, because Telegram refuses a
-    # callback answer over 200 characters outright — the long one is on the
-    # screen below, which is where somebody looks months later anyway.
+
     await callback.answer(
         t("sts.rnd.share_agreed" if wanted else "sts.rnd.share_off", lang),
         show_alert=wanted,
     )
     await _show(callback, tenant_chat_id, lang)
 
-
 async def rationed(tg_id: int, tenant_chat_id, before, after, lang: str) -> str | None:
-    """Why this change cannot be made, or `None` when it can.
-
-    Refused here rather than when the video is asked for. Somebody who picked
-    4K in the morning should not find out at midnight, holding a replay, that
-    the setting they chose was never going to run.
-
-    Shared with the typed settings, which can reach 4K by hand as easily as by
-    button — and a rule that only one of the two ways obeyed would be a rule
-    with a way round it.
-    """
     if not after.heavy() or before.heavy():
         return None
     async with get_db_session() as session:
@@ -308,7 +212,6 @@ async def rationed(tg_id: int, tenant_chat_id, before, after, lang: str) -> str 
             return t("sts.rnd.ration_spent", lang)
     return None
 
-
 @router.callback_query(F.data.startswith("st:rnd:"))
 async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
     parts = callback.data.split(":")
@@ -316,9 +219,7 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
         await callback.answer()
         return
     choices = renders.choices(callback.from_user.id)
-    # Applied to a copy first: a setting that turns out to be rationed must not
-    # be left half-set, and "would this be rationed" is a question about the
-    # result rather than about the button.
+
     wanted = replace(choices)
     if not _apply(wanted, parts[2], parts[3]):
         await callback.answer(t("sts.rnd.unknown", lang), show_alert=True)
@@ -330,9 +231,7 @@ async def cb_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str =
     _apply(choices, parts[2], parts[3])
     await _store(callback.from_user.id, tenant_chat_id, choices)
     await callback.answer(choices.summary(lang))
-    # Back to the screen the button was on. Each setting is drawn in exactly one
-    # place, so the setting names the screen and nothing has to be carried in a
-    # callback that is already four parts long.
+
     if parts[2] in ("mute", "map_hitsounds"):
         await sound.show(callback, choices, lang)
     elif parts[2] in OPTIONS or parts[2] in ("background", "bare"):

@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 
 _LABEL_CACHE: dict[int, str] = {}
 
-
 async def group_label(bot, chat_id: int) -> str:
     cached = _LABEL_CACHE.get(chat_id)
     if cached is not None:

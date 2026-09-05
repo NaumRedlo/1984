@@ -6,14 +6,12 @@ import pytest
 
 import bot.handlers.maplink.handlers as h
 
-
 @pytest.fixture(autouse=True)
 def _patch_lang():
     async def fake(uid):
         return "EN"
     with patch.object(h, "get_language", fake):
         yield
-
 
 def _msg(text):
     sent = SimpleNamespace(chat=SimpleNamespace(id=1), message_id=42)
@@ -23,7 +21,6 @@ def _msg(text):
 
     return SimpleNamespace(text=text, from_user=SimpleNamespace(id=1),
                            answer_photo=answer_photo), sent
-
 
 def _sample_data(**overrides):
     data = {
@@ -39,7 +36,6 @@ def _sample_data(**overrides):
     data.update(overrides)
     return data
 
-
 async def test_no_link_is_a_noop():
     message, _ = _msg("just chatting, no links here")
     called = []
@@ -50,7 +46,6 @@ async def test_no_link_is_a_noop():
         await h.on_beatmap_link(message, SimpleNamespace())
     assert called == []
 
-
 async def test_command_carrying_a_link_is_ignored():
     message, _ = _msg("/somecommand https://osu.ppy.sh/beatmaps/129891")
     called = []
@@ -60,7 +55,6 @@ async def test_command_carrying_a_link_is_ignored():
     with patch.object(h, "_build_whatif_data", fake_build):
         await h.on_beatmap_link(message, SimpleNamespace())
     assert called == []
-
 
 async def test_link_posts_interactive_card_at_default_accuracy():
     message, sent = _msg("check this map https://osu.ppy.sh/beatmaps/129891")
@@ -94,7 +88,6 @@ async def test_link_posts_interactive_card_at_default_accuracy():
     assert (chat_id, message_id) == (1, 42)
     assert ctx == {"beatmap_id": 129891, "beatmapset_id": 39804}
 
-
 async def test_resolve_or_pp_failure_is_silent():
     message, _ = _msg("https://osu.ppy.sh/beatmaps/129891")
 
@@ -102,4 +95,4 @@ async def test_resolve_or_pp_failure_is_silent():
         return None
 
     with patch.object(h, "_build_whatif_data", failing_build):
-        await h.on_beatmap_link(message, SimpleNamespace())  # must not raise
+        await h.on_beatmap_link(message, SimpleNamespace())

@@ -6,22 +6,16 @@ from typing import Any, Dict, Union
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
 
-
 @dataclass
 class TriggerArgs:
-    trigger: str        # matched trigger (lowercased)
-    args: str | None    # everything after the trigger word, or None
-    raw_text: str       # original message text
-
+    trigger: str
+    args: str | None
+    raw_text: str
 
 class TextTriggerFilter(BaseFilter):
-    """Match plain-text messages whose first word equals one of the given triggers.
-
-    Case-insensitive, exact word match (not prefix).
-    """
 
     def __init__(self, *triggers: str) -> None:
-        # Store lowercased triggers for O(1) lookup
+
         self.triggers: frozenset[str] = frozenset(t.lower() for t in triggers)
 
     async def __call__(self, message: Message) -> Union[bool, Dict[str, Any]]:

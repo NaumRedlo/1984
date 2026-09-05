@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.database import Base
-import db.models  # noqa: F401 — register every table
+import db.models
 from db.models.user import User
 from db.models.leaderboard_snapshot import LeaderboardSnapshot
 from services.leaderboard.snapshots import ensure_tenant_snapshot
@@ -17,7 +17,6 @@ W30 = datetime(2026, 7, 22, 12, 0)
 W31 = datetime(2026, 7, 29, 12, 0)
 W29 = datetime(2026, 7, 15, 12, 0)
 
-
 @pytest_asyncio.fixture
 async def factory():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -26,14 +25,12 @@ async def factory():
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
 
-
 def _user(tg, name, **kw):
     base = dict(chat_id=CHAT, telegram_id=tg, osu_username=name, osu_user_id=tg,
                 player_pp=1000, accuracy=97.0, play_count=1000, play_time=3600,
                 ranked_score=1_000_000, total_hits=400_000, rank="Candidate")
     base.update(kw)
     return User(**base)
-
 
 async def test_capture_is_idempotent(factory):
     async with factory() as s:
@@ -42,15 +39,14 @@ async def test_capture_is_idempotent(factory):
 
         assert await ensure_tenant_snapshot(s, CHAT, now=W30) == 2
         await s.commit()
-        # Second call in the same period must not duplicate anything.
+
         assert await ensure_tenant_snapshot(s, CHAT, now=W30) == 0
         await s.commit()
 
         rows = (await s.execute(select(LeaderboardSnapshot))).scalars().all()
         assert len(rows) == 2
         assert {r.period_key for r in rows} == {"2026-W30"}
-        assert rows[0].player_pp == 1000      # froze the value at period start
-
+        assert rows[0].player_pp == 1000
 
 async def test_a_new_week_opens_a_new_anchor(factory):
     async with factory() as s:
@@ -62,7 +58,6 @@ async def test_a_new_week_opens_a_new_anchor(factory):
         await s.commit()
         keys = {r.period_key for r in (await s.execute(select(LeaderboardSnapshot))).scalars()}
         assert keys == {"2026-W30", "2026-W31"}
-
 
 async def test_player_who_joined_midweek_gets_an_anchor(factory):
     async with factory() as s:
@@ -77,14 +72,12 @@ async def test_player_who_joined_midweek_gets_an_anchor(factory):
         await s.commit()
         assert len((await s.execute(select(LeaderboardSnapshot))).scalars().all()) == 2
 
-
 async def test_delta_board_reports_collecting_before_any_anchor(factory):
     async with factory() as s:
         s.add(_user(1, "a"))
         await s.commit()
         board = await build_delta_board(s, "pp", CHAT, now=W30)
         assert board["collecting"] is True and board["rows"] == []
-
 
 async def test_delta_board_ranks_growth_and_pins_the_viewer(factory):
     async with factory() as s:
@@ -94,7 +87,6 @@ async def test_delta_board_ranks_growth_and_pins_the_viewer(factory):
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
 
-        # Both gain, the winner more.
         winner.player_pp = 1500
         viewer.player_pp = 1100
         await s.commit()
@@ -103,10 +95,9 @@ async def test_delta_board_ranks_growth_and_pins_the_viewer(factory):
         assert [r["username"] for r in board["rows"]] == ["winner", "viewer"]
         assert board["rows"][0]["delta"] == 500
         assert board["self_row"]["username"] == "viewer"
-        # Viewer sits second; the gap to first is 400 pp of growth.
+
         assert board["self_row"]["gap_to_next"] == 400
         assert board["no_gain"] == 0
-
 
 async def test_players_without_growth_are_counted_not_ranked(factory):
     async with factory() as s:
@@ -122,22 +113,21 @@ async def test_players_without_growth_are_counted_not_ranked(factory):
         board = await build_delta_board(s, "pp", CHAT, viewer_user_id=idle.id, now=W30)
         assert [r["username"] for r in board["rows"]] == ["mover"]
         assert board["no_gain"] == 1
-        # A viewer who hasn't played at all gets a nudge, not a "+0" row.
+
         assert board["self_not_played"] is True
         assert board["self_row"] is None
-
 
 async def test_pagination_and_self_row_found_across_pages(factory):
     from services.leaderboard.service import ROWS_PER_PAGE
 
-    total = ROWS_PER_PAGE * 2          # exactly two full pages, whatever the size
+    total = ROWS_PER_PAGE * 2
     async with factory() as s:
         players = [_user(i, f"p{i:02d}") for i in range(1, total + 1)]
         s.add_all(players)
         await s.commit()
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
-        # Descending gains, so p01 leads and the last player trails.
+
         for n, u in enumerate(players):
             u.player_pp = 1000 + (total - n) * 10
             u.play_count = 1100
@@ -147,7 +137,7 @@ async def test_pagination_and_self_row_found_across_pages(factory):
         first = await build_delta_board(s, "pp", CHAT, 0, viewer_user_id=last.id, now=W30)
         assert first["total_pages"] == 2
         assert [r["position"] for r in first["rows"]] == list(range(1, ROWS_PER_PAGE + 1))
-        # The viewer is last — off this page, but still pinned.
+
         assert first["self_row"]["username"] == last.osu_username
         assert first["self_row"]["position"] == total
 
@@ -155,10 +145,8 @@ async def test_pagination_and_self_row_found_across_pages(factory):
         assert [r["position"] for r in second["rows"]] == list(range(ROWS_PER_PAGE + 1, total + 1))
         assert second["page"] == 1
 
-        # Out-of-range pages clamp rather than render an empty card.
         clamped = await build_delta_board(s, "pp", CHAT, 99, now=W30)
         assert clamped["page"] == 1
-
 
 async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
     import json
@@ -168,14 +156,12 @@ async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
         s.add_all([winner, quiet])
         await s.commit()
 
-        # Week 29 opens; only `winner` gains during it.
         await ensure_tenant_snapshot(s, CHAT, now=W29)
         await s.commit()
         winner.player_pp = 1500
         winner.play_count = 1100
         await s.commit()
 
-        # Week 30 opens -> week 29's closing places are frozen onto the new rows.
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
 
@@ -185,18 +171,16 @@ async def test_returning_after_a_quiet_week_shows_movement_not_new(factory):
                 select(LeaderboardSnapshot).where(LeaderboardSnapshot.period_key == "2026-W30")
             )).scalars().all()
         }
-        assert rows[winner.id]["pp"] == 1          # ranked first
-        assert rows[quiet.id]["pp"] == 2           # jointly just outside, not absent
+        assert rows[winner.id]["pp"] == 1
+        assert rows[quiet.id]["pp"] == 2
 
-        # Now the quiet one plays and takes the lead: a real climb, not NEW.
         quiet.player_pp = 2000
         quiet.play_count = 1200
         await s.commit()
         board = await build_delta_board(s, "pp", CHAT, viewer_user_id=quiet.id, now=W30)
         top = board["rows"][0]
         assert top["username"] == "quiet"
-        assert top["movement"] == 1                # was jointly 2nd, now 1st
-
+        assert top["movement"] == 1
 
 async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
     async with factory() as s:
@@ -206,12 +190,12 @@ async def test_viewer_who_played_but_gained_nothing_still_gets_a_row(factory):
         await ensure_tenant_snapshot(s, CHAT, now=W30)
         await s.commit()
         mover.player_pp = 1200
-        tryer.play_count = 1050        # played, but no pp to show for it
+        tryer.play_count = 1050
         await s.commit()
 
         board = await build_delta_board(s, "pp", CHAT, viewer_user_id=tryer.id, now=W30)
         assert not board.get("self_not_played")
         assert board["self_row"]["username"] == "tryer"
         assert board["self_row"]["position"] is None
-        # Their lifetime figure is real, not zeroed out.
+
         assert board["self_row"]["absolute"] == 1000

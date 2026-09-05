@@ -9,7 +9,6 @@ from utils.language import get_language
 
 router = Router(name="start")
 
-
 async def _send_welcome(message: Message):
     lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     name = escape_html(message.from_user.first_name or "")
@@ -19,11 +18,9 @@ async def _send_welcome(message: Message):
         reply_markup=ReplyKeyboardRemove(),
     )
 
-
 @router.message(Command("start"))
 async def send_welcome_command(message: Message):
     await _send_welcome(message)
-
 
 @router.message(TextTriggerFilter("start"))
 async def send_welcome_trigger(message: Message, trigger_args: TriggerArgs):

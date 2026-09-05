@@ -1,17 +1,3 @@
-"""Every button the bot draws is a button something answers.
-
-The cancel button on a render was drawn on every progress message since
-renders existed and nothing answered it: `dsx:` appeared once in the whole
-repository, on the keyboard itself. A tap did nothing at all — not even the
-spinner Telegram shows until a callback is acknowledged — so the render ran to
-the end while the person who asked for it watched a dead button.
-
-Nothing else could have caught it. It is not a crash, not a failing branch and
-not a wrong answer; it is an absence, and an absence has no line to put a test
-on. So the test is over the pair: what the keyboards produce, and what the
-routers accept.
-"""
-
 import ast
 import pathlib
 import re
@@ -20,14 +6,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "bot"
 
-
 def _literal_prefix(node: ast.AST) -> tuple[str | None, bool]:
-    """The fixed part of a `callback_data` value, and whether that is all of it.
-
-    `f"dsr:{token}"` is `("dsr:", False)` — a prefix, with the rest decided at
-    run time. `"st:home"` is `("st:home", True)`, which a router may match
-    exactly.
-    """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value, True
     if isinstance(node, ast.JoinedStr):
@@ -39,7 +18,6 @@ def _literal_prefix(node: ast.AST) -> tuple[str | None, bool]:
                 return (fixed or None), False
         return (fixed or None), True
     return None, False
-
 
 def _read() -> tuple[list[tuple[str, bool, str]], list[tuple[str, str]]]:
     produced: list[tuple[str, bool, str]] = []
@@ -66,7 +44,6 @@ def _read() -> tuple[list[tuple[str, bool, str]], list[tuple[str, str]]]:
                             handled.append(("exact", lit))
     return produced, handled
 
-
 def _covered(value: str, exact: bool, handled) -> bool:
     for kind, pattern in handled:
         if kind == "prefix" and value.startswith(pattern):
@@ -74,7 +51,6 @@ def _covered(value: str, exact: bool, handled) -> bool:
         if kind == "exact" and (value == pattern if exact else pattern.startswith(value)):
             return True
     return False
-
 
 def test_every_button_the_bot_draws_has_something_that_answers_it():
     produced, handled = _read()
@@ -86,11 +62,7 @@ def test_every_button_the_bot_draws_has_something_that_answers_it():
     ]
     assert not orphans, "buttons nobody answers:\n  " + "\n  ".join(orphans)
 
-
 def test_the_scan_would_notice_if_a_handler_went_away():
-    """A guard on the guard. This test is only worth having if removing a
-    router makes it fail, and a scan that quietly matched everything would look
-    exactly like a clean repository."""
     produced, handled = _read()
     without_render = [h for h in handled if h != ("prefix", "dsr:")]
     assert any(

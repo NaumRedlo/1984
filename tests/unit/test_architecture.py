@@ -3,7 +3,6 @@ import importlib
 
 import pytest
 
-
 SHIM_FILES = [
     "utils.osu_helpers",
     "utils.text_utils",
@@ -23,7 +22,6 @@ UTIL_PACKAGES = [
     "utils.osu",
 ]
 
-
 class TestModuleImports:
     @pytest.mark.parametrize("package", FEATURE_PACKAGES + UTIL_PACKAGES)
     def test_package_importable(self, package):
@@ -34,7 +32,6 @@ class TestModuleImports:
     def test_shim_importable(self, shim):
         mod = importlib.import_module(shim)
         assert mod is not None
-
 
 class TestShimIntegrity:
     @pytest.mark.parametrize("shim", SHIM_FILES)
@@ -53,7 +50,6 @@ class TestShimIntegrity:
         ]
         assert defs == [], f"Shim {shim} contains definitions: {[d.name for d in defs]}"
 
-
 class TestRouterRegistration:
     @pytest.mark.parametrize("package", FEATURE_PACKAGES)
     def test_router_exported(self, package):
@@ -68,7 +64,6 @@ class TestRouterRegistration:
             if r and hasattr(r, "name"):
                 names.append(r.name)
         assert len(names) == len(set(names)), f"Duplicate router names: {names}"
-
 
 class TestNoCircularImports:
     CORE_MODULES = [

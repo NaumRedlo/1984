@@ -13,13 +13,11 @@ from utils.language import get_language
 from utils.osu.resolve_user import get_registered_user
 from bot.handlers.dm_tenant import ensure_dm_tenant
 
-
 @dataclass(slots=True)
 class EffectiveAuthState:
     user: Optional[User]
     is_registered: bool
     has_linked_oauth: bool
-
 
 async def get_effective_auth_state(
     session: AsyncSession, telegram_id: int, chat_id: int,
@@ -30,7 +28,6 @@ async def get_effective_auth_state(
 
     linked_oauth = await has_oauth(user.telegram_id)
     return EffectiveAuthState(user=user, is_registered=True, has_linked_oauth=linked_oauth)
-
 
 async def require_registered_user(
     session: AsyncSession,
@@ -43,10 +40,6 @@ async def require_registered_user(
     if not actor or event is None:
         return None
 
-    # Player data is per-group (users.chat_id). ``tenant_chat_id`` is the
-    # effective tenant injected by TenantMiddleware: the group itself in a group
-    # chat, or the user's chosen group in a DM. If it's unset (DM, no group
-    # picked yet) ``ensure_dm_tenant`` shows the group picker and we stop.
     if not await ensure_dm_tenant(event, tenant_chat_id):
         return None
     chat_id = tenant_chat_id
@@ -61,7 +54,6 @@ async def require_registered_user(
     elif callback:
         await callback.answer(t("auth.not_registered_alert", lang), show_alert=True)
     return None
-
 
 async def require_linked_oauth(
     session: AsyncSession,
@@ -83,7 +75,6 @@ async def require_linked_oauth(
     elif callback:
         await callback.answer(t("auth.link_first_alert", lang), show_alert=True)
     return None
-
 
 async def validate_callback_owner(callback: CallbackQuery, owner_tg_id: int, text: str | None = None) -> bool:
     if callback.from_user.id == owner_tg_id:

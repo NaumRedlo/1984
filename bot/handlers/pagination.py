@@ -1,5 +1,3 @@
-"""Shared callback handler for inline page navigation (pg|prefix|user_id|page)."""
-
 from aiogram import Router, types
 
 from bot.utils.paginator import get_pages, nav_keyboard
@@ -10,7 +8,6 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 router = Router(name="pagination")
-
 
 @router.callback_query(lambda c: c.data and c.data.startswith("pg|"))
 async def handle_page_turn(callback: types.CallbackQuery) -> None:

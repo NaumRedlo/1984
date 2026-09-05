@@ -5,13 +5,10 @@ from typing import Optional, List, Dict, Any, Union
 from functools import wraps
 from urllib.parse import quote
 
-
-
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
 
 logger = get_logger("client.osu")
-
 
 def _pick_stat(stats, *keys):
     for k in keys:
@@ -20,7 +17,6 @@ def _pick_stat(stats, *keys):
             return int(v)
     return None
 
-
 def _is_perfect(raw):
     vals = [raw.get(k) for k in ("is_perfect_combo", "legacy_perfect", "perfect")]
     vals = [v for v in vals if v is not None]
@@ -28,10 +24,8 @@ def _is_perfect(raw):
         return None
     return any(bool(v) for v in vals)
 
-
 def _parse_played_at(raw):
     return _parse_iso_dt(raw.get("ended_at") or raw.get("created_at"))
-
 
 def _parse_iso_dt(s):
     if not s:
@@ -42,12 +36,10 @@ def _parse_iso_dt(s):
     except Exception:
         return None
 
-
 _SR_MOD_BITS = {
     "EZ": 2, "TD": 4, "HD": 8, "HR": 16,
     "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024,
 }
-
 
 def _sr_mods_bitset(mods_str) -> int:
     if isinstance(mods_str, (list, tuple, set)):
@@ -57,7 +49,7 @@ def _sr_mods_bitset(mods_str) -> int:
         if "," in text:
             seen = {a.strip() for a in text.split(",") if a.strip()}
         else:
-            # Acronyms are two letters each, and every one this cares about is.
+
             text = "".join(ch for ch in text if ch.isalnum())
             seen = {text[i:i + 2] for i in range(0, len(text), 2)}
     bits = 0
@@ -65,7 +57,6 @@ def _sr_mods_bitset(mods_str) -> int:
         if ac in seen:
             bits |= bit
     return bits
-
 
 def with_retry(max_retries: int = 3, base_delay: float = 1.0, max_delay: float = 30.0):
     def decorator(func):
@@ -89,7 +80,6 @@ def with_retry(max_retries: int = 3, base_delay: float = 1.0, max_delay: float =
             raise last_exception
         return wrapper
     return decorator
-
 
 class OsuApiClient:
     BASE_URL = "https://osu.ppy.sh/api/v2"
@@ -267,7 +257,7 @@ class OsuApiClient:
             "last_visit": data.get("last_visit"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": data.get("cover", {}).get("url"),
-            # Batch II title inputs (level / account age / grade counts).
+
             "level": stats.get("level", {}).get("current", 0),
             "join_date": data.get("join_date"),
             "grade_counts": stats.get("grade_counts", {}) or {},
@@ -343,11 +333,10 @@ class OsuApiClient:
         user_model.total_hits = int(stats.get("total_hits", 0))
         user_model.total_score = int(stats.get("total_score", 0))
         user_model.is_supporter = bool(stats.get("is_supporter", False))
-        # Latch "ever a supporter" so "Volunteer" is earned once and kept forever.
+
         if user_model.is_supporter:
             user_model.was_supporter = True
 
-        # Batch II profile stats (level / account age / grade counts).
         user_model.level = int(stats.get("level") or 0)
         jd = stats.get("join_date")
         if jd:
@@ -356,20 +345,17 @@ class OsuApiClient:
         user_model.grade_count_s = int(gc.get("s", 0) or 0) + int(gc.get("sh", 0) or 0)
         user_model.grade_count_ss = int(gc.get("ss", 0) or 0) + int(gc.get("ssh", 0) or 0)
 
-        # Maintain the rolling-week play_count delta for "Stakhanovite" (500/week).
         from utils.title_progress import update_weekly_plays
         update_weekly_plays(user_model)
 
         new_avatar_url = stats.get("avatar_url")
         new_cover_url = stats.get("cover_url")
 
-        # Cache avatar bytes if URL changed or cache is empty
         if new_avatar_url and (new_avatar_url != user_model.avatar_url or not user_model.avatar_data):
             avatar_data = await self._download_image_bytes(new_avatar_url)
             if avatar_data is not None:
                 user_model.avatar_data = avatar_data
 
-        # Cache cover bytes if URL changed or cache is empty
         if new_cover_url and (new_cover_url != user_model.cover_url or not user_model.cover_data):
             cover_data = await self._download_image_bytes(new_cover_url)
             if cover_data is not None:
@@ -380,7 +366,7 @@ class OsuApiClient:
         user_model.last_api_update = datetime.now(timezone.utc)
         return True
 
-    MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+    MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
     async def _download_image_bytes(self, url: str, timeout: float = 5.0, max_retries: int = 3) -> Optional[bytes]:
         if not url:
@@ -424,7 +410,6 @@ class OsuApiClient:
         if not raw_scores:
             return False
 
-        # Build lookup of existing scores
         stmt = select(UserBestScore).where(UserBestScore.user_id == user_model.id)
         result = await session.execute(stmt)
         existing = {s.score_id: s for s in result.scalars().all()}
@@ -444,7 +429,6 @@ class OsuApiClient:
             mods_list = raw.get("mods", [])
             mods_str = ",".join(str(m) if isinstance(m, str) else str(m.get("acronym", "")) for m in mods_list) if mods_list else None
 
-            # Per-play fields (Phase B1 titles) — all already in the API payload.
             b_bpm = beatmap.get("bpm")
             b_bpm = float(b_bpm) if b_bpm is not None else None
             b_len = beatmap.get("total_length")
@@ -476,13 +460,13 @@ class OsuApiClient:
             if score_id in existing:
                 score_obj = existing[score_id]
                 score_obj.score = score_val
-                # Always update beatmapset_id if missing
+
                 if not score_obj.beatmapset_id and beatmapset.get("id"):
                     score_obj.beatmapset_id = beatmapset.get("id")
-                # Always backfill star_rating if missing
+
                 if score_obj.star_rating is None and star_rating is not None:
                     score_obj.star_rating = star_rating
-                # Backfill per-play fields on existing rows (stable per score_id).
+
                 if score_obj.bpm is None and b_bpm is not None:
                     score_obj.bpm = b_bpm
                 if score_obj.length is None and b_len is not None:
@@ -548,7 +532,6 @@ class OsuApiClient:
                 )
                 session.add(new_score)
 
-        # Remove scores that fell out of top-100
         stale_ids = set(existing.keys()) - incoming_ids
         if stale_ids:
             await session.execute(
@@ -582,7 +565,7 @@ class OsuApiClient:
             pp_val = raw.get("pp")
             if not score_id or beatmap_id is None:
                 continue
-            # pp can be null for loved/unranked maps — store as 0
+
             pp_val = float(pp_val) if pp_val is not None else 0.0
             incoming_ids.append(score_id)
             normalized_scores.append((raw, beatmap, beatmapset, score_id, beatmap_id, pp_val))

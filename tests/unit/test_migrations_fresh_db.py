@@ -2,7 +2,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from db.database import Base
-import db.models  # noqa: F401 — register every table
+import db.models
 from db.migrations import run_all_migrations
 
 _LEGACY_USER = (
@@ -14,23 +14,20 @@ _LEGACY_USER = (
     " 4, 4, 4, 4, '2020-01-01', '2020-01-01')"
 )
 
-
 async def _fresh_engine():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return engine
 
-
 async def test_chain_runs_on_a_database_without_the_removed_tables():
     engine = await _fresh_engine()
     try:
-        # Twice: the chain must also be idempotent.
+
         await run_all_migrations(engine)
         await run_all_migrations(engine)
     finally:
         await engine.dispose()
-
 
 async def test_chain_still_upgrades_a_legacy_database():
     engine = await _fresh_engine()
@@ -56,7 +53,7 @@ async def test_chain_still_upgrades_a_legacy_database():
 
         assert "reminder_sent" in bounties
         assert {"n_300", "n_100", "n_50", "ur_est"} <= submissions
-        # Backfilled from the OLDEST approved submission, not the newest.
+
         assert str(first_approved).startswith("2021-05-05")
     finally:
         await engine.dispose()

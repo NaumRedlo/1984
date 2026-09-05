@@ -32,7 +32,6 @@ logger = get_logger("handlers.auth")
 router = Router(name="auth")
 UNLINK_COOLDOWN_DAYS = 30
 
-
 async def _can_unlink(user: User, lang: str = "en") -> tuple[bool, str | None]:
     if not user.last_unlink_at:
         return True, None
@@ -51,12 +50,10 @@ async def _can_unlink(user: User, lang: str = "en") -> tuple[bool, str | None]:
     hours = remaining.seconds // 3600
     return False, t("common.duration_dh", lang, days=days, hours=hours)
 
-
 async def _clear_user_cache(session, user: User) -> None:
     await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user.id))
     await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user.id))
     await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user.id))
-
 
 @router.message(TextTriggerFilter("register", "reg"))
 async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
@@ -158,10 +155,6 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         )
         logger.info(f"User {tg_id} successfully {'registered' if is_new else 're-linked'} as {osu_name} (ID: {osu_id})")
 
-        # One-time card-language prompt — only on a brand-new registration (not
-        # a re-link), and only if this Telegram identity hasn't picked one yet
-        # (they may have registered in another group already). Bilingual on
-        # purpose — the user hasn't chosen a language yet.
         if is_new and not await has_language(tg_id):
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🇬🇧 English", callback_data=f"reglang:{tg_id}:EN"),
@@ -176,7 +169,6 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
         logger.error(f"Failed to register user {tg_id}: {e}", exc_info=True)
         await wait_msg.edit_text(format_error(t("reg.sys_error", lang), lang))
 
-
 @router.callback_query(F.data.startswith("reglang:"))
 async def cb_registration_language(callback: types.CallbackQuery):
     parts = callback.data.split(":", 2)
@@ -189,7 +181,7 @@ async def cb_registration_language(callback: types.CallbackQuery):
         await callback.answer()
         return
     if callback.from_user.id != owner_tg_id:
-        # Bilingual — they haven't picked a language yet.
+
         await callback.answer("Это не ваш выбор. / This isn't your choice.", show_alert=True)
         return
     lang = parts[2]
@@ -205,14 +197,11 @@ async def cb_registration_language(callback: types.CallbackQuery):
         pass
     await callback.answer()
 
-
 @router.message(TextTriggerFilter("link"))
 async def link_oauth(message: types.Message):
     tg_id = message.from_user.id
     lang = (await get_language(tg_id)).lower()
 
-    # OAuth is a global identity link (per telegram_id), independent of any one
-    # group — so resolve the identity across all groups, not a single tenant.
     async with get_db_session() as session:
         user = await get_registered_identity_user(session, tg_id)
         has_linked = await has_oauth(user.telegram_id) if user else False
@@ -242,33 +231,21 @@ async def link_oauth(message: types.Message):
     )
     track_link_message(tg_id, sent.chat.id, sent.message_id)
 
-
 @router.message(TextTriggerFilter("relink"))
 async def relink_oauth(message: types.Message):
-    """relink — drop the stored osu! OAuth token and start a fresh authorization.
-
-    Unlike `unlink`, this does NOT wipe progress, scores, HPS points, ranks,
-    titles, bounty history or anything else — it only invalidates the broken
-    OAuth row so the user can re-authorize. No cooldown: the use case is
-    'my token expired/was revoked' and we want this to be friction-free.
-    """
     tg_id = message.from_user.id
     lang = (await get_language(tg_id)).lower()
 
-    # OAuth is a global identity link — resolve across all groups, not a tenant.
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
         if not user:
             await message.answer(format_error(t("link.need_register", lang), lang), parse_mode="HTML")
             return
 
-        # Drop the existing OAuth row (if any). Don't touch anything else.
-        # OAuth is keyed by Telegram identity (global), not a per-tenant users.id.
         await session.execute(
             delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
         )
-        # Also blank out the legacy oauth_* columns on User if they're still set
-        # — they're a vestige from before the dedicated OAuthToken table.
+
         if user.oauth_access_token or user.oauth_refresh_token or user.oauth_token_expiry:
             user.oauth_access_token = None
             user.oauth_refresh_token = None
@@ -283,12 +260,7 @@ async def relink_oauth(message: types.Message):
     )
     track_link_message(tg_id, sent.chat.id, sent.message_id)
 
-
 async def perform_unlink(session, user: User, tg_id: int, lang: str = "en") -> tuple[bool, str | None]:
-    """Wipe a user's osu! link + cached progress (shared by the `unlink` command
-    and the /settings Account section). Returns (ok, error). On the cooldown path
-    returns (False, remaining) with `remaining` localised to `lang`; caller
-    commits nothing on failure."""
     if not user or not user.osu_user_id:
         return False, "not_linked"
 
@@ -297,7 +269,7 @@ async def perform_unlink(session, user: User, tg_id: int, lang: str = "en") -> t
         return False, remaining
 
     await _clear_user_cache(session, user)
-    # OAuth is global per Telegram identity — drop the token for every group.
+
     await session.execute(
         delete(OAuthToken).where(OAuthToken.telegram_id == tg_id)
     )
@@ -329,19 +301,14 @@ async def perform_unlink(session, user: User, tg_id: int, lang: str = "en") -> t
 
     await session.commit()
 
-    # Forget any DM group selection so the next private-chat command re-prompts
-    # (the chosen group may now be unlinked).
     await clear_dm_tenant(session, tg_id)
     return True, None
-
 
 @router.message(TextTriggerFilter("unlink"))
 async def unlink_user(message: types.Message):
     tg_id = message.from_user.id
     lang = (await get_language(tg_id)).lower()
 
-    # OAuth/identity is global. NOTE: this currently unlinks the most-recent
-    # identity row only; "unlink from every group" is a future refinement.
     async with get_db_session() as session:
         user = await get_identity_user(session, tg_id)
         ok, err = await perform_unlink(session, user, tg_id, lang)
@@ -357,6 +324,5 @@ async def unlink_user(message: types.Message):
         return
 
     await message.answer(format_success(t("unlink.success", lang), lang), parse_mode="HTML")
-
 
 __all__ = ["router"]

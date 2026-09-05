@@ -1,30 +1,17 @@
-"""BeatmapRef -> map-card-data resolution, shared by the passive link
-auto-detect (handlers.py) and the `map` what-if command (whatif.py).
-
-Split out of handlers.py so whatif.py can depend on this without depending
-on handlers.py itself — handlers.py now also depends on whatif.py (to build
-the interactive what-if card directly on link auto-detect), and that pair
-would otherwise be a circular import.
-"""
-
 from __future__ import annotations
 
-
 def _pick_diff(beatmaps: list[dict]) -> dict | None:
-    """For a set-only link, show the hardest osu!std difficulty."""
     if not beatmaps:
         return None
     osu = [b for b in beatmaps if (b.get("mode_int") == 0 or b.get("mode") == "osu")]
     pool = osu or beatmaps
     return max(pool, key=lambda b: float(b.get("difficulty_rating") or 0.0))
 
-
 def _covers_url(bset: dict, set_id) -> str | None:
     covers = (bset or {}).get("covers") or {}
     return (covers.get("cover@2x") or covers.get("cover")
             or (f"https://assets.ppy.sh/beatmaps/{set_id}/covers/cover@2x.jpg"
                 if set_id else None))
-
 
 def _card_from_beatmap(bm: dict) -> dict:
     bset = bm.get("beatmapset") or {}
@@ -50,7 +37,6 @@ def _card_from_beatmap(bm: dict) -> dict:
             else f"https://osu.ppy.sh/beatmaps/{bid}"),
     }
 
-
 def _card_from_set(bs: dict, diff: dict) -> dict:
     set_id = bs.get("id")
     bid = diff.get("id")
@@ -73,9 +59,7 @@ def _card_from_set(bs: dict, diff: dict) -> dict:
         "url": f"https://osu.ppy.sh/beatmapsets/{set_id}#osu/{bid}",
     }
 
-
 async def _resolve_card(ref, api) -> dict | None:
-    """Turn a BeatmapRef into card data via the osu! API, or None."""
     if ref.beatmap_id:
         bm = await api.get_beatmap(ref.beatmap_id)
         if bm:

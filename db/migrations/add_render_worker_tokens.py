@@ -4,14 +4,7 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-
 async def run_render_worker_tokens_migration(engine):
-    """One row per machine allowed to render, holding a hash and never a token.
-
-    Replaces the single shared `RENDER_WORKER_TOKEN`, which stays valid so that
-    machines set up before this go on working — nobody is made to re-enrol by
-    a deploy.
-    """
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS render_worker_tokens (

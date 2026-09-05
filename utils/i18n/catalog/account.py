@@ -1,5 +1,4 @@
 CATALOG = {
-    # ── reg / link / relink / unlink (account commands) ──────────────────
     "reg.usage": {
         "en": ("<b>Enter your osu! nickname or ID:</b>\n"
                "<code>register Nickname</code> or <code>register id:12345</code>"),
@@ -93,7 +92,6 @@ CATALOG = {
         "ru": "Привязка osu! аккаунта удалена. Повторная отвязка доступна через месяц.",
     },
 
-    # ── oauth (osu! OAuth callback — browser HTML page + link Telegram msg) ─
     "oauth.error_page": {
         "en": "<h2>Authorization error</h2><p>Try again via the bot.</p>",
         "ru": "<h2>Ошибка авторизации</h2><p>Попробуйте снова через бота.</p>",
@@ -140,7 +138,6 @@ CATALOG = {
         "ru": "Аккаунт <b>{username}</b> успешно привязан к системе.",
     },
 
-    # ── auth (registration / oauth gates) ────────────────────────────────
     "auth.not_registered": {
         "en": ("You're not registered in this chat.\n"
                "Use <code>register &lt;osu_nickname&gt;</code>"),

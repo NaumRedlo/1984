@@ -1,23 +1,12 @@
-"""Render the profile dashboard card to /tmp/ for visual inspection.
-
-Usage:
-    PYTHONPATH=. python scripts/render_profile_demo.py
-
-Uses synthetic data — no DB or network required (image downloads are best-effort
-and simply skipped if offline, so panels render with placeholder slots).
-"""
-
 from __future__ import annotations
 
 import asyncio
 
 from services.image.core import card_renderer
 
-
 def _synthetic() -> dict:
     import math
 
-    # pp history (~90 days), wobbling upward to ~6421 like the mockup.
     pp_history = [
         5000 + i * 16 + int(280 * math.sin(i / 6.0)) + int(140 * math.sin(i / 2.3))
         for i in range(90)
@@ -79,7 +68,6 @@ def _synthetic() -> dict:
         "top_scores": top_scores,
     }
 
-
 async def main() -> None:
     data = _synthetic()
     buf = await card_renderer.generate_profile_dashboard_async(data)
@@ -88,13 +76,11 @@ async def main() -> None:
         f.write(buf.read())
     print(f"wrote {out}")
 
-    # Empty/edge case — no scores, no history, missing fields.
     sparse = {"username": "NoData", "osu_id": 1, "country": "__", "rank_history": [], "top_scores": []}
     buf2 = await card_renderer.generate_profile_dashboard_async(sparse)
     with open("/tmp/profile_dashboard_empty.png", "wb") as f:
         f.write(buf2.read())
     print("wrote /tmp/profile_dashboard_empty.png")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

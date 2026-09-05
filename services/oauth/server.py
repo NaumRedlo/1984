@@ -1,9 +1,3 @@
-"""
-Lightweight aiohttp server for osu! OAuth2 callback.
-Runs on localhost — Caddy reverse-proxies HTTPS → here.
-Tokens are stored encrypted in a separate oauth_tokens table.
-"""
-
 import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -35,27 +29,19 @@ from utils.logger import get_logger
 
 logger = get_logger("oauth.server")
 
-# state -> (telegram_id, issued_at). Entries expire after _STATE_TTL and are
-# swept on every new issue/lookup: an abandoned link attempt must not leave a
-# forever-valid authorize link lying around in some chat's history, nor grow
-# this dict unboundedly (it never got cleaned otherwise — the pop in
-# handle_callback only fires for COMPLETED flows).
 _STATE_TTL = timedelta(minutes=15)
 _pending_states: dict[str, tuple[int, datetime]] = {}
-_pending_messages: dict[int, tuple[int, int]] = {}  # telegram_id -> (chat_id, message_id)
+_pending_messages: dict[int, tuple[int, int]] = {}
 _bot: Optional[Bot] = None
-
 
 def _sweep_expired_states(now: datetime) -> None:
     expired = [s for s, (_, issued) in _pending_states.items() if now - issued > _STATE_TTL]
     for s in expired:
         del _pending_states[s]
 
-
 def set_bot(bot: Bot) -> None:
     global _bot
     _bot = bot
-
 
 def generate_oauth_url(telegram_id: int) -> str:
     now = datetime.now(timezone.utc)
@@ -71,10 +57,8 @@ def generate_oauth_url(telegram_id: int) -> str:
         f"&state={state}"
     )
 
-
 def track_link_message(telegram_id: int, chat_id: int, message_id: int) -> None:
     _pending_messages[telegram_id] = (chat_id, message_id)
-
 
 async def _exchange_code(code: str) -> Optional[dict]:
     async with aiohttp.ClientSession() as session:
@@ -92,7 +76,6 @@ async def _exchange_code(code: str) -> Optional[dict]:
                 return None
             return await resp.json()
 
-
 async def _get_oauth_user(access_token: str) -> Optional[dict]:
     async with aiohttp.ClientSession() as session:
         headers = {"Authorization": f"Bearer {access_token}"}
@@ -100,7 +83,6 @@ async def _get_oauth_user(access_token: str) -> Optional[dict]:
             if resp.status != 200:
                 return None
             return await resp.json()
-
 
 async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
     if not _bot:
@@ -131,7 +113,6 @@ async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
             logger.warning(f"_notify_telegram: no pending message for tg={telegram_id}")
     except Exception as e:
         logger.error(f"Telegram notification failed: {e}", exc_info=True)
-
 
 async def handle_callback(request: web.Request) -> web.Response:
     code = request.query.get("code")
@@ -189,8 +170,7 @@ async def handle_callback(request: web.Request) -> web.Response:
     token_expiry = now + timedelta(seconds=expires_in)
 
     async with get_db_session() as session:
-        # One Telegram user may be registered in several groups (one users row
-        # per group), so resolve every row for this telegram_id.
+
         stmt = select(User).where(User.telegram_id == telegram_id).order_by(User.id.desc())
         rows = (await session.execute(stmt)).scalars().all()
 
@@ -201,8 +181,6 @@ async def handle_callback(request: web.Request) -> web.Response:
                 status=400,
             )
 
-        # Conflict only if a row is bound to a *different* osu account and none of
-        # the rows match the account being linked.
         bound_osu_ids = {u.osu_user_id for u in rows if u.osu_user_id}
         if bound_osu_ids and osu_id not in bound_osu_ids:
             other_id = next(iter(bound_osu_ids))
@@ -212,7 +190,6 @@ async def handle_callback(request: web.Request) -> web.Response:
                 status=409,
             )
 
-        # Backfill osu identity on any rows that don't have one yet.
         for u in rows:
             if not u.osu_user_id:
                 u.osu_user_id = osu_id
@@ -249,21 +226,16 @@ async def handle_callback(request: web.Request) -> web.Response:
         content_type="text/html",
     )
 
-
 class OAuthServer:
     def __init__(self, port: int = OAUTH_SERVER_PORT):
         self.port = port
         self.app = web.Application()
         self.app.router.add_get("/oauth/callback", handle_callback)
-        # The render worker's endpoints ride on this listener rather than a
-        # second one: same loopback bind, same Caddy in front, same TLS. They
-        # install themselves only when there is a secret to guard them.
+
         render_farm_http.install(self.app)
-        # And the guide, which is a page for people who are not using the bot
-        # yet — see `services/site.py`.
+
         site.install(self.app)
-        # And the mini-app's own endpoints, which refuse to register without a
-        # bot token to check signatures against.
+
         miniapp_api.install(self.app)
         self.runner: Optional[web.AppRunner] = None
 

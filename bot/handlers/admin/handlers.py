@@ -1,8 +1,3 @@
-"""Admin handler package — thin shim that assembles all sub-routers.
-
-External code imports `router` from this module; nothing else changes.
-"""
-
 from aiogram import Router
 
 from utils.admin_check import AdminFilter
@@ -16,4 +11,3 @@ router.callback_query.filter(AdminFilter())
 
 router.include_router(_panel_router)
 router.include_router(_misc_router)
-

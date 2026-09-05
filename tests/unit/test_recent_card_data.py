@@ -3,7 +3,6 @@ from unittest.mock import patch
 from services.image.core import CardRenderer
 from services.image.render import recent as recent_render
 
-
 def _raw_score(**overrides):
     score = {
         "id": 555, "accuracy": 0.99, "passed": True, "rank": "S", "pp": 300.0,
@@ -25,11 +24,9 @@ def _raw_score(**overrides):
     score.update(overrides)
     return score
 
-
 async def _fake_calculate_pp(**kwargs):
     return {"pp_current": 300.0, "pp_if_fc": 310.0, "pp_if_ss": 320.0,
             "star_rating": 7.9, "max_combo": 720}
-
 
 async def test_build_recent_card_data_maps_every_field():
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
@@ -59,14 +56,12 @@ async def test_build_recent_card_data_maps_every_field():
     assert data["player_id"] == 999
     assert data["count_300"] == 550
 
-
 async def test_card_mode_shared_is_threaded_through():
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
         data = await recent_render.build_recent_card_data(
             _raw_score(), username="x", player_id=1, card_mode="shared",
         )
     assert data["card_mode"] == "shared"
-
 
 async def test_output_renders_end_to_end():
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
@@ -77,7 +72,6 @@ async def test_output_renders_end_to_end():
     png = buf.getvalue()
     assert png.startswith(b"\x89PNG") and len(png) > 2000
 
-
 async def test_pp_calculation_failure_falls_back_gracefully():
     async def _raising(**kwargs):
         raise RuntimeError("boom")
@@ -85,11 +79,10 @@ async def test_pp_calculation_failure_falls_back_gracefully():
         data = await recent_render.build_recent_card_data(
             _raw_score(), username="x", player_id=1,
         )
-    # Falls back to the score's own (nominal) star rating and API-provided pp.
+
     assert data["star_rating"] == 7.42
     assert data["pp"] == 300.0
     assert data["pp_if_fc"] == 0.0 and data["pp_if_ss"] == 0.0
-
 
 async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
     class _Client:
@@ -98,7 +91,7 @@ async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
 
         async def effective_sr(self, beatmap_id, mods, nominal):
             self.asked.append((beatmap_id, mods, nominal))
-            return 10.58  # what ppy says HDDT on this map is worth
+            return 10.58
 
     client = _Client()
     with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):

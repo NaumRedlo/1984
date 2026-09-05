@@ -1,11 +1,3 @@
-"""TITLES COLLECTION dashboard — `titles` / `tt`.
-
-One rendered card with inline buttons for rarity filtering and pagination.
-Following the bounty-nav pattern: the per-viewer dataset (progress + summary +
-avatar) is computed once and cached with a TTL, so button presses only re-slice
-and re-render — no DB/API round-trip per click.
-"""
-
 from datetime import timedelta
 from typing import Dict, Optional
 
@@ -38,15 +30,12 @@ from bot.utils.safe_edit import safe_edit_media
 router = Router(name="titles")
 logger = get_logger("handlers.titles")
 
-# ── Per-viewer nav cache ───────────────────────────────────────────────────
 _NAV_CACHE: Dict[int, dict] = {}
 _TTL = timedelta(minutes=15)
-
 
 def _store_nav(uid: int, payload: dict) -> None:
     payload["expires_at"] = utcnow() + _TTL
     _NAV_CACHE[uid] = payload
-
 
 def _get_nav(uid: int) -> Optional[dict]:
     rec = _NAV_CACHE.get(uid)
@@ -57,15 +46,11 @@ def _get_nav(uid: int) -> Optional[dict]:
         return None
     return rec
 
-
 def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
 
-
-# ── Keyboard ───────────────────────────────────────────────────────────────
 _FILTERS = [("all", "ALL")] + [(r, RARITY_META[r]["label"]) for r in RARITY_ORDER]
-
 
 def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, lang: str = "en") -> InlineKeyboardMarkup:
     btns = [
@@ -86,16 +71,11 @@ def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, lang: str 
         ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def _main_kb(uid: int, payload: dict) -> InlineKeyboardMarkup:
-    """Rebuild the dashboard keyboard for the card's current filter/page."""
     return _titles_keyboard(
         uid, payload.get("cur_flt", "all"), payload.get("cur_page", 0),
         payload.get("cur_total_pages", 1), payload.get("lang", "en"),
     )
-
-
-# ── Render ─────────────────────────────────────────────────────────────────
 
 async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit: bool) -> None:
     import asyncio
@@ -120,12 +100,8 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
     except Exception as e:
         logger.debug(f"titles render send failed: {e}")
 
-
 async def _build_payload(session, user, tg_handle: Optional[str], viewer_tg_id: Optional[int] = None) -> dict:
-    # Card text (incl. title name/description/rarity_label baked into progress
-    # below) follows the VIEWER's language (2026-07-05 fix — used to follow
-    # the SUBJECT's, e.g. looking up someone else's collection via a reply
-    # rendered in THEIR language instead of the requester's).
+
     card_lang = await get_language(viewer_tg_id if viewer_tg_id is not None else user.telegram_id)
     progress = await refresh_user_titles(user, session, lang=card_lang.lower())
     await session.commit()
@@ -151,9 +127,6 @@ async def _build_payload(session, user, tg_handle: Optional[str], viewer_tg_id: 
         "lang": card_lang,
     }
 
-
-# ── Command ────────────────────────────────────────────────────────────────
-
 @router.message(TextTriggerFilter("tt"))
 async def show_titles(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
@@ -171,7 +144,7 @@ async def show_titles(message: types.Message, osu_api_client=None, trigger_args:
                 if not user:
                     return
                 tg_handle = _tg_handle(message.from_user)
-                # Freshen self data if stale (also recomputes titles inside refresh_user).
+
                 if osu_api_client and getattr(user, "telegram_id", None) == tg_id \
                         and needs_blocking_refresh(user.last_api_update):
                     wait = await message.answer(t("pf.refreshing", lang))
@@ -190,9 +163,6 @@ async def show_titles(message: types.Message, osu_api_client=None, trigger_args:
             logger.error(f"Error in /titles for {tg_id}: {e}", exc_info=True)
             await message.answer(t("tt.load_error", lang))
 
-
-# ── Callbacks ──────────────────────────────────────────────────────────────
-
 @router.callback_query(lambda c: c.data and c.data.startswith("tt|f|"))
 async def on_titles_filter(callback: types.CallbackQuery) -> None:
     parts = callback.data.split("|", 3)
@@ -201,7 +171,6 @@ async def on_titles_filter(callback: types.CallbackQuery) -> None:
         return
     _, _, uid_str, code = parts
     await _navigate(callback, uid_str, code, 0)
-
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tt|p|"))
 async def on_titles_page(callback: types.CallbackQuery) -> None:
@@ -217,11 +186,9 @@ async def on_titles_page(callback: types.CallbackQuery) -> None:
         return
     await _navigate(callback, uid_str, code, page)
 
-
 @router.callback_query(lambda c: c.data == "tt|x")
 async def on_titles_noop(callback: types.CallbackQuery) -> None:
     await callback.answer()
-
 
 async def _navigate(callback: types.CallbackQuery, uid_str: str, code: str, page: int) -> None:
     try:
@@ -243,18 +210,14 @@ async def _navigate(callback: types.CallbackQuery, uid_str: str, code: str, page
     await callback.answer()
     await _render(callback.message, uid, code, page, payload, edit=True)
 
-
-# ── settitle command ────────────────────────────────────────────────────────
-
 async def _unlocked_codes(session, user_id: int) -> set:
     rows = await session.execute(
         select(UserTitleProgress.title_code).where(
             UserTitleProgress.user_id == user_id,
-            UserTitleProgress.unlocked == True,  # noqa: E712
+            UserTitleProgress.unlocked == True,
         )
     )
     return {r[0] for r in rows.all()}
-
 
 @router.message(TextTriggerFilter("st"))
 async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None, tenant_chat_id=None):
@@ -267,8 +230,7 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
         if not arg:
             await message.answer(t("st.usage", lang), parse_mode="HTML")
             return
-        # "снять" (Russian for "take off") is accepted regardless of UI language
-        # — a typed-input alias, not output text.
+
         if arg.lower() in ("off", "none", "clear", "снять", "-", "—"):
             user.active_title_code = None
             await session.commit()
@@ -294,6 +256,5 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
         await message.answer(
             t("st.set", lang, name=escape_html(td.name), rarity=td.rarity_label),
             parse_mode="HTML")
-
 
 __all__ = ["router"]

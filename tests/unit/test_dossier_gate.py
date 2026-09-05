@@ -6,16 +6,8 @@ import pytest
 from bot.handlers.dossier.handlers import _format, _section_text
 from utils import render_access
 
-
 @pytest.fixture
 def testers(monkeypatch):
-    """Set the allowlist, with the release switch off.
-
-    Patched on `config.settings` rather than on `render_access`, which is where
-    the gate now reads it: the two spellings of "who can render" — a list of
-    ids and `*` for everybody — belong in one place, so there is one answer to
-    look up and closing the gate again is the same edit in reverse.
-    """
     from config import settings
 
     def _set(ids):
@@ -24,22 +16,18 @@ def testers(monkeypatch):
 
     return _set
 
-
 def _event(user_id):
     return pytypes.SimpleNamespace(from_user=pytypes.SimpleNamespace(id=user_id))
-
 
 def test_nobody_passes_when_the_list_is_empty(testers):
     testers([])
     assert render_access.can_use_render(1) is False
     assert render_access.can_use_render(0) is False
 
-
 def test_only_listed_ids_pass(testers):
     testers([111, 222])
     assert render_access.can_use_render(111) is True
     assert render_access.can_use_render(333) is False
-
 
 def test_admins_are_not_automatically_testers(testers, monkeypatch):
     from config import settings
@@ -48,7 +36,6 @@ def test_admins_are_not_automatically_testers(testers, monkeypatch):
     testers([])
     assert render_access.can_use_render(999) is False
 
-
 @pytest.mark.asyncio
 async def test_filter_admits_testers_and_ignores_everyone_else(testers):
     testers([42])
@@ -56,15 +43,11 @@ async def test_filter_admits_testers_and_ignores_everyone_else(testers):
     assert await gate(_event(42)) is True
     assert await gate(_event(43)) is False
 
-
 @pytest.mark.asyncio
 async def test_filter_survives_an_event_without_a_user(testers):
     testers([42])
     gate = render_access.RenderTesterFilter()
     assert await gate(pytypes.SimpleNamespace(from_user=None)) is False
-
-
-# ── the read-out ─────────────────────────────────────────────────────────
 
 def _result(**overrides):
     base = {
@@ -84,13 +67,11 @@ def _result(**overrides):
     base.update(overrides)
     return base
 
-
 def test_a_matching_run_says_so():
     text = _format(_result(), "Artist — Title [Insane]")
     assert "Сходится полностью." in text
     assert "Artist — Title [Insane]" in text
     assert "←" not in text, "nothing should be flagged when everything agrees"
-
 
 def test_disagreeing_rows_are_marked():
     text = _format(
@@ -104,13 +85,9 @@ def test_disagreeing_rows_are_marked():
     assert "Расхождение." in text
     assert text.count("←") == 3
 
-
 def test_a_combo_only_mismatch_marks_just_the_combo():
     text = _format(_result(exact=False, our_max_combo=2615), "map")
     assert text.count("←") == 1
-
-
-# ── telling our misses from the player's ─────────────────────────────────
 
 def _misses(**overrides):
     base = {
@@ -126,12 +103,10 @@ def _misses(**overrides):
     base.update(overrides)
     return base
 
-
 def test_no_misses_adds_nothing():
     assert "промах" not in _format(_result(misses=_misses()), "map").split("<pre>")[0]
     assert not _section_text("misses", _result(misses=_misses()))
     assert _format(_result(), "map").endswith("Сходится полностью.")
-
 
 def test_a_click_just_outside_the_circle_is_called_our_bug():
     text = _section_text(
@@ -144,12 +119,10 @@ def test_a_click_just_outside_the_circle_is_called_our_bug():
     assert "Наши промахи: 5 (круги 5)" in text
     assert "чуть мимо круга на ~3.2 px" in text
 
-
 def test_misses_with_no_click_nearby_are_credited_to_the_player():
     text = _section_text("misses", _result(exact=False, misses=_misses(slider=2)))
     assert "слайдеры 2" in text
     assert "промахи игрока" in text
-
 
 def test_extra_threehundreds_are_sized_against_the_lenient_tails():
     text = _section_text(
@@ -166,7 +139,6 @@ def test_extra_threehundreds_are_sized_against_the_lenient_tails():
     assert "Лишних трёхсоток: 20." in text
     assert "по времени: 57, по краю фолловкруга: 8." in text
 
-
 def test_no_tail_note_when_we_are_not_the_generous_side():
     text = _section_text(
         "tails",
@@ -180,7 +152,6 @@ def test_no_tail_note_when_we_are_not_the_generous_side():
     )
     assert "Хвостов" not in text and "трёхсоток" not in text
 
-
 def test_the_combo_ceiling_splits_part_counting_from_judgement():
     agree = _section_text("combo", _result(max_possible_combo=3790, api_max_combo=3790))
     assert "Потолок комбо совпал (3790)" in agree
@@ -189,10 +160,8 @@ def test_the_combo_ceiling_splits_part_counting_from_judgement():
     assert "у нас 3769, у osu! 3790 (-21)" in disagree
     assert "в числе частей" in disagree
 
-
 def test_no_ceiling_line_without_an_answer_key():
     assert not _section_text("combo", _result(max_possible_combo=3769, api_max_combo=None))
-
 
 def test_failed_spinners_report_rotations_not_clicks():
     text = _section_text(
@@ -203,9 +172,6 @@ def test_failed_spinners_report_rotations_not_clicks():
     assert "12.0 из 20.0 оборотов (60%)" in text
     assert "Кликов рядом не было" not in text
 
-
-# ── replays kept for rendering ───────────────────────────────────────────
-
 def test_a_remembered_replay_survives_its_handler(tmp_path):
     from bot.handlers.dossier import renders
 
@@ -213,14 +179,13 @@ def test_a_remembered_replay_survives_its_handler(tmp_path):
     source.write_bytes(b"osr bytes")
     token = renders.remember(str(source), "Some map")
 
-    source.unlink()  # the handler's temporary directory is gone
+    source.unlink()
     pending = renders.get(token)
     assert pending is not None
     assert open(pending.replay_path, "rb").read() == b"osr bytes"
 
     renders.forget(token)
     assert renders.get(token) is None
-
 
 def test_forgetting_takes_the_files_with_it(tmp_path):
     from bot.handlers.dossier import renders
@@ -233,7 +198,6 @@ def test_forgetting_takes_the_files_with_it(tmp_path):
     renders.forget(token)
     assert not os.path.exists(workdir), "scratch left behind"
 
-
 def test_the_store_stays_bounded(tmp_path, monkeypatch):
     from bot.handlers.dossier import renders
 
@@ -244,11 +208,10 @@ def test_the_store_stays_bounded(tmp_path, monkeypatch):
     tokens = [renders.remember(str(source), f"map {i}") for i in range(6)]
     alive = [t for t in tokens if renders.get(t)]
     assert len(alive) <= 3
-    # The survivors are the newest ones.
+
     assert tokens[-1] in alive
     for token in tokens:
         renders.forget(token)
-
 
 def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
     from bot.handlers.dossier import handlers
@@ -259,25 +222,7 @@ def test_the_upload_cap_follows_the_configured_bot_api(monkeypatch):
     monkeypatch.setattr(handlers, "TELEGRAM_BOT_API_URL", "http://localhost:8081")
     assert handlers._max_video_bytes() > 1024 * 1024 * 1024
 
-
-# ── one render per person, and a queue for everybody else ────────────────────
-#
-# The release blocker. "One render at a time" used to mean one for the whole
-# bot, and the second person to press the button was refused rather than
-# queued — which in a chat of thirty reads as a broken bot.
-
-
 def test_only_the_same_replay_is_turned_away():
-    """Narrowed twice. One per bot refused everybody while anybody rendered;
-    one per person was right while a person could only occupy the bot's own
-    core. With a farm they cannot — three workers render three replays at
-    once, and making somebody wait for their own render while two machines sit
-    idle is the queue refusing to be a queue.
-
-    What is left guards `Pending.task`, which is one field per replay: two
-    renders of the same card overwrite each other and the cancel button
-    reaches only the second.
-    """
     from bot.handlers.dossier import renders
 
     with renders.one_at_a_time("card-a"):
@@ -286,7 +231,6 @@ def test_only_the_same_replay_is_turned_away():
             "another replay is not a reason to refuse, whoever sent it"
         )
     assert not renders.is_rendering("card-a"), "the turn was never given back"
-
 
 def test_a_turn_is_given_back_even_when_the_render_raises():
     from bot.handlers.dossier import renders
@@ -298,20 +242,13 @@ def test_a_turn_is_given_back_even_when_the_render_raises():
         "a failed render would have locked this card out for good"
     )
 
-
 def test_one_person_may_have_several_renders_going():
-    """The point of removing it. A farm of three renders three at a time, and
-    they may all be one person's."""
     from bot.handlers.dossier import renders
 
     with renders.one_at_a_time("card-a"), renders.one_at_a_time("card-b"):
         assert renders.is_rendering("card-a") and renders.is_rendering("card-b")
 
-
 def test_nothing_serialises_renders_in_the_handler_any_more():
-    """The gate belongs next to the fallback it is about, in `dispatch`. Taken
-    here it was taken *before* the job was offered, so every worker on the farm
-    but one sat idle."""
     import inspect
 
     from bot.handlers.dossier import handlers
@@ -319,11 +256,7 @@ def test_nothing_serialises_renders_in_the_handler_any_more():
     source = inspect.getsource(handlers._render_now)
     assert "render_lock" not in source
 
-
 def test_the_cancel_button_survives_a_progress_edit():
-    """`editMessageText` without a keyboard *removes* the keyboard, so the
-    cancel button used to live exactly as long as it took the first progress
-    line to arrive."""
     import inspect
 
     from bot.handlers.dossier import handlers

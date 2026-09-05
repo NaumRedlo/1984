@@ -1,8 +1,3 @@
-"""
-Shared utility functions for image card generators:
-icon/flag loading, font resolution, image download, PIL helpers.
-"""
-
 import asyncio
 import os
 from io import BytesIO
@@ -16,24 +11,10 @@ from services.image.constants import ICONS_DIR, FLAGS_DIR, FALLBACK_CANDIDATES
 
 logger = get_logger("services.image_gen")
 
-# ── Caches ──
-
 _icon_cache: Dict[tuple, Optional[Image.Image]] = {}
 _flag_cache: Dict[tuple, Optional[Image.Image]] = {}
 
-
 def tint_icon(icon: Optional[Image.Image], colour=(255, 255, 255)) -> Optional[Image.Image]:
-    """Recolour an icon to a flat colour, keeping only its alpha silhouette.
-
-    Most of the icon set is drawn as black shapes on transparency, which is
-    invisible against a dark card — so every card that uses one has to repaint
-    it first. That repaint was written out five separate times before this
-    existed; it is one line of intent and four of PIL, and the four are what
-    made copies of it drift.
-
-    Palette-mode files (some icons ship as `P`) are converted first, since a
-    paletted image has no alpha channel to take.
-    """
     if icon is None:
         return None
     icon = icon.convert("RGBA")
@@ -41,14 +22,7 @@ def tint_icon(icon: Optional[Image.Image], colour=(255, 255, 255)) -> Optional[I
     solid.putalpha(icon.getchannel("A"))
     return solid
 
-
 def load_icon(name: str, size: int = 20, colour=None) -> Optional[Image.Image]:
-    """Load an icon PNG from assets/icons/, scaled to size x size. Cached.
-
-    With `colour`, the icon is repainted to it — see [`tint_icon`]. The tint is
-    applied after the cache rather than inside it, so one icon at one size in
-    three colours is one decode.
-    """
     if colour is not None:
         return tint_icon(load_icon(name, size), colour)
     key = (name, size)
@@ -68,14 +42,7 @@ def load_icon(name: str, size: int = 20, colour=None) -> Optional[Image.Image]:
         _icon_cache[key] = None
         return None
 
-
 def load_mod_icon(acronym: str, size: int = 24) -> Optional[Image.Image]:
-    """Load a mod glyph from assets/icons/mods/<ACRONYM>.png.
-
-    The source PNGs are white-on-transparent (rendered from osu-web SVG
-    badges). Callers typically paste them on a coloured disc — see
-    `BountyCardMixin._draw_mod_badge`.
-    """
     if not acronym:
         return None
     key = (f"mod:{acronym.upper()}", size)
@@ -95,9 +62,7 @@ def load_mod_icon(acronym: str, size: int = 24) -> Optional[Image.Image]:
         _icon_cache[key] = None
         return None
 
-
 def load_flag(country_code: str, height: int = 20) -> Optional[Image.Image]:
-    """Load a country flag PNG from assets/flags/, scaled to given height. Cached."""
     if not country_code:
         return None
     key = (country_code.lower(), height)
@@ -119,7 +84,6 @@ def load_flag(country_code: str, height: int = 20) -> Optional[Image.Image]:
         _flag_cache[key] = None
         return None
 
-
 def _find_font(path: str, fallbacks: Optional[List[str]] = None) -> Optional[str]:
     if os.path.isfile(path):
         return path
@@ -128,20 +92,13 @@ def _find_font(path: str, fallbacks: Optional[List[str]] = None) -> Optional[str
             return fb
     return None
 
-
-# ── Async helpers ──
-
 async def _none_coro():
-    """Async noop returning None — used as placeholder in gather()."""
     return None
-
 
 _shared_session: Optional[aiohttp.ClientSession] = None
 _download_semaphore = asyncio.Semaphore(5)
 
-
 async def _get_shared_session() -> aiohttp.ClientSession:
-    """Get or create a shared aiohttp session for image downloads."""
     global _shared_session
     if _shared_session is None or _shared_session.closed:
         _shared_session = aiohttp.ClientSession(
@@ -149,20 +106,15 @@ async def _get_shared_session() -> aiohttp.ClientSession:
         )
     return _shared_session
 
-
 async def close_shared_session():
-    """Close the shared session (call on app shutdown)."""
     global _shared_session
     if _shared_session and not _shared_session.closed:
         await _shared_session.close()
         _shared_session = None
 
-
-MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
-
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 async def download_image(url: str, timeout: float = 5.0) -> Optional[Image.Image]:
-    """Download image from URL, return as RGBA PIL Image or None."""
     if not url:
         return None
     try:
@@ -190,11 +142,7 @@ async def download_image(url: str, timeout: float = 5.0) -> Optional[Image.Image
         logger.debug(f"Failed to download image {url}: {e}")
         return None
 
-
-# ── PIL helpers ──
-
 def rounded_rect_crop(img: Image.Image, size: int, radius: int = 16) -> Image.Image:
-    """Resize image to size*size with rounded corners, return RGBA."""
     img = img.resize((size, size), Image.LANCZOS).convert("RGBA")
     mask = Image.new("L", (size, size), 0)
     draw = ImageDraw.Draw(mask)
@@ -203,9 +151,7 @@ def rounded_rect_crop(img: Image.Image, size: int, radius: int = 16) -> Image.Im
     result.paste(img, (0, 0), mask)
     return result
 
-
 def cover_center_crop(cover: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Center-crop cover to target_w x target_h preserving original pixel density."""
     cw, ch = cover.size
     scale = max(target_w / cw, target_h / ch)
     new_w = int(cw * scale)
@@ -215,9 +161,7 @@ def cover_center_crop(cover: Image.Image, target_w: int, target_h: int) -> Image
     top = (new_h - target_h) // 2
     return resized.crop((left, top, left + target_w, top + target_h)).convert("RGBA")
 
-
 def draw_cover_background(img: Image.Image, cover: Image.Image, y: int, h: int, w: int, x: int = 0):
-    """Center-crop cover to w*h, apply dark overlay, paste onto img."""
     cropped = cover_center_crop(cover, w, h)
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 128))
     cropped = Image.alpha_composite(cropped, overlay)

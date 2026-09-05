@@ -3,13 +3,11 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, BigInteger, LargeBinary
 from db.database import Base
 
-
 class OAuthToken(Base):
     __tablename__ = 'oauth_tokens'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    # OAuth identity is global per Telegram user, independent of which group(s)
-    # they registered in — keyed by telegram_id, not a per-tenant users.id.
+
     telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
     access_token_enc = Column(LargeBinary, nullable=False)
     refresh_token_enc = Column(LargeBinary, nullable=True)

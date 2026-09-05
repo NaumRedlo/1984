@@ -16,17 +16,14 @@ from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
 
-ROWS_PER_PAGE = 6   # both leaderboard modes page at the same rate
+ROWS_PER_PAGE = 6
 PAGE_SIZE = ROWS_PER_PAGE
 SYNC_COOLDOWN = timedelta(minutes=5)
-_sync_cooldown: dict[tuple[int, int], datetime] = {}  # (chat_id, beatmap_id) -> last sync time
+_sync_cooldown: dict[tuple[int, int], datetime] = {}
 _pending_stale_ids: set[int] = set()
 _stale_refresh_task: asyncio.Task[None] | None = None
 
-
 CATEGORIES: dict[str, dict[str, str]] = {
-    # "label" feeds the (currently English-only) card header; the Telegram
-    # button text is localised separately via utils.i18n's lb.cat.<key> keys.
     "pp": {"label": "PP & Rank"},
     "accuracy": {"label": "Accuracy"},
     "play_count": {"label": "Play Count"},
@@ -35,9 +32,7 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "hits_per_play": {"label": "Hits / Play"},
 }
 
-
 def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> None:
-    """Fire-and-forget: refresh stale users shown on the leaderboard."""
     global _stale_refresh_task
 
     stale_ids: list[int] = []
@@ -60,8 +55,7 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
                 osu_uid = _pending_stale_ids.pop()
                 try:
                     async with get_db_session() as session:
-                        # One osu! account may be registered in several groups —
-                        # refresh every per-tenant row that carries it.
+
                         rows = (await session.execute(
                             select(User).where(User.osu_user_id == osu_uid)
                         )).scalars().all()
@@ -79,13 +73,11 @@ def schedule_stale_refresh(entries: list[dict[str, Any]], osu_api_client) -> Non
 
     _stale_refresh_task = asyncio.create_task(_refresh())
 
-
 def _format_play_time(seconds: int, lang: str = "en") -> str:
     if seconds is None or seconds <= 0:
         return "—"
     hours = seconds // 3600
     return f"{hours}{t('lb.unit.h', lang)}"
-
 
 def _format_value(key: str, raw, extra: str = "", lang: str = "en") -> str:
     if raw is None:
@@ -101,7 +93,6 @@ def _format_value(key: str, raw, extra: str = "", lang: str = "en") -> str:
     if key == "hits_per_play":
         return f"{float(raw):,.1f}"
     return str(raw)
-
 
 async def _count_for_category(session, key: str, chat_id: int) -> int:
     if key == "hits_per_play":
@@ -134,7 +125,6 @@ async def _count_for_category(session, key: str, chat_id: int) -> int:
     result = await session.execute(stmt)
     return result.scalar() or 0
 
-
 async def _query_standard(session, field_attr, order, chat_id, offset=0, limit=PAGE_SIZE):
     stmt = (
         select(User)
@@ -145,7 +135,6 @@ async def _query_standard(session, field_attr, order, chat_id, offset=0, limit=P
     )
     result = await session.execute(stmt)
     return result.scalars().all()
-
 
 async def _query_hits_per_play(session, chat_id, offset=0, limit=PAGE_SIZE):
     ratio = (User.total_hits * 1.0 / User.play_count).label("hits_ratio")
@@ -163,7 +152,6 @@ async def _query_hits_per_play(session, chat_id, offset=0, limit=PAGE_SIZE):
     )
     result = await session.execute(stmt)
     return result.all()
-
 
 async def _build_entries(session, key: str, chat_id: int, page: int = 0,
                          lang: str = "en") -> list[dict[str, Any]]:
@@ -228,16 +216,8 @@ async def _build_entries(session, key: str, chat_id: int, page: int = 0,
 
     return entries
 
-
 async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
                             viewer_user_id=None, lang: str = "en", now=None) -> dict:
-    """Standings for the current period plus everything the card needs.
-
-    Returns a dict with `rows` (top TOP_ROWS), `self_row` (the viewer's own row,
-    present even when they're outside the top), `no_gain` (how many players sat
-    the period out), `period` and `collecting` — the last flag meaning "no
-    anchors yet", i.e. the very first period after rollout.
-    """
     import json
 
     from db.models.leaderboard_snapshot import LeaderboardSnapshot
@@ -258,7 +238,7 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
     )).scalars().all()
 
     if not anchors:
-        # Nothing to measure against yet — the period opens on the next tick.
+
         return {"key": key, "period": period, "collecting": True, "rows": [],
                 "self_row": None, "no_gain": 0, "participants": len(users),
                 "page": 0, "total_pages": 1}
@@ -299,14 +279,12 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
                 self_row = dict(r, is_self=True)
                 break
         if self_row is None:
-            # Outside the standings entirely (no gain this period) — still show
-            # them a row so the card is useful.
+
             viewer = next((u for u in users if u.id == viewer_user_id), None)
             if viewer is not None:
                 from services.leaderboard.deltas import absolute_for
                 anchor = anchors.get(viewer.id)
-                # No plays at all since the period opened -> nothing to show
-                # them but a nudge (the card renders `self_note` instead).
+
                 played = anchor is not None and (viewer.play_count or 0) > (anchor.play_count or 0)
                 if not played:
                     return {
@@ -322,12 +300,12 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
                     "active_title_code": viewer.active_title_code,
                     "country": viewer.country or "XX", "avatar_data": viewer.avatar_data,
                     "cover_data": viewer.cover_data,
-                    # No growth this period, but their lifetime figure is real.
+
                     "delta": 0.0, "absolute": absolute_for(viewer, key),
                     "movement": None, "is_self": True,
                 }
         if self_row is not None and self_row.get("position"):
-            # Gap to the place above, measured in the delta being ranked.
+
             above = next((r for r in rows if r["position"] == self_row["position"] - 1), None)
             self_row["gap_to_next"] = (above["delta"] - self_row["delta"]) if above else None
 
@@ -343,9 +321,7 @@ async def build_delta_board(session, key: str, chat_id: int, page: int = 0, *,
         "total_pages": total_pages,
     }
 
-
 async def _absolute_position(session, key: str, chat_id: int, viewer) -> Optional[int]:
-    """Where `viewer` stands in the all-time ranking for `key` (1-based)."""
     base = [User.chat_id == chat_id, User.osu_user_id.isnot(None)]
     if key == "hits_per_play":
         plays = viewer.play_count or 0
@@ -371,10 +347,8 @@ async def _absolute_position(session, key: str, chat_id: int, viewer) -> Optiona
     )).scalar() or 0
     return ahead + 1
 
-
 async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *,
                                viewer_user_id=None, lang: str = "en") -> dict:
-    """All-time standings shaped for the shared card renderer."""
     total = await _count_for_category(session, key, chat_id)
     total_pages = max(1, (total + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
@@ -406,8 +380,7 @@ async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *
         self_row = next((dict(r, is_self=True) for r in rows_out
                          if r["user_id"] == viewer_user_id), None)
         if self_row is None:
-            # Off this page (or out of the top entirely) — pin their own row so
-            # the card tells them something either way.
+
             viewer = (await session.execute(
                 select(User).where(User.id == viewer_user_id)
             )).scalar_one_or_none()
@@ -428,9 +401,7 @@ async def build_absolute_board(session, key: str, chat_id: int, page: int = 0, *
             "participants": total, "entries": entries,
             "page": page, "total_pages": total_pages}
 
-
 def _absolute_labels(key: str, user, lang: str = "en") -> tuple[str, str]:
-    """The card's main + secondary line for a user in all-time mode."""
     if key == "pp":
         return f"#{int(user.global_rank or 0):,}", f"{int(user.player_pp or 0):,}pp"
     if key == "hits_per_play":
@@ -440,10 +411,8 @@ def _absolute_labels(key: str, user, lang: str = "en") -> tuple[str, str]:
                                              "play_time": "play_time",
                                              "ranked_score": "ranked_score"}[key]), lang=lang), ""
 
-
 async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
                               viewer_user_id=None, lang: str = "en"):
-    """Render the all-time card with the same look as the growth one."""
     import asyncio as _asyncio
 
     from services.leaderboard.delta_card import build_absolute_payload
@@ -455,10 +424,8 @@ async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
     photo = BufferedInputFile(png, filename=f"leaderboard_{key}.png")
     return photo, board
 
-
 async def build_delta_card(session, key: str, chat_id: int, page: int = 0, *,
                            viewer_user_id=None, lang: str = "en"):
-    """Render the weekly-growth card. Returns (photo, board)."""
     import asyncio as _asyncio
 
     from services.leaderboard.delta_card import build_payload
@@ -471,10 +438,8 @@ async def build_delta_card(session, key: str, chat_id: int, page: int = 0, *,
     photo = BufferedInputFile(png, filename=f"leaderboard_{key}_delta.png")
     return photo, board
 
-
 def map_leaderboard_usage(lang: str = "en") -> str:
     return t("lbm.usage", lang)
-
 
 def _parse_mods(mods) -> str:
     if not mods:
@@ -485,7 +450,6 @@ def _parse_mods(mods) -> str:
         return "+" + ",".join(str(m) for m in mods if m)
     return str(mods)
 
-
 async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id: int) -> None:
     now = datetime.now(timezone.utc)
     cooldown_key = (chat_id, beatmap_id)
@@ -494,7 +458,6 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         return
     _sync_cooldown[cooldown_key] = now
 
-    # Fetch public leaderboard scores (works with client_credentials, no OAuth needed)
     public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
     if not public_scores:
         await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id)
@@ -504,11 +467,9 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
             await session.rollback()
         return
 
-    # Build osu_user_id → User map for this group's registered users
     stmt = select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None))
     users = {u.osu_user_id: u for u in (await session.execute(stmt)).scalars().all()}
 
-    # Group scores by user_id
     scores_by_user: dict[int, list] = {}
     for s in public_scores:
         uid = (s.get("user_id") or (s.get("user") or {}).get("id"))
@@ -520,7 +481,7 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         if not user_model:
             continue
         for s in user_scores:
-            # Public endpoint may return beatmap/beatmapset as null
+
             if not s.get("beatmap"):
                 s["beatmap"] = {"id": beatmap_id}
             if not s.get("beatmapset"):
@@ -530,7 +491,6 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         except Exception:
             pass
 
-    # Also sync remaining registered users (OAuth with their token, non-OAuth with client_credentials)
     await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()))
 
     try:
@@ -538,18 +498,10 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
     except Exception:
         await session.rollback()
 
-
 async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, chat_id: int, skip_osu_ids: set = None) -> None:
-    """Sync per-user scores for this group's registered users not already covered
-    by the public top-50.
-
-    OAuth users: fetched with their personal token (can see all scores).
-    Non-OAuth users: fetched with client_credentials (public scores only).
-    """
     from services.oauth.token_manager import get_valid_token
     from db.models.oauth_token import OAuthToken
 
-    # OAuth is keyed by Telegram identity (global across groups).
     oauth_tg_ids = set((await session.execute(
         select(OAuthToken.telegram_id)
     )).scalars().all())
@@ -581,18 +533,10 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
         except Exception:
             pass
 
-
-# Every page of the card holds the same number of rows — the podium is a crown
-# in the first column now rather than a block of its own, so the first page is
-# not a different shape from the rest. Kept in step with
-# `MapLeaderboardCardMixin.MLB_ROWS_PER_PAGE`: the keyboard and the card
-# disagreeing about how many pages there are is a button that leads nowhere.
 LBM_ROWS_PER_PAGE = 9
-
 
 def _calc_lbm_total_pages(num_rows: int) -> int:
     return max(1, -(-num_rows // LBM_ROWS_PER_PAGE))
-
 
 @dataclass(frozen=True)
 class MapLeaderboardResult:
@@ -601,36 +545,16 @@ class MapLeaderboardResult:
     total_pages: int
     rows: list[dict[str, Any]]
 
-
-# osu! beatmap statuses that award no pp — their map leaderboard is ranked by
-# total score instead. Accepts both the string form and the integer form the
-# API sometimes returns (4 loved, 3 qualified, 2 approved, 1 ranked, ≤0 wip/
-# pending/graveyard). Unknown/blank status falls back to pp (preserves the old
-# behaviour when the beatmap fetch fails).
 _SCORE_RANKED_STATUSES = {"loved", "qualified", "pending", "wip", "graveyard"}
 _STATUS_INT_MAP = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
                    0: "pending", -1: "wip", -2: "graveyard"}
-
 
 def _ranks_by_score(status) -> bool:
     if isinstance(status, int):
         status = _STATUS_INT_MAP.get(status, "")
     return str(status or "").lower() in _SCORE_RANKED_STATUSES
 
-
 def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[str, Any]]:
-    """The handful of superlatives the card names beside the board.
-
-    Each is the same shape — what kind of title it is, whose it is, and the
-    number that earned it — so the card draws them in a loop rather than
-    knowing five layouts. A board with nobody on it has nothing to say, and
-    says nothing.
-
-    The wording is deliberately not here. The card is read in whichever
-    language its reader set, so it holds the sentences and this holds only the
-    `kind` they are chosen by; a label written here would arrive in Russian on
-    an English card.
-    """
     if not rows:
         return []
 
@@ -642,8 +566,7 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
         }
 
     titles = [
-        # The top of the board itself, in whichever currency it is ranked by —
-        # a loved map has no pp, and a "best result" of 0pp would be a lie.
+
         {
             "kind": "best", "icon": "trophy",
             "who": rows[0].get("username") or "—",
@@ -656,9 +579,6 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
         best("score", lambda r: f"{int(r.get('score') or 0):,}", "score", "stars"),
     ]
 
-    # The hardest mods anyone brought, by the engine's own scale — see
-    # `utils.osu.mod_utils.mod_difficulty`. A board where everybody played
-    # no-mod has no hardest mods, and a "NM" row there would be noise.
     hardest = max(rows, key=lambda r: mod_difficulty(r.get("mods") or ""))
     if mod_difficulty(hardest.get("mods") or "") > 1.0:
         titles.append({
@@ -667,7 +587,6 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
         })
     return titles
 
-
 def _map_average(rows: list[dict[str, Any]], rank_by_score: bool) -> str:
     if not rows:
         return "—"
@@ -675,17 +594,8 @@ def _map_average(rows: list[dict[str, Any]], rank_by_score: bool) -> str:
         return f"{int(sum(int(r.get('score') or 0) for r in rows) / len(rows)):,}"
     return f"{sum(float(r.get('pp') or 0) for r in rows) / len(rows):.1f} PP"
 
-
 async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
                               rank_by_score: bool, limit: int = 6) -> list[dict[str, Any]]:
-    """When the map's record changed hands, newest first.
-
-    Walked out of the attempts themselves rather than stored: every attempt
-    carries when it was played, so the record is whatever the running maximum
-    was at each point in time. Nothing had to be written down in advance —
-    which also means the history reaches exactly as far back as the bot has
-    been logging plays, and no further.
-    """
     played = func.coalesce(UserMapAttempt.played_at, UserMapAttempt.created_at)
     result = await session.execute(
         select(
@@ -716,10 +626,8 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             "score": int(score or 0),
             "date": at.strftime("%d.%m") if at else "",
         })
-    # Newest first: "who holds it now" is the question, and at the far end of
-    # an oldest-first strip it is the last thing read.
-    return list(reversed(history))[:limit]
 
+    return list(reversed(history))[:limit]
 
 async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True) -> MapLeaderboardResult:
     if sync:
@@ -737,9 +645,6 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
     stats_result = await session.execute(stats_stmt)
     total_plays, unique_players = stats_result.one()
 
-    # Resolve the map's status up-front. LOVED / unranked maps award no pp, so a
-    # pp-ranked board collapses to all-zeros; for those we rank by total score —
-    # the same metric osu! uses for loved leaderboards. Ranked/approved keep pp.
     beatmap: Optional[dict[str, Any]] = await osu_api_client.get_beatmap(beatmap_id)
     beatmap = beatmap or {}
     beatmapset = beatmap.get("beatmapset") or {}
@@ -795,7 +700,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
     for position, (user, pp, score, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
         pp_f = float(pp or 0)
         score_i = int(score or 0)
-        # Primary stat shown on the card: score for loved/unranked, else pp.
+
         primary_str = f"{score_i:,}" if rank_by_score else f"{pp_f:.0f}pp"
         rows.append({
             "position": position,
@@ -838,8 +743,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         "unique_players": int(unique_players or 0),
         "rows": rows,
         "page": 0,
-        # What the card draws beside the board. Derived here rather than in the
-        # renderer: the card should be handed what to say, not work it out.
+
         "titles": _map_titles(rows, rank_by_score),
         "average": _map_average(rows, rank_by_score),
         "history": await _map_record_history(
@@ -849,4 +753,3 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
     }
 
     return MapLeaderboardResult(data=data, beatmapset_id=beatmapset_id, total_pages=total_pages, rows=rows)
-

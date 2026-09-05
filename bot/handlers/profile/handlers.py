@@ -21,7 +21,6 @@ from services.refresh import refresh_user, needs_blocking_refresh
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
 
-
 def _format_play_time(seconds: int, lang: str = "en") -> str:
     if not seconds or seconds <= 0:
         return "—"
@@ -29,13 +28,9 @@ def _format_play_time(seconds: int, lang: str = "en") -> str:
     suffix = "ч" if (lang or "en").lower() == "ru" else "h"
     return f"{hours}{suffix}"
 
-
 def _tg_handle(from_user) -> Optional[str]:
-    """Telegram @handle to show on the card, or None when the user has no public
-    username (the card then shows no handle at all — never the osu! name)."""
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
-
 
 async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: int, query: Optional[str] = None):
     if not query:
@@ -44,21 +39,8 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
 
     return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
-
 def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Optional[int] = None,
                  lang: str = "en") -> Optional[InlineKeyboardMarkup]:
-    """Shared with bot/handlers/profile/top_plays.py's "back to profile" nav —
-    same two buttons every /pf render gets. `subject_tg_id` (the profile's
-    owner, not the viewer) is only known for registered users; public
-    unregistered lookups get just the osu! link.
-
-    `viewer_tg_id` (whoever is looking at THIS /pf render right now) is
-    encoded into the button separately from subject_tg_id — needed since
-    2026-07-05's fix: the callback's OWN ownership check must match whoever
-    clicks it (the viewer), while the data to fetch is the subject's. Using
-    one id for both silently broke the button for every cross-profile
-    lookup (viewer clicking it got "not your profile" since they're never
-    equal to the subject unless viewing their own profile)."""
     rows = []
     if osu_id:
         rows.append([InlineKeyboardButton(text=t("pf.kb.osu_profile", lang), url=f"https://osu.ppy.sh/users/{osu_id}")])
@@ -67,24 +49,10 @@ def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Opti
                                           callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
-
 async def _build_page_data(
     user, osu_api_client, session, tg_handle: Optional[str] = None,
     viewer_tg_id: Optional[int] = None,
 ) -> Dict:
-    """Build the full data dict for the profile dashboard card.
-
-    `tg_handle` is the ready-to-show Telegram identity of the profile's owner
-    (``@username`` when public, else the display name) from the message context;
-    it's shown under the name instead of the osu! handle. None falls back to the
-    osu! username in the renderer.
-
-    `viewer_tg_id` is whoever is LOOKING at this card right now — the card
-    renders in THEIR language preference, not the profile subject's (fixed
-    2026-07-05; previously showed the subject's own language even when a
-    different person requested it, e.g. a `/pf <nickname>` lookup showing in
-    the looked-up player's language instead of the requester's).
-    """
     def _get(field: str, default=0):
         if isinstance(user, dict):
             aliases = {
@@ -108,10 +76,6 @@ async def _build_page_data(
             return default
         return getattr(user, field, default)
 
-    # Card text follows the VIEWER's language, not the profile subject's (see
-    # viewer_tg_id's docstring note above) — falls back to the subject's own
-    # language only when no viewer is known at all (shouldn't normally
-    # happen; kept as a safety net rather than a hard requirement).
     fallback_tg_id = _get("telegram_id", None)
     lang_tg_id = viewer_tg_id if viewer_tg_id is not None else fallback_tg_id
     card_lang = await get_language(lang_tg_id) if lang_tg_id else "EN"
@@ -134,7 +98,6 @@ async def _build_page_data(
         "lang": card_lang,
     }
 
-    # Active title chip — registered users only; falls back to nothing.
     base["title"] = None
     base["title_color"] = None
     if not isinstance(user, dict):
@@ -148,8 +111,6 @@ async def _build_page_data(
     osu_user_id = _get("osu_user_id", 0)
     is_registered = not isinstance(user, dict)
 
-    # Extended data: graphs, level, country rank, grade counts, join/online — the
-    # single dashboard needs all of it, so this is unconditional now.
     if osu_user_id:
         try:
             ext = await osu_api_client.get_user_extended_data(osu_user_id)
@@ -175,7 +136,6 @@ async def _build_page_data(
             base["avatar_url"] = ext.get("avatar_url") or base["avatar_url"]
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
-        # Best PP from DB cache; API fallback only for unregistered users
         best_pp = None
         if is_registered:
             from sqlalchemy import func
@@ -194,7 +154,6 @@ async def _build_page_data(
                 pass
         base["best_pp"] = best_pp or 0
 
-        # Top 5 scores — DB cache for registered users, API for everyone else.
         if is_registered:
             stmt = (
                 select(UserBestScore)
@@ -205,7 +164,6 @@ async def _build_page_data(
             result = await session.execute(stmt)
             scores = result.scalars().all()
 
-            # Resolve missing beatmapset_id / creator via API and persist
             for s in scores:
                 if (not s.beatmapset_id or not s.creator) and s.beatmap_id:
                     bm = await osu_api_client.get_beatmap(s.beatmap_id)
@@ -261,7 +219,6 @@ async def _build_page_data(
 
     return base
 
-
 @router.message(TextTriggerFilter("pf"))
 async def show_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
@@ -275,9 +232,8 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
     async with get_db_session() as session:
         try:
             public_lookup = False
-            tg_handle = None  # Telegram identity of the profile owner, when known
-            # Precedence: explicit query > reply-to-user > sender. Replying to
-            # someone with bare "pf" shows their profile (Telegram-native UX).
+            tg_handle = None
+
             if not query:
                 reply_user = await get_reply_target_user(session, message, chat_id=tenant_chat_id)
                 if reply_user and reply_user.osu_user_id:
@@ -301,13 +257,11 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     user = user_data
                     public_lookup = True
 
-            # Count own-profile opens toward "Still Here" (5 in a UTC day).
             is_self = not public_lookup and getattr(user, "telegram_id", None) == tg_id
             if is_self:
                 bump_profile_opens(user)
                 await session.commit()
 
-            # Auto-update if stale only for self-profile
             if is_self:
                 if needs_blocking_refresh(user.last_api_update):
                     wait_msg = await message.answer(t("pf.refreshing", lang))
@@ -319,8 +273,6 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                     else:
                         await wait_msg.edit_text(t("pf.refresh_failed_cached", lang))
 
-            # Single dashboard card + a link out and (registered subjects only)
-            # a button into the full top-plays card.
             try:
                 data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=tg_id)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
@@ -335,7 +287,6 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
         except Exception as e:
             logger.error(f"Error in /profile for {tg_id}: {e}", exc_info=True)
             await message.answer(t("pf.load_error", lang))
-
 
 @router.message(TextTriggerFilter("rf"))
 async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):

@@ -13,7 +13,6 @@ from utils.language import get_language
 
 _GROUP_TYPES = {"group", "supergroup"}
 
-
 def _chat_of(event) -> Optional[object]:
     if isinstance(event, Message):
         return event.chat
@@ -21,19 +20,15 @@ def _chat_of(event) -> Optional[object]:
         return event.message.chat if event.message else None
     return getattr(event, "chat", None)
 
-
 def _telegram_id_of(event) -> Optional[int]:
     user = getattr(event, "from_user", None)
     return int(user.id) if user is not None else None
-
 
 def tenant_id(event) -> Optional[int]:
     chat = _chat_of(event)
     if chat is None:
         return None
     return chat.id if chat.type in _GROUP_TYPES else None
-
-
 
 async def user_tenants(session: AsyncSession, telegram_id: int) -> list[int]:
     rows = (await session.execute(
@@ -49,7 +44,6 @@ async def user_tenants(session: AsyncSession, telegram_id: int) -> list[int]:
         seen.add(c)
         ordered.append(c)
     return ordered
-
 
 async def get_dm_tenant(session: AsyncSession, telegram_id: int) -> Optional[int]:
     chat_id = (await session.execute(
@@ -68,7 +62,6 @@ async def get_dm_tenant(session: AsyncSession, telegram_id: int) -> Optional[int
         return None
     return chat_id
 
-
 async def set_dm_tenant(session: AsyncSession, telegram_id: int, chat_id: int) -> None:
     row = (await session.execute(
         select(DmActiveTenant).where(DmActiveTenant.telegram_id == telegram_id)
@@ -79,7 +72,6 @@ async def set_dm_tenant(session: AsyncSession, telegram_id: int, chat_id: int) -
         row.chat_id = chat_id
     await session.commit()
 
-
 async def clear_dm_tenant(session: AsyncSession, telegram_id: int) -> None:
     row = (await session.execute(
         select(DmActiveTenant).where(DmActiveTenant.telegram_id == telegram_id)
@@ -87,7 +79,6 @@ async def clear_dm_tenant(session: AsyncSession, telegram_id: int) -> None:
     if row is not None:
         await session.delete(row)
         await session.commit()
-
 
 async def effective_tenant(event, session: AsyncSession) -> Optional[int]:
     chat = _chat_of(event)
@@ -100,7 +91,6 @@ async def effective_tenant(event, session: AsyncSession) -> Optional[int]:
         return None
     return await get_dm_tenant(session, tg_id)
 
-
 async def group_only_notice(event) -> None:
     tg_id = _telegram_id_of(event)
     lang = (await get_language(tg_id)).lower() if tg_id is not None else "en"
@@ -110,11 +100,9 @@ async def group_only_notice(event) -> None:
     elif isinstance(event, CallbackQuery):
         await event.answer(text, show_alert=True)
 
-
 async def active_tenants(session: AsyncSession) -> list[int]:
     rows = (await session.execute(select(User.chat_id).distinct())).scalars().all()
     return [c for c in rows if c is not None]
-
 
 __all__ = [
     "tenant_id",

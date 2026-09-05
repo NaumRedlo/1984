@@ -1,10 +1,8 @@
 import html
 from typing import Optional
 
-
 def escape_html(text: str) -> str:
     return html.escape(str(text), quote=False)
-
 
 def safe_html(
     base_text: str = "",
@@ -38,21 +36,17 @@ def safe_html(
 
     return "\n".join(parts) if parts else escape_html(base_text)
 
-
 def format_length(seconds: Optional[int]) -> str:
     s = int(seconds or 0)
     return f"{s // 60}:{s % 60:02d}" if s > 0 else "—"
-
 
 def format_error(message: str, lang: str = "en") -> str:
     from utils.i18n import t
     return t("common.error_prefix", lang) + message
 
-
 def format_success(message: str, lang: str = "en") -> str:
     from utils.i18n import t
     return t("common.success_prefix", lang) + message
-
 
 def plural_bucket(n: int) -> str:
     if n % 10 == 1 and n % 100 != 11:
@@ -60,7 +54,6 @@ def plural_bucket(n: int) -> str:
     if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
         return "few"
     return "many"
-
 
 def plural(n: int, one: str, few: str, many: str) -> str:
     return {"one": one, "few": few, "many": many}[plural_bucket(n)]

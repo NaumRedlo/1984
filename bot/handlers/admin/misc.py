@@ -16,7 +16,6 @@ router = Router(name="admin_misc")
 router.message.filter(AdminFilter())
 router.callback_query.filter(AdminFilter())
 
-
 @router.message(TextTriggerFilter("whois"))
 async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
     raw = (trigger_args.args or "").strip()
@@ -75,7 +74,6 @@ async def cmd_whois(message: types.Message, trigger_args: TriggerArgs):
     )
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
-
 @router.message(TextTriggerFilter("notifyrelink"))
 async def cmd_notify_relink(message: types.Message, trigger_args: TriggerArgs):
     raw = (trigger_args.args or "").strip()
@@ -133,7 +131,6 @@ async def cmd_notify_relink(message: types.Message, trigger_args: TriggerArgs):
             parse_mode="HTML",
         )
 
-
 @router.message(TextTriggerFilter("whereami"))
 async def cmd_whereami(message: types.Message):
     chat_id   = message.chat.id
@@ -146,12 +143,8 @@ async def cmd_whereami(message: types.Message):
     ]
     await message.answer("\n".join(lines), parse_mode="HTML")
 
-
-# ─── Users list ───────────────────────────────────────────────────────────────
-
 @router.message(TextTriggerFilter("userslist"))
 async def cmd_userslist(message: types.Message, trigger_args: TriggerArgs):
-    """Show all registered users sorted by last_seen_at (oldest first)."""
     async with get_db_session() as session:
         users = (await session.execute(
             select(User).order_by(asc(User.last_seen_at))
@@ -177,15 +170,9 @@ async def cmd_userslist(message: types.Message, trigger_args: TriggerArgs):
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
-
-# ─── Purge user (cascade delete) ─────────────────────────────────────────────
-
 _PURGE_PENDING: dict[str, int] = {}
 
-
 async def _chat_label(bot, chat_id) -> str:
-    """Human-readable '<title> (<id>)' for a tenant chat, falling back to the
-    raw id when the bot can't resolve the chat (e.g. it was removed from it)."""
     try:
         chat = await bot.get_chat(chat_id)
         title = getattr(chat, "title", None) or getattr(chat, "full_name", None)
@@ -194,7 +181,6 @@ async def _chat_label(bot, chat_id) -> str:
     except Exception:
         pass
     return f"<code>{chat_id}</code>"
-
 
 @router.message(TextTriggerFilter("purgeuser"))
 async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
@@ -226,7 +212,7 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
         osu_name = user.osu_username
         osu_id = user.osu_user_id
         last_seen = user.last_seen_at.strftime("%Y-%m-%d %H:%M") if user.last_seen_at else "—"
-        # Every беседа this Telegram identity is registered in (multi-tenant).
+
         siblings = [
             (u.id, u.chat_id) for u in (await session.execute(
                 select(User).where(User.telegram_id == target_tg).order_by(asc(User.id))
@@ -262,7 +248,6 @@ async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
 
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
 
-
 @router.callback_query(F.data.startswith("purge_confirm:"))
 async def purge_confirm(callback: types.CallbackQuery):
     confirm_id = callback.data.split(":", 1)[1]
@@ -293,8 +278,6 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         await session.execute(delete(User).where(User.id == user_id))
 
-        # OAuth is global per telegram_id — remove it only if this was the user's
-        # LAST registration; otherwise their osu! link stays valid in other chats.
         other_exists = (await session.execute(
             select(User.id).where(User.telegram_id == user.telegram_id).limit(1)
         )).scalar_one_or_none()
@@ -321,7 +304,6 @@ async def purge_confirm(callback: types.CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
-
 
 @router.callback_query(F.data.startswith("purge_cancel:"))
 async def purge_cancel(callback: types.CallbackQuery):

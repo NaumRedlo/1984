@@ -1,10 +1,4 @@
-"""settings message/button strings for the i18n catalog.
-
-Merged into utils.i18n._CATALOG at import; see utils/i18n/__init__.py.
-"""
-
 CATALOG = {
-    # ── sts (settings menu) ────────────────────────────────────────────────
     "sts.foreign_menu": {
         "en": "This isn't your menu. Open your own: sts",
         "ru": "Это не ваше меню. Откройте своё: sts",
@@ -15,7 +9,6 @@ CATALOG = {
     "sts.kb.language": {"en": "Language", "ru": "Язык"},
     "sts.kb.render": {"en": "Render", "ru": "Рендер"},
 
-    # ── render section ───────────────────────────────────────────────────
     "sts.rnd.body": {
         "en": "<b>Render</b>\n{summary}",
         "ru": "<b>Рендер</b>\n{summary}",
@@ -172,11 +165,7 @@ CATALOG = {
     "sts.kb.back": {"en": "‹ Back", "ru": "‹ Назад"},
     "sts.not_registered": {"en": "You aren't registered. Write register [name]", "ru": "Вы не зарегистрированы. Напишите register [ник]"},
 
-
-
     "sts.page_suffix": {"en": "  ({page}/{total})", "ru": "  (стр. {page}/{total})"},
-
-
 
     "sts.acc.not_linked": {
         "en": "👤 <b>The osu! account</b>\n\nisn't linked to a bot.\nJoin a chat that has a bot: <code>register [name]</code>",
@@ -242,8 +231,6 @@ CATALOG = {
     "sts.title.not_unlocked": {"en": "This title isn't unlocked yet.", "ru": "Этот титул ещё не открыт."},
     "sts.title.set_alert": {"en": "★ {name}", "ru": "★ {name}"},
 
-
-    # ── dm_tenant (DM group picker) ───────────────────────────────────────
     "dm.no_groups": {
         "en": ("You aren't registered in any group chat yet.\n"
                "Go to a chat with the bot and send <code>register &lt;nickname&gt;</code>, "

@@ -1,8 +1,3 @@
-"""
-Migration: add beatmapset_id and creator columns to user_best_scores table.
-Safe for SQLite — checks column existence before ALTER TABLE.
-"""
-
 import logging
 from sqlalchemy import text
 
@@ -13,9 +8,7 @@ NEW_COLUMNS = [
     ("creator", "TEXT"),
 ]
 
-
 async def run_beatmapset_id_migration(engine):
-    """Add beatmapset_id and creator to user_best_scores. Idempotent."""
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(user_best_scores)"))
         existing = {row[1] for row in result.fetchall()}

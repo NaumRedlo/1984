@@ -1,16 +1,3 @@
-"""
-Shared refresh orchestrator.
-
-Single entry point for all profile refresh paths:
-  - /profile auto-refresh
-  - /refresh command
-  - background ProfileUpdater
-  - leaderboard stale refresh
-
-Provides per-user in-flight deduplication so parallel callers
-(e.g. background updater + /profile) never double-refresh the same user.
-"""
-
 import asyncio
 from typing import Optional
 
@@ -20,24 +7,19 @@ from services.refresh.policy import RefreshMode
 
 logger = get_logger("services.refresh.orchestrator")
 
-# In-memory set of user DB IDs currently being refreshed
 _in_flight: set[int] = set()
 _in_flight_lock = asyncio.Lock()
 
-
 async def _acquire(user_id: int) -> bool:
-    """Try to claim a refresh slot for user_id. Returns False if already in-flight."""
     async with _in_flight_lock:
         if user_id in _in_flight:
             return False
         _in_flight.add(user_id)
         return True
 
-
 async def _release(user_id: int) -> None:
     async with _in_flight_lock:
         _in_flight.discard(user_id)
-
 
 async def refresh_user(
     user,
@@ -54,7 +36,7 @@ async def refresh_user(
         if oauth_token is None:
             from services.oauth.token_manager import get_valid_token
             try:
-                # OAuth token is keyed by Telegram identity (global), not users.id.
+
                 oauth_token = await get_valid_token(user.telegram_id)
             except Exception:
                 oauth_token = None
@@ -66,15 +48,13 @@ async def refresh_user(
 
         if mode in ("full", "background_full"):
             await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
-            # Best scores feed the titles calculators — recompute now (caller
-            # commits). Never let a title-calc hiccup fail the whole refresh.
+
             try:
                 from utils.title_progress import refresh_user_titles
                 await refresh_user_titles(user, session)
             except Exception as exc:
                 logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
-            # Mark the expensive pass as done — the frequent stats sweep bumps
-            # last_api_update, so it can't be used to schedule this one.
+
             user.last_full_update = utcnow()
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
@@ -86,7 +66,5 @@ async def refresh_user(
     finally:
         await _release(user.id)
 
-
 def is_in_flight(user_id: int) -> bool:
-    """Non-blocking check — True if a refresh is already running for this user."""
     return user_id in _in_flight

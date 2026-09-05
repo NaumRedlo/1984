@@ -1,8 +1,3 @@
-"""
-Migration: add avatar_url, cover_url columns to users table.
-Safe for SQLite — checks column existence before ALTER TABLE.
-"""
-
 import logging
 from sqlalchemy import text
 
@@ -13,9 +8,7 @@ NEW_COLUMNS = [
     ("cover_url", "TEXT"),
 ]
 
-
 async def run_avatar_migration(engine):
-    """Add avatar_url/cover_url columns to users table. Idempotent."""
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(users)"))
         existing = {row[1] for row in result.fetchall()}

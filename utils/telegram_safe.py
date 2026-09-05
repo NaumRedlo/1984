@@ -17,8 +17,6 @@ from utils.logger import get_logger
 
 logger = get_logger("telegram_safe")
 
-# Substrings of error messages that are safe to silently ignore.
-# Compared case-insensitively against str(exc).
 _BENIGN_BAD_REQUESTS: tuple[str, ...] = (
     "message is not modified",
     "message to edit not found",
@@ -43,11 +41,9 @@ _BENIGN_BAD_REQUESTS: tuple[str, ...] = (
     "message_id_invalid",
 )
 
-
 def _is_benign(exc: TelegramBadRequest) -> bool:
     text = str(exc).lower()
     return any(p in text for p in _BENIGN_BAD_REQUESTS)
-
 
 def _log_telegram_error(operation: str, exc: BaseException) -> None:
     if isinstance(exc, TelegramBadRequest):
@@ -68,19 +64,17 @@ def _log_telegram_error(operation: str, exc: BaseException) -> None:
     else:
         logger.error(f"[{operation}] unexpected error: {exc}", exc_info=True)
 
-
 @asynccontextmanager
 async def suppress_telegram_errors(operation: str = "telegram_call"):
     try:
         yield
     except TelegramAPIError as exc:
         _log_telegram_error(operation, exc)
-    except Exception as exc:  # pragma: no cover - defensive
-        # Don't swallow CancelledError / KeyboardInterrupt.
+    except Exception as exc:
+
         if isinstance(exc, (KeyboardInterrupt, SystemExit)):
             raise
         _log_telegram_error(operation, exc)
-
 
 async def safe_edit_text(
     bot: Bot,
@@ -99,7 +93,6 @@ async def safe_edit_text(
         _log_telegram_error("edit_message_text", exc)
         return False
 
-
 async def safe_edit_caption(
     bot: Bot,
     *,
@@ -117,7 +110,6 @@ async def safe_edit_caption(
         _log_telegram_error("edit_message_caption", exc)
         return False
 
-
 async def safe_edit_reply_markup(
     bot: Bot,
     *,
@@ -133,7 +125,6 @@ async def safe_edit_reply_markup(
     except TelegramAPIError as exc:
         _log_telegram_error("edit_message_reply_markup", exc)
         return False
-
 
 async def safe_edit_message_media(
     bot: Bot,
@@ -155,7 +146,6 @@ async def safe_edit_message_media(
         _log_telegram_error("edit_message_media", exc)
         return False
 
-
 async def safe_send_message(
     bot: Bot,
     chat_id: int,
@@ -168,14 +158,12 @@ async def safe_send_message(
         _log_telegram_error("send_message", exc)
         return None
 
-
 async def safe_send_photo(bot: Bot, chat_id: int, photo: Any, **kwargs: Any):
     try:
         return await bot.send_photo(chat_id, photo=photo, **kwargs)
     except TelegramAPIError as exc:
         _log_telegram_error("send_photo", exc)
         return None
-
 
 async def safe_delete_message(bot: Bot, chat_id: int, message_id: int) -> bool:
     try:
@@ -184,7 +172,6 @@ async def safe_delete_message(bot: Bot, chat_id: int, message_id: int) -> bool:
     except TelegramAPIError as exc:
         _log_telegram_error("delete_message", exc)
         return False
-
 
 async def safe_answer_callback(
     callback: CallbackQuery,
@@ -199,7 +186,6 @@ async def safe_answer_callback(
     except TelegramAPIError as exc:
         _log_telegram_error("answer_callback_query", exc)
         return False
-
 
 __all__ = [
     "suppress_telegram_errors",

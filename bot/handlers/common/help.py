@@ -1,7 +1,3 @@
-"""Help (`help`) — an inline-keyboard menu, same style as `settings` (a chat
-message + buttons, not a rendered card). Pick a category to see its commands.
-Text follows the viewer's language via utils.i18n."""
-
 from aiogram import Router, types, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
@@ -14,22 +10,12 @@ from utils.logger import get_logger
 logger = get_logger("handlers.help")
 router = Router(name="help")
 
-# Section codes -> catalog keys are "help.sec.<code>.label" / ".body".
 _SECTION_CODES = ("osu", "account")
 
-
 def _sections(user_id: int | None) -> tuple[str, ...]:
-    """Which sections this person actually has.
-
-    Dossier sits behind the same gate as the commands it describes, because a
-    category where every line answers "not for you" is worse than no category.
-    Asked again on the callback rather than trusted from the keyboard: the
-    button is only a suggestion, and `help_dossier` can be typed by hand.
-    """
     if user_id is not None and can_use_render(user_id):
         return (*_SECTION_CODES, "dossier")
     return _SECTION_CODES
-
 
 def _home_kb(lang: str, codes: tuple[str, ...]) -> InlineKeyboardMarkup:
     rows = []
@@ -41,13 +27,11 @@ def _home_kb(lang: str, codes: tuple[str, ...]) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text=t("help.btn.close", lang), callback_data="help_close")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def _back_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=t("help.btn.back", lang), callback_data="help_main"),
         InlineKeyboardButton(text=t("help.btn.close", lang), callback_data="help_close"),
     ]])
-
 
 @router.message(TextTriggerFilter("help"))
 async def help_command(message: types.Message, trigger_args: TriggerArgs = None):
@@ -58,7 +42,6 @@ async def help_command(message: types.Message, trigger_args: TriggerArgs = None)
         reply_markup=_home_kb(lang, _sections(who.id if who else None)),
         parse_mode="HTML",
     )
-
 
 @router.callback_query(F.data.startswith("help_"))
 async def process_help_callback(callback: CallbackQuery):
@@ -87,6 +70,5 @@ async def process_help_callback(callback: CallbackQuery):
     except Exception:
         pass
     await callback.answer()
-
 
 __all__ = ["router"]

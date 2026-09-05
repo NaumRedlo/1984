@@ -1,9 +1,3 @@
-"""Turn raw delta standings into the labelled payload the card renderer draws.
-
-Keeps number/word formatting out of both the query layer (services/leaderboard/
-service.py) and the drawing layer (services/image/render/leaderboard_delta.py).
-"""
-
 from __future__ import annotations
 
 from datetime import timedelta
@@ -19,19 +13,12 @@ _MONTHS_RU = ("января", "февраля", "марта", "апреля", "�
 _MONTHS_EN = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-
-# Re-exported rather than reimplemented: the rule is in utils.formatting.text,
-# which is where it belongs and where Dossier's reel captions read it from too.
 plural_form = plural_bucket
 
-
 def _thousands(value: float, digits: int = 0) -> str:
-    """1234567 -> '1 234 567' (thin-ish space, matching the mockup)."""
     return f"{value:,.{digits}f}".replace(",", " ")
 
-
 def _fmt_duration(seconds: float, lang: str) -> str:
-    """Play time, with localised unit suffixes."""
     h_unit, m_unit = t("lb.unit.h", lang), t("lb.unit.m", lang)
     total = int(seconds)
     hours, minutes = total // 3600, (total % 3600) // 60
@@ -39,9 +26,7 @@ def _fmt_duration(seconds: float, lang: str) -> str:
         return f"{hours}{h_unit} {minutes:02d}{m_unit}" if minutes else f"{hours}{h_unit}"
     return f"{minutes}{m_unit}"
 
-
 def format_delta(key: str, value: float, lang: str) -> str:
-    """The big green number, e.g. '+412 pp' / '+0.15 п.п.' / '450 хит/плей'."""
     if key == "pp":
         return f"+{_thousands(value)} pp"
     if key == "accuracy":
@@ -53,13 +38,11 @@ def format_delta(key: str, value: float, lang: str) -> str:
     if key == "ranked_score":
         return f"+{_thousands(value)}"
     if key == "hits_per_play":
-        # A period ratio, not a difference — no "+" sign.
+
         return f"{value:,.1f}".replace(",", " ")
     return f"+{value:g}"
 
-
 def format_absolute(key: str, value: float, lang: str) -> str:
-    """The small grey line under it — the player's lifetime figure."""
     if key == "accuracy":
         return t("lb.delta.total", lang, value=f"{value:.2f}%")
     if key == "play_time":
@@ -68,15 +51,10 @@ def format_absolute(key: str, value: float, lang: str) -> str:
         return t("lb.delta.total", lang, value=f"{value:,.1f}".replace(",", " "))
     return t("lb.delta.total", lang, value=_thousands(value))
 
-
 def format_gap(key: str, value: float, place: int, lang: str) -> str:
     return t("lb.delta.gap", lang, value=format_delta(key, value, lang).lstrip("+"), place=place)
 
-
 def active_title(code: str | None, lang: str):
-    """(label, colour) of the player's active title — the one they pinned with
-    `st`. Resolved exactly like the profile card does. ("", None) when they
-    haven't set one, which makes the card centre their name instead."""
     if not code:
         return "", None
     td = TITLE_REGISTRY.get(code)
@@ -84,9 +62,7 @@ def active_title(code: str | None, lang: str):
         return "", None
     return td.name_for(lang.lower()), td.color
 
-
 def period_label(period_key: str, lang: str) -> str:
-    """'неделя 30 · 20–26 июля' — the header's period line."""
     start, end = period_bounds_msk(period_key)
     months = _MONTHS_RU if lang.startswith("ru") else _MONTHS_EN
     if start.month == end.month:
@@ -95,9 +71,7 @@ def period_label(period_key: str, lang: str) -> str:
         span = f"{start.day} {months[start.month - 1]} – {end.day} {months[end.month - 1]}"
     return t("lb.delta.period", lang, week=week_number(period_key), span=span)
 
-
 def build_absolute_payload(board: dict, lang: str) -> dict:
-    """Same card, all-time mode: lifetime values, no growth and no movement."""
     key = board["key"]
     now_msk = utcnow() + MSK_OFFSET
 
@@ -124,9 +98,7 @@ def build_absolute_payload(board: dict, lang: str) -> dict:
         "footer_right": t("lb.delta.updated", lang, time=now_msk.strftime("%d.%m %H:%M")),
     }
 
-
 def build_payload(board: dict, lang: str) -> dict:
-    """Everything services/image/render/leaderboard_delta.py needs."""
     key = board["key"]
     now_msk = utcnow() + MSK_OFFSET
 

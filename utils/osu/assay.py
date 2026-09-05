@@ -16,10 +16,8 @@ CACHE_DIR = Path(
 
 TIMEOUT_SECONDS = 30.0
 
-
 def _binary() -> str:
     return os.path.expanduser(DOSSIER_BIN)
-
 
 async def beatmap_file(beatmap_id: int, download) -> Optional[Path]:
     path = CACHE_DIR / f"{int(beatmap_id)}.osu"
@@ -35,7 +33,6 @@ async def beatmap_file(beatmap_id: int, download) -> Optional[Path]:
     scratch.write_bytes(body)
     scratch.replace(path)
     return path
-
 
 async def assay(
     path: Path,
@@ -84,7 +81,7 @@ async def assay(
     except asyncio.TimeoutError:
         logger.warning("assay: engine did not answer within %.0fs", TIMEOUT_SECONDS)
         return None
-    except Exception:  # noqa: BLE001 — a card is worth more than a stack trace
+    except Exception:
         logger.warning("assay: engine could not be run", exc_info=True)
         return None
 
@@ -97,10 +94,6 @@ async def assay(
         logger.warning("assay: engine answered something that is not JSON")
         return None
 
-
-# A map small enough to write and judge in a moment, and real enough that
-# answering it means the whole path works: the binary runs on this machine, it
-# parses, it reaches the calculator and it prints JSON.
 _A_TINY_MAP = """osu file format v14
 
 [General]
@@ -122,20 +115,7 @@ SliderTickRate:1
 200,200,1500,1,0
 """
 
-
 async def working() -> str:
-    """`""` when the engine answers, and why not when it does not.
-
-    Worth doing at startup and worth doing for real. When this path is broken
-    the bot does not stop — it quietly falls back to `rosu-pp-py`, whose
-    figures are the ones this calculator was written to replace, and the only
-    symptom is pp that is wrong by an amount nobody can see without checking it
-    against the game. That went unnoticed for as long as it took somebody to
-    notice the numbers.
-
-    `is_available` is not enough on its own: it asks whether a file is there
-    and executable, which a release built for another architecture also is.
-    """
     import tempfile
 
     with tempfile.TemporaryDirectory() as folder:
@@ -148,7 +128,6 @@ async def working() -> str:
         return "движок ответил без star_rating"
     return ""
 
-
 async def for_score(
     beatmap_id: int,
     download,
@@ -159,6 +138,5 @@ async def for_score(
     if path is None:
         return None
     return await assay(path, mods, **play)
-
 
 __all__ = ["assay", "beatmap_file", "for_score", "working", "CACHE_DIR"]

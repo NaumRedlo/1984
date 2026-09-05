@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Rarity tiers in ascending order. Drives both sort order and palette in the
-# titles dashboard. "secret" titles are not announced — they surface on unlock.
 RARITY_ORDER = ("common", "uncommon", "rare", "epic", "legendary", "mythic", "secret")
 
 RARITY_META: dict[str, dict] = {
@@ -16,13 +14,11 @@ RARITY_META: dict[str, dict] = {
     "secret":    {"label": "Secret",    "label_ru": "Секретный",     "color": (130, 96, 170)},
 }
 
-
 def rarity_label_for(rarity: str, lang: str = "en") -> str:
     meta = RARITY_META.get(rarity, {})
     if (lang or "en").lower() == "ru":
         return meta.get("label_ru", meta.get("label", rarity))
     return meta.get("label", rarity)
-
 
 @dataclass(frozen=True)
 class TitleDef:
@@ -64,13 +60,11 @@ class TitleDef:
     def rarity_order(self) -> int:
         return RARITY_ORDER.index(self.rarity)
 
-
 def _t(code, name, description, target, rarity, name_ru="", description_ru="", hint="", hint_ru=""):
     return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru, hint, hint_ru)
 
-
 TITLE_REGISTRY: dict[str, TitleDef] = dict([
-    # ── Common ───────────────────────────────────────────────────────────
+
     _t("registered", "It's Nice to Meet You", "Sign up with the bot.", 1, "common",
        "Приятно познакомиться", "Зарегистрируйся в боте."),
     _t("rank_d", "Rough Start", "Get a D grade or lower.", 1, "common",
@@ -88,7 +82,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("s_50", "Serial Performer", "Earn 50 S-ranks.", 50, "common",
        "Серийный исполнитель", "Получи 50 S-рангов."),
 
-    # ── Uncommon ─────────────────────────────────────────────────────────
     _t("wysi", "WYSI", "Get a combo containing the number 727.", 1, "uncommon",
        "WYSI", "Набери комбо, содержащее число 727."),
     _t("volunteer", "Volunteer", "Purchase osu!supporter at least once.", 1, "uncommon",
@@ -106,7 +99,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ss_100", "Five Collector", "Earn 100 SS ranks.", 100, "uncommon",
        "Отличник", "Получи 100 рангов SS."),
 
-    # ── Rare ─────────────────────────────────────────────────────────────
     _t("off_day", "Total Failure", "Fail one map 30 times.", 30, "rare",
        "Неудача", "Зафейль одну карту 30 раз."),
     _t("dejavu", "Déjà Vu", "Get the same score on two different maps.", 1, "rare",
@@ -124,7 +116,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("heavy_hand", "Heavy Hand", "FC a map from 5* with AR 10.3 and above.", 1, "rare",
        "Крепкая рука", "Сделай FC карты от 5* с AR 10.3 и выше."),
 
-    # ── Epic ─────────────────────────────────────────────────────────────
     _t("td_4star", "Sensory Zombie", "Pass a map from 4* with TD.", 1, "epic",
        "Сенсорный зомби", "Пройди карту от 4* с TD."),
     _t("fl_6star", "Working Blind", "Pass a map from 6* with FL.", 1, "epic",
@@ -140,7 +131,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("sr_10", "Double Digit Threat", "Pass a map of 10* or harder.", 1, "epic",
        "Двузначная угроза", "Пройди карту сложностью 10* или выше."),
 
-    # ── Legendary ────────────────────────────────────────────────────────
     _t("ss_7star", "Flawless Record", "Get an SS on a map from 7*.", 1, "legendary",
        "Безупречность не предел", "Получи SS на карте от 7*."),
     _t("ss_fl_55star", "Blind Surveillance", "Get an SS on a map from 6* with FL.", 1, "legendary",
@@ -156,7 +146,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("hdhr_fc7", "Double Sentence", "FC a map from 7* with HDHR.", 1, "legendary",
        "Двойной приговор", "Сделай FC карты от 7* с HDHR."),
 
-    # ── Mythic ───────────────────────────────────────────────────────────
     _t("ss_8star", "The Machine", "Get an SS on a map from 8.5*.", 1, "mythic",
        "Киборг", "Получи SS на карте от 8.5*."),
     _t("ss_hddt_75star", "Faster Than Sight", "Get an SS on a map from 8* with HDDT.", 1, "mythic",
@@ -170,10 +159,6 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
     _t("ss_streak_10", "Idealist", "Get 10 SS ranks in a row.", 10, "mythic",
        "Идеалист", "Получи 10 рангов SS подряд."),
 
-    # ── Secret (not announced — surface on unlock) ───────────────────────
-    # hint/hint_ru: a cryptic per-title flavour line shown in the card while
-    # locked, in place of the generic "Surfaces on its own" placeholder —
-    # teases the real condition (above) without stating it outright.
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and pass a map from 7*.", 1, "secret",
        "Двоемыслие", "Получи SS на карте с EZ до 2* и пройди карту от 7*.",
        "Kneel to the weak, outlast the mighty. Believe both.",

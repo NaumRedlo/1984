@@ -19,14 +19,9 @@ from services.image.render.recent import build_recent_card_data, _pick_score_val
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
-# `rs` fetches a window of recent plays (not just the latest) and indexes them
-# all into map_attempts + evaluates titles, so a player's history builds up over
-# time. The card still shows only the newest play (recent_scores[0]).
 RECENT_LIMIT = 50
 
-
 def _play_from_score(raw: dict) -> dict:
-    """Normalise an osu! API score into the play dict the title evaluator uses."""
     bm = raw.get("beatmap") or {}
     stats = raw.get("statistics") or {}
     passed = raw.get("passed", True)
@@ -55,7 +50,6 @@ def _play_from_score(raw: dict) -> dict:
         "score": _pick_score_value(raw),
     }
 
-
 @router.message(TextTriggerFilter("rs"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     tg_id = message.from_user.id
@@ -73,9 +67,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
     requester_tg_id = None
     target_tg_id = None
 
-    # Reply-to-user: if no args but replying to someone, look up their recent.
-    # get_real_reply() ignores the forum-topic root, so a bare `rs` in the duel
-    # topic resolves to the sender, not the topic creator.
     real_reply = get_real_reply(message)
     if not user_input and real_reply and real_reply.from_user:
         reply_tg_id = real_reply.from_user.id
@@ -153,7 +144,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         score = recent_scores[0]
 
-        # Log score fields for diagnostics
         logger.info(
             f"Score fields: total_score={score.get('total_score')!r}, "
             f"legacy_total_score={score.get('legacy_total_score')!r}, "
@@ -171,9 +161,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id
                 try:
-                    # Index the whole recent window into map_attempts and evaluate
-                    # titles over all of it (the only path that unlocks secrets —
-                    # an observed play must itself qualify).
+
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
                     plays = [_play_from_score(rs) for rs in recent_scores]
                     newly_titles = await evaluate_recent_plays(registered_user, plays, session)
@@ -192,18 +180,18 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     player_cover_url = user_data.get("cover_url") or ""
             except Exception as e:
                 logger.debug(f"Failed to fetch user cover for {target_id}: {e}")
-        
+
         artist = beatmapset.get("artist", "Unknown")
         title = beatmapset.get("title", "Unknown")
         version = beatmap.get("version", "Unknown")
         stars = beatmap.get("difficulty_rating", 0.0)
-        
+
         acc = score.get("accuracy", 0) * 100
         passed = score.get("passed", True)
         rank = score.get("rank", "F") if passed else "F"
         pp = score.get("pp") or 0.0
         combo = score.get("max_combo", 0)
-        
+
         raw_mods = score.get("mods", [])
         mods_list = []
         for m in raw_mods:
@@ -224,13 +212,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             pp_line=pp_line,
         )
 
-        # Try PNG card, fallback to cover photo or text
         try:
-            # Card text follows the VIEWER's language (2026-07-05 fix — used to
-            # follow the SUBJECT's, e.g. `rs <nickname>` on someone else's
-            # recent play rendered in THEIR language instead of the
-            # requester's). tg_id is always known; falls back to English only
-            # if language lookup itself has no record for them.
+
             recent_data = await build_recent_card_data(
                 score,
                 username=display_name,
@@ -263,7 +246,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             else:
                 await wait_msg.edit_text(fallback_text, parse_mode="HTML")
 
-        # Announce any titles this play just unlocked (incl. secrets).
         if newly_titles:
             names = ", ".join(f"{td.name} ({td.rarity_label})" for td in newly_titles)
             try:
