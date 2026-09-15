@@ -238,14 +238,18 @@ CATALOG = {
               "было. Начни заново в приложении.",
     },
     "dsr.pair.card": {
-        "en": "<b>Add this machine to your account?</b>\n\n"
-              "<b>{name}</b>\n{about}\n\n"
-              "If that is not the computer in front of you, press no — "
-              "somebody may have sent you their code.",
-        "ru": "<b>Добавить эту машину к твоему аккаунту?</b>\n\n"
-              "<b>{name}</b>\n{about}\n\n"
-              "Если это не тот компьютер, что перед тобой, — жми «нет»: "
-              "возможно, кто-то прислал тебе свой код.",
+        "en": "<b>Add this device to your account?</b>\n\n"
+              "<b>{name}</b>\n{about}\n"
+              "Code <code>{code}</code>\n\n"
+              "The application shows the same code. If it does not, or that "
+              "is not the computer in front of you, press no — somebody may "
+              "have sent you their code.",
+        "ru": "<b>Добавить это устройство к твоему аккаунту?</b>\n\n"
+              "<b>{name}</b>\n{about}\n"
+              "Код <code>{code}</code>\n\n"
+              "Приложение показывает такой же код. Если нет, или это не тот "
+              "компьютер, что перед тобой, — жми «нет»: возможно, кто-то "
+              "прислал тебе свой код.",
     },
     "dsr.pair.cores": {
         "en": "{n} cores",

@@ -64,7 +64,8 @@ async def start_pairing(message: Message, command: CommandObject):
 
     await message.answer(
         t("dsr.pair.card", lang,
-          name=escape_html(found.machine.name), about=_about(found.machine, lang)),
+          name=escape_html(found.machine.name), about=_about(found.machine, lang),
+          code=invites.pretty(code)),
         parse_mode="HTML",
         reply_markup=_pair_keyboard(code, lang),
     )
