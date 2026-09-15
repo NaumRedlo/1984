@@ -165,6 +165,14 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
 
+        from services.render_farm import pairing as farm_pairing
+
+        try:
+            me = await self.bot.get_me()
+            farm_pairing.set_bot_username(me.username or "")
+        except Exception as exc:
+            logger.warning("cannot learn my own username, pairing links stay bare: %s", exc)
+
         logger.info("Starting background profile updater...")
         self.profile_updater_task = asyncio.create_task(
             periodic_profile_updates(self.osu_api_client, self.shutdown_event),

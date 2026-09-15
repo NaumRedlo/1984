@@ -9,7 +9,7 @@ from aiohttp import web
 from config.settings import RENDER_WORKER_TOKEN
 from dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
-from services.render_farm import invites
+from services.render_farm import invites, pairing
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 
@@ -44,6 +44,12 @@ def _release() -> str:
 
 def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
+
+def _address(request: web.Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip() or "?"
+    return request.remote or "?"
 
 def make_routes(queue: Optional[RenderQueue] = None,
                 roster: Optional[Roster] = None) -> list[web.RouteDef]:
@@ -235,8 +241,50 @@ def make_routes(queue: Optional[RenderQueue] = None,
         token = await invites.issue(invite, str(said.get("name", ""))[:128])
         return web.json_response({"token": token})
 
+    async def pair(request: web.Request) -> web.Response:
+        try:
+            said = await request.json()
+        except Exception:
+            return web.json_response({"error": "bad request"}, status=400)
+        if not isinstance(said, dict):
+            return web.json_response({"error": "bad request"}, status=400)
+        name = str(said.get("name") or "").strip()[:128]
+        if not name:
+            return web.json_response({"error": "no machine name"}, status=400)
+        try:
+            cores = max(0, int(said.get("cores") or 0))
+        except (TypeError, ValueError):
+            cores = 0
+        machine = pairing.Machine(
+            name=name,
+            os=str(said.get("os") or "").strip()[:64],
+            cores=cores,
+            build=str(said.get("build") or "").strip()[:64],
+        )
+        code = pairing.start(machine, _address(request))
+        if code is None:
+            return web.json_response({"error": "too many"}, status=429)
+        return web.json_response({
+            "code": invites.pretty(code),
+            "link": pairing.link(code),
+            "expires_in": int(pairing.GOOD_FOR),
+        })
+
+    async def pair_status(request: web.Request) -> web.Response:
+        got = await pairing.collect(request.match_info["code"], _address(request))
+        if got.status == pairing.THROTTLED:
+            return web.json_response({"error": "too many"}, status=429)
+        if got.status == pairing.GONE:
+            return web.json_response({"status": pairing.GONE}, status=404)
+        body = {"status": got.status}
+        if got.token:
+            body["token"] = got.token
+        return web.json_response(body)
+
     return [
         web.post("/render/join", join),
+        web.post("/render/pair", pair),
+        web.get("/render/pair/{code}", pair_status),
         web.get("/render/hello", hello),
         web.get("/render/farm", farm),
         web.post("/render/claim", claim),
