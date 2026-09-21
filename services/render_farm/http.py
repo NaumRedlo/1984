@@ -4,6 +4,7 @@ import secrets
 import tempfile
 from typing import Optional
 
+from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import RENDER_WORKER_TOKEN
@@ -17,6 +18,39 @@ logger = get_logger("services.render_farm.http")
 
 MAX_RESULT_BYTES = 2 * 1024 * 1024 * 1024
 _CHUNK = 1 << 20
+
+_bot: Optional[Bot] = None
+
+def set_bot(bot: Bot) -> None:
+    global _bot
+    _bot = bot
+
+def _token(request: web.Request) -> str:
+    header = request.headers.get("Authorization", "")
+    prefix = "Bearer "
+    return header[len(prefix):] if header.startswith(prefix) else ""
+
+def _max_send_bytes() -> int:
+    from config.settings import TELEGRAM_BOT_API_URL
+
+    if TELEGRAM_BOT_API_URL:
+        return 2000 * 1024 * 1024
+    return 48 * 1024 * 1024
+
+async def _spool(request: web.Request, most: int, prefix: str) -> tuple[str, int]:
+    handle, path = tempfile.mkstemp(prefix=prefix, suffix=".mp4")
+    written = 0
+    try:
+        with os.fdopen(handle, "wb") as out:
+            async for chunk in request.content.iter_chunked(_CHUNK):
+                written += len(chunk)
+                if written > most:
+                    raise ValueError("too large")
+                out.write(chunk)
+    except (ValueError, OSError):
+        os.unlink(path)
+        raise
+    return path, written
 
 def _authorised(request: web.Request) -> bool:
     header = request.headers.get("Authorization", "")
@@ -279,7 +313,89 @@ def make_routes(queue: Optional[RenderQueue] = None,
         body = {"status": got.status}
         if got.token:
             body["token"] = got.token
+            body["who"] = got.who
         return web.json_response(body)
+
+    async def me(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        body = {"telegram_id": owner.telegram_id, "name": owner.name, "username": "", "avatar": False}
+        if _bot is not None:
+            try:
+                chat = await _bot.get_chat(owner.telegram_id)
+                body["username"] = chat.username or ""
+                body["name"] = " ".join(p for p in (chat.first_name, chat.last_name) if p) or owner.name
+                body["avatar"] = chat.photo is not None
+            except Exception as exc:
+                logger.warning("cannot describe %s: %s", owner.telegram_id, exc)
+        return web.json_response(body)
+
+    async def me_avatar(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None or _bot is None:
+            return web.json_response({"error": "no one"}, status=404)
+        try:
+            chat = await _bot.get_chat(owner.telegram_id)
+            if chat.photo is None:
+                return web.json_response({"error": "no photo"}, status=404)
+            file = await _bot.get_file(chat.photo.small_file_id)
+            buffer = await _bot.download_file(file.file_path)
+            data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
+        except Exception as exc:
+            logger.warning("cannot fetch the photo of %s: %s", owner.telegram_id, exc)
+            return web.json_response({"error": "no photo"}, status=404)
+        return web.Response(body=data, content_type="image/jpeg")
+
+    async def send(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        if _bot is None:
+            return web.json_response({"error": "bot asleep"}, status=503)
+        try:
+            path, written = await _spool(request, _max_send_bytes(), "render-send-")
+        except ValueError:
+            return web.json_response({"error": "too large", "most": _max_send_bytes()}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        meta = {}
+        raw = request.headers.get("X-Render-Meta")
+        if raw:
+            try:
+                meta = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                meta = {}
+        caption = str(meta.get("caption", ""))[:1024]
+        try:
+            sent = await _bot.send_video(
+                owner.telegram_id,
+                types.FSInputFile(path, filename=str(meta.get("name") or "render.mp4")),
+                caption=caption or None,
+                supports_streaming=True,
+                width=meta.get("width") or None,
+                height=meta.get("height") or None,
+                duration=meta.get("duration") or None,
+            )
+        except Exception as exc:
+            logger.warning("sending a video to %s failed: %s", owner.telegram_id, exc)
+            return web.json_response({"error": str(exc)}, status=502)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        logger.info("a video of %d bytes went to %s", written, owner.telegram_id)
+        return web.json_response({"ok": True, "message_id": sent.message_id})
 
     return [
         web.post("/render/join", join),
@@ -293,6 +409,9 @@ def make_routes(queue: Optional[RenderQueue] = None,
         web.post("/render/job/{job_id}/heartbeat", heartbeat),
         web.post("/render/job/{job_id}/result", result),
         web.post("/render/job/{job_id}/give-back", give_back),
+        web.get("/render/me", me),
+        web.get("/render/me/avatar", me_avatar),
+        web.post("/render/send", send),
     ]
 
 def install(app: web.Application, queue: Optional[RenderQueue] = None) -> bool:

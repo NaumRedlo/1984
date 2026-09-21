@@ -35,6 +35,7 @@ class Pairing(NamedTuple):
 class Collected(NamedTuple):
     status: str
     token: Optional[str] = None
+    who: str = ""
 
 _pending: dict[str, Pairing] = {}
 _starts: dict[str, list[float]] = {}
@@ -101,7 +102,7 @@ async def collect(code: str, address: str) -> Collected:
     del _pending[code]
     invite = invites.Invite(found.linked_to, found.linked_name, found.expires_at)
     token = await invites.issue(invite, found.machine.name)
-    return Collected(LINKED, token)
+    return Collected(LINKED, token, found.linked_name)
 
 def pending() -> int:
     _sweep()

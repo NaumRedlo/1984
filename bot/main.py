@@ -165,7 +165,10 @@ class App:
         await self.oauth_server.start()
         oauth_set_bot(self.bot)
 
+        from services.render_farm import http as farm_http
         from services.render_farm import pairing as farm_pairing
+
+        farm_http.set_bot(self.bot)
 
         try:
             me = await self.bot.get_me()

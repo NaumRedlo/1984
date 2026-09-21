@@ -21,10 +21,16 @@ class Invite(NamedTuple):
     name: str
     expires_at: float
 
+class Owner(NamedTuple):
+
+    telegram_id: int
+    name: str
+
 _codes: dict[str, Invite] = {}
 _tries: list[float] = []
 
 _good: set[str] = set()
+_owners: dict[str, Owner] = {}
 
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -65,14 +71,20 @@ def _allowed_another_try(*, now: Optional[float] = None) -> bool:
     _tries.append(now)
     return True
 
-def remember(token: str) -> None:
+def remember(token: str, owner: Optional[Owner] = None) -> None:
     _good.add(digest(token))
+    if owner is not None:
+        _owners[digest(token)] = owner
 
 def forget(token_digest: str) -> None:
     _good.discard(token_digest)
+    _owners.pop(token_digest, None)
 
 def known(token: str) -> bool:
     return digest(token) in _good
+
+def owner(token: str) -> Optional[Owner]:
+    return _owners.get(digest(token))
 
 def loaded() -> int:
     return len(_good)
@@ -86,12 +98,17 @@ async def load() -> int:
 
         async with AsyncSessionFactory() as session:
             rows = await session.execute(
-                select(RenderWorkerToken.digest).where(
+                select(RenderWorkerToken.digest, RenderWorkerToken.issued_to,
+                       RenderWorkerToken.issued_name).where(
                     RenderWorkerToken.revoked_at.is_(None)
                 )
             )
             _good.clear()
-            _good.update(row[0] for row in rows.all())
+            _owners.clear()
+            for row in rows.all():
+                _good.add(row[0])
+                if row[1] is not None:
+                    _owners[row[0]] = Owner(int(row[1]), row[2] or "")
     except Exception as exc:
         logger.warning("could not read the enrolled machines: %s", exc)
         return 0
@@ -111,6 +128,6 @@ async def issue(invite: Invite, worker: str = "") -> str:
             worker=worker or None,
         ))
         await session.commit()
-    remember(token)
+    remember(token, Owner(invite.telegram_id, invite.name or ""))
     logger.info("machine %r enrolled for %s", worker or "?", invite.telegram_id)
     return token

@@ -1,3 +1,5 @@
+import types
+
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -143,3 +145,60 @@ async def test_a_heartbeat_for_a_lost_job_tells_the_worker_to_stop(farm):
     queue.withdraw(job.id)
     reply = await client.post(f"/render/job/{job.id}/heartbeat", headers=MINE, json={})
     assert reply.status == 409 and (await reply.json())["yours"] is False
+
+class _Sent:
+    def __init__(self):
+        self.calls = []
+
+    async def send_video(self, chat_id, video, **kwargs):
+        with open(video.path, "rb") as handle:
+            body = handle.read()
+        self.calls.append((chat_id, body, kwargs))
+        return types.SimpleNamespace(message_id=42)
+
+    async def get_chat(self, chat_id):
+        return types.SimpleNamespace(username="naumredlo", first_name="Naum", last_name="Redlo", photo=None)
+
+@pytest_asyncio.fixture
+async def linked(monkeypatch, farm):
+    from services.render_farm import invites
+
+    client, queue, tmp_path = farm
+    token = "a-personal-token-of-sixty-four-characters-more-or-less-long-x"
+    invites.remember(token, invites.Owner(7, "Naum"))
+    bot = _Sent()
+    http.set_bot(bot)
+    yield client, token, bot
+    http.set_bot(None)
+    invites.forget(invites.digest(token))
+
+async def test_a_machine_can_ask_who_it_belongs_to(linked):
+    client, token, _ = linked
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
+    got = await (await client.get("/render/me", headers=mine)).json()
+    assert got["telegram_id"] == 7
+    assert got["username"] == "naumredlo"
+    assert got["name"] == "Naum Redlo"
+
+async def test_the_shared_secret_belongs_to_no_one(farm):
+    client, _, _ = farm
+    assert (await client.get("/render/me", headers=MINE)).status == 404
+
+async def test_a_video_goes_to_the_person_who_linked_the_machine(linked):
+    client, token, bot = linked
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac",
+            "X-Render-Meta": '{"caption": "NaumRedlo — Daisuke", "name": "d.mp4", "width": 1920, "height": 1080, "duration": 20}'}
+    reply = await client.post("/render/send", headers=mine, data=b"mp4-bytes")
+    assert reply.status == 200
+    assert (await reply.json())["message_id"] == 42
+    chat_id, body, kwargs = bot.calls[0]
+    assert chat_id == 7 and body == b"mp4-bytes"
+    assert kwargs["caption"] == "NaumRedlo — Daisuke" and kwargs["width"] == 1920
+
+async def test_a_video_too_big_for_telegram_is_refused_before_sending(linked, monkeypatch):
+    client, token, bot = linked
+    monkeypatch.setattr(http, "_max_send_bytes", lambda: 4)
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
+    reply = await client.post("/render/send", headers=mine, data=b"mp4-bytes")
+    assert reply.status == 413
+    assert bot.calls == []
