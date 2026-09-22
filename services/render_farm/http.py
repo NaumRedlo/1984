@@ -360,7 +360,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
         owner = invites.owner(_token(request))
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        rows = [{"id": owner.telegram_id, "title": owner.name or "", "private": True}]
+        rows = [{"id": owner.telegram_id, "title": owner.name or "", "private": True, "photo": True}]
         seen = {owner.telegram_id}
         try:
             from sqlalchemy import select
@@ -381,16 +381,18 @@ def make_routes(queue: Optional[RenderQueue] = None,
                 continue
             seen.add(chat_id)
             title = ""
+            photo = False
             if _bot is not None:
                 try:
                     chat = await _bot.get_chat(chat_id)
                     title = chat.title or chat.full_name or ""
+                    photo = chat.photo is not None
                     if not await _member(chat_id, owner.telegram_id):
                         continue
                 except Exception as exc:
                     logger.info("chat %s is not reachable: %s", chat_id, exc)
                     continue
-            rows.append({"id": chat_id, "title": title, "private": chat_id > 0})
+            rows.append({"id": chat_id, "title": title, "private": chat_id > 0, "photo": photo})
         return web.json_response(rows)
 
     async def _member(chat_id: int, telegram_id: int) -> bool:
@@ -401,6 +403,31 @@ def make_routes(queue: Optional[RenderQueue] = None,
         except Exception:
             return False
         return getattr(member, "status", "left") not in {"left", "kicked"}
+
+    async def chat_avatar(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None or _bot is None:
+            return web.json_response({"error": "no one"}, status=404)
+        try:
+            chat_id = int(request.match_info["chat_id"])
+        except (TypeError, ValueError):
+            return web.json_response({"error": "no chat"}, status=400)
+        if chat_id != owner.telegram_id and not await _member(chat_id, owner.telegram_id):
+            return web.json_response({"error": "not your chat"}, status=403)
+        try:
+            chat = await _bot.get_chat(chat_id)
+            if chat.photo is None:
+                return web.json_response({"error": "no photo"}, status=404)
+            file = await _bot.get_file(chat.photo.small_file_id)
+            buffer = await _bot.download_file(file.file_path)
+            data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
+        except Exception as exc:
+            logger.info("no photo for chat %s: %s", chat_id, exc)
+            return web.json_response({"error": "no photo"}, status=404)
+        return web.Response(body=data, content_type="image/jpeg")
 
     async def send(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -466,6 +493,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
         web.get("/render/me", me),
         web.get("/render/me/avatar", me_avatar),
         web.get("/render/me/chats", chats),
+        web.get("/render/chat/{chat_id}/avatar", chat_avatar),
         web.post("/render/send", send),
     ]
 

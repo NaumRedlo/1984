@@ -213,7 +213,7 @@ async def test_the_chats_list_starts_with_the_private_one(linked, monkeypatch):
     client, token, bot = linked
     mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     rows = await (await client.get("/render/me/chats", headers=mine)).json()
-    assert rows[0] == {"id": 7, "title": "Naum", "private": True}
+    assert rows[0] == {"id": 7, "title": "Naum", "private": True, "photo": True}
 
 async def test_a_stranger_has_no_chats(farm):
     client, _, _ = farm
@@ -233,3 +233,9 @@ async def test_a_chat_the_person_left_is_refused(linked, monkeypatch):
     mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac", "X-Render-Meta": '{"chat": -200}'}
     assert (await client.post("/render/send", headers=mine, data=b"mp4")).status == 403
     assert bot.calls == []
+
+async def test_a_chat_photo_is_refused_for_a_chat_the_person_left(linked, monkeypatch):
+    client, token, _ = linked
+    monkeypatch.setattr(_Sent, "get_chat_member", staticmethod(_member_left), raising=False)
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
+    assert (await client.get("/render/chat/-300/avatar", headers=mine)).status == 403
