@@ -353,6 +353,55 @@ def make_routes(queue: Optional[RenderQueue] = None,
             return web.json_response({"error": "no photo"}, status=404)
         return web.Response(body=data, content_type="image/jpeg")
 
+    async def chats(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        rows = [{"id": owner.telegram_id, "title": owner.name or "", "private": True}]
+        seen = {owner.telegram_id}
+        try:
+            from sqlalchemy import select
+
+            from db.database import AsyncSessionFactory
+            from db.models import User
+
+            async with AsyncSessionFactory() as session:
+                found = await session.execute(
+                    select(User.chat_id).where(User.telegram_id == owner.telegram_id).distinct()
+                )
+                where = [row[0] for row in found.all()]
+        except Exception as exc:
+            logger.warning("cannot read the chats of %s: %s", owner.telegram_id, exc)
+            where = []
+        for chat_id in where:
+            if chat_id in seen:
+                continue
+            seen.add(chat_id)
+            title = ""
+            if _bot is not None:
+                try:
+                    chat = await _bot.get_chat(chat_id)
+                    title = chat.title or chat.full_name or ""
+                    if not await _member(chat_id, owner.telegram_id):
+                        continue
+                except Exception as exc:
+                    logger.info("chat %s is not reachable: %s", chat_id, exc)
+                    continue
+            rows.append({"id": chat_id, "title": title, "private": chat_id > 0})
+        return web.json_response(rows)
+
+    async def _member(chat_id: int, telegram_id: int) -> bool:
+        if _bot is None:
+            return False
+        try:
+            member = await _bot.get_chat_member(chat_id, telegram_id)
+        except Exception:
+            return False
+        return getattr(member, "status", "left") not in {"left", "kicked"}
+
     async def send(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -411,6 +460,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
         web.post("/render/job/{job_id}/give-back", give_back),
         web.get("/render/me", me),
         web.get("/render/me/avatar", me_avatar),
+        web.get("/render/me/chats", chats),
         web.post("/render/send", send),
     ]
 

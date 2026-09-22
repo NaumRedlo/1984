@@ -202,3 +202,13 @@ async def test_a_video_too_big_for_telegram_is_refused_before_sending(linked, mo
     reply = await client.post("/render/send", headers=mine, data=b"mp4-bytes")
     assert reply.status == 413
     assert bot.calls == []
+
+async def test_the_chats_list_starts_with_the_private_one(linked, monkeypatch):
+    client, token, bot = linked
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
+    rows = await (await client.get("/render/me/chats", headers=mine)).json()
+    assert rows[0] == {"id": 7, "title": "Naum", "private": True}
+
+async def test_a_stranger_has_no_chats(farm):
+    client, _, _ = farm
+    assert (await client.get("/render/me/chats", headers=MINE)).status == 404
