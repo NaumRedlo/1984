@@ -425,9 +425,14 @@ def make_routes(queue: Optional[RenderQueue] = None,
             except (json.JSONDecodeError, ValueError):
                 meta = {}
         caption = str(meta.get("caption", ""))[:1024]
+        where = meta.get("chat")
+        where = int(where) if isinstance(where, (int, str)) and str(where).lstrip("-").isdigit() else owner.telegram_id
+        if where != owner.telegram_id and not await _member(where, owner.telegram_id):
+            os.unlink(path)
+            return web.json_response({"error": "not your chat"}, status=403)
         try:
             sent = await _bot.send_video(
-                owner.telegram_id,
+                where,
                 types.FSInputFile(path, filename=str(meta.get("name") or "render.mp4")),
                 caption=caption or None,
                 supports_streaming=True,
@@ -436,14 +441,14 @@ def make_routes(queue: Optional[RenderQueue] = None,
                 duration=meta.get("duration") or None,
             )
         except Exception as exc:
-            logger.warning("sending a video to %s failed: %s", owner.telegram_id, exc)
+            logger.warning("sending a video to %s failed: %s", where, exc)
             return web.json_response({"error": str(exc)}, status=502)
         finally:
             try:
                 os.unlink(path)
             except OSError:
                 pass
-        logger.info("a video of %d bytes went to %s", written, owner.telegram_id)
+        logger.info("a video of %d bytes went to %s", written, where)
         return web.json_response({"ok": True, "message_id": sent.message_id})
 
     return [

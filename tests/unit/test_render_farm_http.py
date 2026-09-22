@@ -146,6 +146,12 @@ async def test_a_heartbeat_for_a_lost_job_tells_the_worker_to_stop(farm):
     reply = await client.post(f"/render/job/{job.id}/heartbeat", headers=MINE, json={})
     assert reply.status == 409 and (await reply.json())["yours"] is False
 
+async def _member_ok(chat_id, telegram_id):
+    return types.SimpleNamespace(status="member")
+
+async def _member_left(chat_id, telegram_id):
+    return types.SimpleNamespace(status="left")
+
 class _Sent:
     def __init__(self):
         self.calls = []
@@ -212,3 +218,18 @@ async def test_the_chats_list_starts_with_the_private_one(linked, monkeypatch):
 async def test_a_stranger_has_no_chats(farm):
     client, _, _ = farm
     assert (await client.get("/render/me/chats", headers=MINE)).status == 404
+
+async def test_a_video_can_go_to_a_chat_the_person_is_in(linked, monkeypatch):
+    client, token, bot = linked
+    monkeypatch.setattr(bot, "get_chat_member", _member_ok, raising=False)
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac", "X-Render-Meta": '{"chat": -100}'}
+    reply = await client.post("/render/send", headers=mine, data=b"mp4")
+    assert reply.status == 200
+    assert bot.calls[0][0] == -100
+
+async def test_a_chat_the_person_left_is_refused(linked, monkeypatch):
+    client, token, bot = linked
+    monkeypatch.setattr(bot, "get_chat_member", _member_left, raising=False)
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac", "X-Render-Meta": '{"chat": -200}'}
+    assert (await client.post("/render/send", headers=mine, data=b"mp4")).status == 403
+    assert bot.calls == []
