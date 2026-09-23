@@ -169,6 +169,7 @@ class App:
         from services.render_farm import pairing as farm_pairing
 
         farm_http.set_bot(self.bot)
+        farm_http.set_osu(self.osu_api_client)
 
         try:
             me = await self.bot.get_me()

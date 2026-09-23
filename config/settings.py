@@ -44,7 +44,7 @@ MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "0").strip().lower() not in (
 )
 
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.ignorelist.com/oauth/callback")
-OSU_OAUTH_SCOPES = "public identify"
+OSU_OAUTH_SCOPES = "public identify friends.read"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 

@@ -10,7 +10,7 @@ from aiohttp import web
 from config.settings import RENDER_WORKER_TOKEN
 from dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
-from services.render_farm import invites, pairing
+from services.render_farm import community as gathered, invites, pairing
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 
@@ -20,10 +20,15 @@ MAX_RESULT_BYTES = 2 * 1024 * 1024 * 1024
 _CHUNK = 1 << 20
 
 _bot: Optional[Bot] = None
+_osu = None
 
 def set_bot(bot: Bot) -> None:
     global _bot
     _bot = bot
+
+def set_osu(client) -> None:
+    global _osu
+    _osu = client
 
 def _token(request: web.Request) -> str:
     header = request.headers.get("Authorization", "")
@@ -63,6 +68,61 @@ def _authorised(request: web.Request) -> bool:
     return invites.known(offered)
 
 _release_cache: Optional[str] = None
+
+CARD_KEEP = 300.0
+_card_cache: dict[tuple[int, Optional[int]], tuple[float, dict]] = {}
+
+def _plain(value):
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+async def _card_of(user, session, handle: Optional[str], viewer: int) -> dict:
+    from bot.handlers.profile.handlers import _build_page_data
+
+    data = await _build_page_data(user, _osu, session, tg_handle=handle, viewer_tg_id=viewer)
+    data["play_seconds"] = int(getattr(user, "play_time", 0) or 0)
+    data["title_code"] = getattr(user, "active_title_code", None)
+    return _plain(data)
+
+FRIENDS_URL = "https://osu.ppy.sh/api/v2/friends"
+FRIENDS_KEEP = 90.0
+_friends_cache: dict[int, tuple[float, list]] = {}
+
+async def _scopes(telegram_id: int) -> Optional[str]:
+    from sqlalchemy import select
+
+    from db.database import AsyncSessionFactory
+    from db.models.oauth_token import OAuthToken
+
+    async with AsyncSessionFactory() as session:
+        row = (await session.execute(
+            select(OAuthToken.scopes).where(OAuthToken.telegram_id == telegram_id)
+        )).first()
+    if row is None:
+        return None
+    return row[0] or ""
+
+async def _osu_friends(token: str) -> Optional[list]:
+    import aiohttp
+
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "x-api-version": "20220705"}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as client:
+            async with client.get(FRIENDS_URL, headers=headers) as reply:
+                if reply.status != 200:
+                    logger.info("osu! answered %s for a friends list", reply.status)
+                    return None
+                return await reply.json()
+    except Exception as exc:
+        logger.warning("cannot ask osu! for friends: %s", exc)
+        return None
 
 def _release() -> str:
     global _release_cache
@@ -429,6 +489,122 @@ def make_routes(queue: Optional[RenderQueue] = None,
             return web.json_response({"error": "no photo"}, status=404)
         return web.Response(body=data, content_type="image/jpeg")
 
+    async def _groups_of(telegram_id: int) -> list[int]:
+        from sqlalchemy import select
+
+        from db.database import AsyncSessionFactory
+        from db.models import User
+
+        async with AsyncSessionFactory() as session:
+            found = await session.execute(
+                select(User.chat_id).where(User.telegram_id == telegram_id, User.chat_id < 0).distinct()
+            )
+            return [row[0] for row in found.all()]
+
+    async def community(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = request.query.get("chat", "")
+        chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
+        if chat_id is None or chat_id > 0:
+            for group in await _groups_of(owner.telegram_id):
+                if await _member(group, owner.telegram_id):
+                    chat_id = group
+                    break
+            else:
+                chat_id = None
+        elif not await _member(chat_id, owner.telegram_id):
+            return web.json_response({"error": "not your chat"}, status=403)
+
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await gathered.gather(session, chat_id, owner.telegram_id) if chat_id is not None else {
+                "chat": None, "week": 0, "people": [], "live": [], "happened": [], "titles": gathered.titles_catalogue(), "at": None,
+            }
+            body["me"] = await gathered.own(session, owner.telegram_id, chat_id)
+        body["group"] = ""
+        body["photo"] = False
+        if chat_id is not None and _bot is not None:
+            try:
+                chat = await _bot.get_chat(chat_id)
+                body["group"] = chat.title or chat.full_name or ""
+                body["photo"] = chat.photo is not None
+            except Exception as exc:
+                logger.info("chat %s is not reachable: %s", chat_id, exc)
+        return web.json_response(body)
+
+    async def card(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        if _osu is None:
+            return web.json_response({"error": "osu! is not reachable"}, status=503)
+        said = request.query.get("chat", "")
+        chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
+        import time
+
+        key = (owner.telegram_id, chat_id)
+        kept = _card_cache.get(key)
+        if kept and time.monotonic() - kept[0] < CARD_KEEP:
+            return web.json_response(kept[1])
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            user = await gathered.chosen(session, owner.telegram_id, chat_id)
+            if user is None:
+                return web.json_response({"error": "not registered"}, status=404)
+            handle = None
+            if _bot is not None:
+                try:
+                    chat = await _bot.get_chat(owner.telegram_id)
+                    handle = f"@{chat.username}" if chat.username else None
+                except Exception as exc:
+                    logger.info("cannot learn the handle of %s: %s", owner.telegram_id, exc)
+            try:
+                body = await _card_of(user, session, handle, owner.telegram_id)
+            except Exception as exc:
+                logger.warning("the card of %s could not be gathered: %s", owner.telegram_id, exc)
+                return web.json_response({"error": "no card"}, status=502)
+        _card_cache[key] = (time.monotonic(), body)
+        return web.json_response(body)
+
+    async def friends(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        import time
+
+        kept = _friends_cache.get(owner.telegram_id)
+        if kept and time.monotonic() - kept[0] < FRIENDS_KEEP:
+            return web.json_response({"friends": kept[1]})
+        scopes = await _scopes(owner.telegram_id)
+        if scopes is None:
+            return web.json_response({"need": "link"}, status=409)
+        if "friends.read" not in scopes.split():
+            return web.json_response({"need": "friends"}, status=409)
+        from services.oauth.token_manager import get_valid_token
+
+        token = await get_valid_token(owner.telegram_id)
+        if not token:
+            return web.json_response({"need": "link"}, status=409)
+        raw = await _osu_friends(token)
+        if raw is None:
+            return web.json_response({"error": "osu! did not answer"}, status=502)
+        listed = gathered.friends_from(raw)
+        _friends_cache[owner.telegram_id] = (time.monotonic(), listed)
+        return web.json_response({"friends": listed})
+
     async def send(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -494,6 +670,9 @@ def make_routes(queue: Optional[RenderQueue] = None,
         web.get("/render/me/avatar", me_avatar),
         web.get("/render/me/chats", chats),
         web.get("/render/chat/{chat_id}/avatar", chat_avatar),
+        web.get("/render/community", community),
+        web.get("/render/me/friends", friends),
+        web.get("/render/me/card", card),
         web.post("/render/send", send),
     ]
 
