@@ -128,11 +128,20 @@ async def test_the_titles_come_with_the_catalogue_in_both_languages(factory):
 async def test_the_person_s_own_profile_has_recent_plays(factory):
     await _seed(factory)
     async with factory() as s:
-        me = await community.own(s, 7, CHAT)
-        nobody = await community.own(s, 99, CHAT)
+        me = await community.own(s, 7, CHAT, now=NOW)
+        nobody = await community.own(s, 99, CHAT, now=NOW)
     assert me["name"] == "NaumRedlo" and me["you"] is True
     assert [play["map"]["title"] for play in me["recent"]] == ["Astral Quantization"]
     assert nobody is None
+
+async def test_the_dossier_has_its_weeks_its_days_and_its_titles_dates(factory):
+    await _seed(factory)
+    async with factory() as s:
+        me = await community.own(s, 7, CHAT, now=NOW)
+    assert me["history"][0]["pp"] == 3000.0 and me["history"][0]["week"] == current_period_key(NOW)
+    assert me["activity"] == [{"day": (NOW - timedelta(minutes=9)).date().isoformat(), "n": 1}]
+    assert set(me["title_dates"]) == {"wysi"}
+    assert me["top"][0]["counts"] == [None, None, None, None]
 
 def test_friends_are_read_in_either_shape_online_first():
     users = [

@@ -19,6 +19,7 @@ TOP = 5
 RECENT = 12
 LIVE = 40
 HAPPENED = timedelta(days=14)
+ACTIVITY_DAYS = 91
 BASELINE_GRACE = timedelta(minutes=10)
 
 def stamp(moment: Optional[datetime]) -> Optional[int]:
@@ -63,6 +64,7 @@ def _play(row, *, when: Optional[datetime] = None) -> dict[str, Any]:
         "combo": row.max_combo,
         "max_combo": row.map_max_combo,
         "full_combo": bool(row.is_fc),
+        "counts": [getattr(row, "count_300", None), row.count_100, row.count_50, row.count_miss],
         "at": stamp(when if when is not None else row.created_at),
     }
 
@@ -230,16 +232,17 @@ async def chosen(session, viewer: int, chat_id: Optional[int] = None):
     picked = next((u for u in rows if u.chat_id == chat_id), None) if chat_id is not None else None
     return picked or max(rows, key=lambda u: naive(u.last_api_update or u.updated_at) or datetime.min)
 
-async def own(session, viewer: int, chat_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     mine = await chosen(session, viewer, chat_id)
     if mine is None:
         return None
-    titles = [
-        row.title_code for row in (await session.execute(
+    held = [
+        row for row in (await session.execute(
             select(UserTitleProgress).where(UserTitleProgress.user_id == mine.id, UserTitleProgress.unlocked.is_(True))
         )).scalars().all()
         if row.title_code in TITLE_REGISTRY
     ]
+    titles = [row.title_code for row in held]
     top = (await session.execute(
         select(UserBestScore).where(UserBestScore.user_id == mine.id).order_by(UserBestScore.pp.desc()).limit(TOP)
     )).scalars().all()
@@ -260,6 +263,30 @@ async def own(session, viewer: int, chat_id: Optional[int] = None) -> Optional[d
     body["recent"] = [{"passed": row.passed is not False, **_play(row, when=row.played_at)} for row in recent]
     body["duels"] = [int(mine.duel_wins or 0), int(mine.duel_losses or 0)]
     body["points"] = int(mine.hps_points or 0)
+    body["title_dates"] = {row.title_code: stamp(row.unlocked_at) for row in held if row.unlocked_at}
+    weeks = (await session.execute(
+        select(LeaderboardSnapshot)
+        .where(LeaderboardSnapshot.user_id == mine.id)
+        .order_by(LeaderboardSnapshot.captured_at)
+    )).scalars().all()
+    body["history"] = [{
+        "week": s.period_key,
+        "at": stamp(s.captured_at),
+        "pp": float(s.player_pp or 0.0),
+        "accuracy": float(s.accuracy or 0.0),
+        "plays": int(s.play_count or 0),
+        "hours": int((s.play_time or 0) // 3600),
+    } for s in weeks[-26:]]
+    since = (now or utcnow()) - timedelta(days=ACTIVITY_DAYS)
+    played = (await session.execute(
+        select(UserMapAttempt.played_at)
+        .where(UserMapAttempt.user_id == mine.id, UserMapAttempt.played_at.isnot(None), UserMapAttempt.played_at >= since)
+    )).all()
+    days: dict[str, int] = {}
+    for (moment,) in played:
+        day = naive(moment).date().isoformat()
+        days[day] = days.get(day, 0) + 1
+    body["activity"] = [{"day": day, "n": n} for day, n in sorted(days.items())]
     return body
 
 def friends_from(raw: Any) -> list[dict[str, Any]]:
