@@ -20,7 +20,7 @@ jobs:
         working-directory: assay-server
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Corpus and service tests
@@ -41,7 +41,7 @@ jobs:
         working-directory: assay-server
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Compare with osu! as it is today
