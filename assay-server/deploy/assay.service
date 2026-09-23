@@ -5,6 +5,7 @@ After=network-online.target
 [Service]
 Environment=ASSAY_URLS=http://127.0.0.1:5077
 Environment=ASSAY_MAPS=/var/lib/assay/maps
+Environment=Logging__LogLevel__Microsoft.AspNetCore=Warning
 EnvironmentFile=-/etc/assay.env
 ExecStart=/opt/assay/Assay
 Restart=on-failure

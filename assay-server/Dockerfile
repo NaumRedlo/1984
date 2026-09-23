@@ -10,7 +10,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /out/ ./
 ENV ASSAY_URLS=http://0.0.0.0:5077 \
-    ASSAY_MAPS=/var/lib/assay/maps
+    ASSAY_MAPS=/var/lib/assay/maps \
+    Logging__LogLevel__Microsoft.AspNetCore=Warning
 RUN mkdir -p /var/lib/assay/maps && chown app /var/lib/assay/maps
 VOLUME /var/lib/assay/maps
 EXPOSE 5077
