@@ -4,7 +4,7 @@ from typing import Dict, Optional
 import aiohttp
 
 from utils.logger import get_logger
-from utils.osu import assay
+from utils.osu import assay, assay_service
 from utils.osu.mod_utils import MOD_BITS
 
 try:
@@ -165,7 +165,34 @@ async def calculate_pp(
     legacy_total_score: Optional[int] = None,
     slider_ends: Optional[int] = None,
     large_tick_misses: int = 0,
+    statistics: Optional[Dict] = None,
+    mods: Optional[list] = None,
+    checksum: Optional[str] = None,
+    is_legacy: Optional[bool] = None,
 ) -> Optional[Dict]:
+    served = await assay_service.score(
+        beatmap_id,
+        mods=mods if mods is not None else mods_str,
+        statistics=statistics or {
+            "great": count_300 or 0, "ok": count_100 or 0,
+            "meh": count_50 or 0, "miss": misses or 0,
+        },
+        checksum=checksum,
+        accuracy=accuracy / 100 if accuracy is not None else None,
+        max_combo=combo or None,
+        legacy_total_score=legacy_total_score,
+        is_legacy=is_legacy,
+    )
+    if served and served.get("pp") is not None:
+        return {
+            "pp_current": round(served["pp"], 2),
+            "pp_if_fc": round(served.get("pp_if_fc") or served["pp"], 2),
+            "pp_if_ss": round(served.get("pp_if_ss") or served["pp"], 2),
+            "star_rating": round(served["star_rating"], 2),
+            "max_combo": int(served["map"]["max_combo"]),
+            "source": "assay",
+        }
+
     counted = any(value is not None for value in (count_300, count_100, count_50))
     answer = await assay.for_score(
         beatmap_id, _download_osu_file, mods_str,
@@ -187,6 +214,7 @@ async def calculate_pp(
             "pp_if_ss": round(answer["pp_if_perfect"], 2),
             "star_rating": round(answer["star_rating"], 2),
             "max_combo": int(answer["max_combo"]),
+            "source": "engine",
         }
 
     logger.warning(
@@ -215,6 +243,20 @@ async def calculate_pp(
         logger.warning(f"PP calculation failed for beatmap {beatmap_id}: {e}")
         return None
 
+DRIFT_WARNING = 0.01
+
+def note_drift(score_id, beatmap_id: int, official_pp: float, computed: Dict) -> Optional[float]:
+    ours = computed.get("pp_current")
+    if not official_pp or not ours:
+        return None
+    drift = (ours - official_pp) / official_pp
+    if abs(drift) > DRIFT_WARNING:
+        logger.warning(
+            "pp drift: score %s on beatmap %s — osu! says %.2f, %s says %.2f (%+.1f%%)",
+            score_id, beatmap_id, official_pp, computed.get("source", "rosu-pp-py"), ours, drift * 100,
+        )
+    return drift
+
 WHATIF_BRACKETS = (95.0, 98.0, 99.0, 100.0)
 
 def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
@@ -239,7 +281,34 @@ def _calc_whatif_sync(osu_data: bytes, mods_int: int, accuracy: float) -> Dict:
         "brackets": brackets,
     }
 
-async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = "") -> Optional[Dict]:
+async def _whatif_from_service(beatmap_id: int, accuracy: float, mods_str: str,
+                               checksum: Optional[str]) -> Optional[Dict]:
+    wanted = [*WHATIF_BRACKETS, accuracy]
+    served = await assay_service.whatif(beatmap_id, wanted, mods=mods_str, checksum=checksum)
+    points = (served or {}).get("points") or []
+    if len(points) != len(wanted):
+        return None
+    asked = points[-1]
+    hits = asked.get("statistics") or {}
+    whole = int(served["map"]["max_combo"])
+    return {
+        "pp": round(asked["pp"], 2),
+        "star_rating": round(served["map"]["star_rating"], 2),
+        "max_combo": whole,
+        "combo": whole,
+        "count_300": int(hits.get("great", 0)),
+        "count_100": int(hits.get("ok", 0)),
+        "count_50": int(hits.get("meh", 0)),
+        "count_miss": int(hits.get("miss", 0)),
+        "brackets": {pct: round(point["pp"], 2) for pct, point in zip(WHATIF_BRACKETS, points)},
+    }
+
+async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = "",
+                              checksum: Optional[str] = None) -> Optional[Dict]:
+    served = await _whatif_from_service(beatmap_id, accuracy, mods_str, checksum)
+    if served:
+        return served
+
     if rosu is None:
         logger.debug("rosu-pp-py not installed, skipping whatif PP calculation")
         return None

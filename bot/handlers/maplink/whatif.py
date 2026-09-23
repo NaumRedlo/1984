@@ -105,7 +105,7 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
     if not card_data:
         return None
 
-    whatif = await calculate_whatif_pp(card_data["beatmap_id"], accuracy, mods_str)
+    whatif = await calculate_whatif_pp(card_data["beatmap_id"], accuracy, mods_str, card_data.get("checksum"))
     if not whatif:
         return None
 

@@ -30,7 +30,7 @@ from services.image.utils import (
     cover_center_crop,
     rounded_rect_crop,
 )
-from utils.osu.pp_calculator import calculate_strains, calculate_pp
+from utils.osu.pp_calculator import calculate_strains, calculate_pp, note_drift
 from utils.osu import star_rating
 from utils.osu.mod_utils import apply_mods
 from utils.logger import get_logger
@@ -758,6 +758,10 @@ async def build_recent_card_data(
 
             slider_ends=stats.get("slider_tail_hit"),
             large_tick_misses=stats.get("large_tick_miss") or 0,
+            statistics=stats or None,
+            mods=raw_mods,
+            checksum=beatmap.get("checksum"),
+            is_legacy=bool(raw_score.get("legacy_score_id")),
         )
         if pp_result:
             pp_if_fc = pp_result["pp_if_fc"]
@@ -769,6 +773,7 @@ async def build_recent_card_data(
 
                 pp = pp_result["pp_current"]
             elif pp_result.get("pp_current"):
+                note_drift(raw_score.get("id"), beatmap_id, pp, pp_result)
 
                 anchor = pp / pp_result["pp_current"]
                 pp_if_fc = round(pp_if_fc * anchor, 2)

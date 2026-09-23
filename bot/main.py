@@ -119,6 +119,17 @@ class App:
 
         await farm_invites.load()
 
+        from utils.osu import assay_service
+
+        if assay_service.enabled():
+            served = await assay_service.health()
+            if served:
+                logger.info("pp: the assay service answers, on osu! %s", served.get("osu_version"))
+            else:
+                logger.warning("pp: the assay service at %s does not answer — the engine and rosu-pp-py stand in", assay_service.settings.ASSAY_URL)
+        else:
+            logger.info("pp: ASSAY_URL is unset — pp comes from the engine and rosu-pp-py")
+
         from utils.osu import assay as osu_assay
 
         trouble = await osu_assay.working()
@@ -194,6 +205,9 @@ class App:
             await self.bot.session.close()
 
         await close_shared_session()
+        from utils.osu import assay_service
+
+        await assay_service.close()
         await close_engine()
 
         logger.info("Shutdown completed.")

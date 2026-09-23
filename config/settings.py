@@ -9,6 +9,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE_DEFAUL
 TELEGRAM_BOT_API_URL = os.getenv("TELEGRAM_BOT_API_URL", "")
 OSU_CLIENT_ID = os.getenv("OSU_CLIENT_ID")
 OSU_CLIENT_SECRET = os.getenv("OSU_CLIENT_SECRET")
+ASSAY_URL = os.getenv("ASSAY_URL", "").rstrip("/")
+ASSAY_TOKEN = os.getenv("ASSAY_TOKEN", "")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 

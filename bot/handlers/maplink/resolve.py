@@ -19,6 +19,7 @@ def _card_from_beatmap(bm: dict) -> dict:
     bid = bm.get("id")
     return {
         "beatmap_id": bid,
+        "checksum": bm.get("checksum"),
         "beatmapset_id": set_id,
         "title": bset.get("title") or bm.get("title") or "???",
         "artist": bset.get("artist") or "",
@@ -42,6 +43,7 @@ def _card_from_set(bs: dict, diff: dict) -> dict:
     bid = diff.get("id")
     return {
         "beatmap_id": bid,
+        "checksum": diff.get("checksum"),
         "beatmapset_id": set_id,
         "title": bs.get("title") or "???",
         "artist": bs.get("artist") or "",
