@@ -1,13 +1,13 @@
 from aiogram import Router
 
 from bot.handlers.profile.settings_menu import (
-    common, shell, account, titles, render, effects, sound, skins, typed,
+    common, shell, account, titles,
 )
 
 router = Router(name="settings")
 
 router.callback_query.outer_middleware(common._owner_guard)
-for _module in (shell, account, titles, render, effects, sound, skins, typed):
+for _module in (shell, account, titles):
     router.include_router(_module.router)
 
 from bot.handlers.profile.settings_menu.common import (

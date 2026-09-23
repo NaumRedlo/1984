@@ -19,8 +19,6 @@ from db.database import get_db_session
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
 from services.render_farm import http as render_farm_http
-from services import site
-from services.miniapp import api as miniapp_api
 from utils.aio import spawn
 from utils.crypto import encrypt_token
 from utils.formatting.text import escape_html
@@ -235,9 +233,6 @@ class OAuthServer:
 
         render_farm_http.install(self.app)
 
-        site.install(self.app)
-
-        miniapp_api.install(self.app)
         self.runner: Optional[web.AppRunner] = None
 
     async def start(self):

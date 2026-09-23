@@ -8,15 +8,11 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
-from dossier import build as engine_build
-from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm import community as gathered, invites, pairing
-from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 
 logger = get_logger("services.render_farm.http")
 
-MAX_RESULT_BYTES = 2 * 1024 * 1024 * 1024
 _CHUNK = 1 << 20
 
 _bot: Optional[Bot] = None
@@ -66,8 +62,6 @@ def _authorised(request: web.Request) -> bool:
     if RENDER_WORKER_TOKEN and secrets.compare_digest(offered, RENDER_WORKER_TOKEN):
         return True
     return invites.known(offered)
-
-_release_cache: Optional[str] = None
 
 CARD_KEEP = 300.0
 _card_cache: dict[tuple[int, Optional[int]], tuple[float, dict]] = {}
@@ -124,18 +118,6 @@ async def _osu_friends(token: str) -> Optional[list]:
         logger.warning("cannot ask osu! for friends: %s", exc)
         return None
 
-def _release() -> str:
-    global _release_cache
-    if _release_cache is None:
-        try:
-            from scripts.engine import wanted_tag
-
-            _release_cache = wanted_tag()
-        except Exception as exc:
-            logger.warning("cannot say which release this bot is on: %s", exc)
-            _release_cache = ""
-    return _release_cache
-
 def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
 
@@ -168,11 +150,7 @@ def _dimension(value) -> Optional[int]:
         return None
     return int(value) if 0 < value < 1 << 31 else None
 
-def make_routes(queue: Optional[RenderQueue] = None,
-                roster: Optional[Roster] = None) -> list[web.RouteDef]:
-    q = queue if queue is not None else default_queue
-    who = roster if roster is not None else default_roster
-
+def make_routes() -> list[web.RouteDef]:
     async def guard(request: web.Request) -> Optional[web.Response]:
         if not _authorised(request):
             return web.json_response({"error": "unauthorised"}, status=401)
@@ -184,170 +162,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
         bad = await guard(request)
         if bad:
             return bad
-        ours = await engine_build.local()
-        theirs = request.query.get("engine")
-        who.hello(_worker(request), build=theirs or None)
-        allowed, why = engine_build.agree(ours, theirs)
-        return web.json_response({
-            "engine": ours,
-            "build": engine_build.build_of(ours),
-            "agree": allowed,
-            "reason": why,
-            "waiting": len(q.waiting()),
-
-            "release": _release(),
-        })
-
-    async def claim(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-
-        theirs = None
-        capacity = None
-        if request.can_read_body:
-            body = await _json_object(request)
-            theirs = body.get("engine")
-            capacity = body.get("capacity")
-            if not isinstance(theirs, str):
-                theirs = None
-            if not isinstance(capacity, dict):
-                capacity = None
-        who.hello(_worker(request), build=theirs, capacity=capacity)
-
-        if capacity is not None and not capacity.get("take", True):
-            return web.Response(status=204)
-
-        ours = await engine_build.local()
-        allowed, why = engine_build.agree(ours, theirs)
-        if not allowed:
-            logger.warning("refused %s: %s", _worker(request), why)
-
-            return web.json_response({"reason": why, "release": _release()}, status=409)
-
-        job = q.claim(_worker(request))
-        if job is None:
-
-            return web.Response(status=204)
-        return web.json_response({
-            "id": job.id,
-            "title": job.title,
-            "settings": job.settings,
-
-            "assets": sorted(job.assets),
-            "lease_seconds": max(0.0, job.lease_until - job.created),
-        })
-
-    async def replay(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        job = q.get(request.match_info["job_id"])
-        if job is None or job.worker != _worker(request):
-            return web.json_response({"error": "not yours"}, status=409)
-        if not os.path.isfile(job.replay_path):
-            return web.json_response({"error": "replay is gone"}, status=410)
-        return web.FileResponse(job.replay_path)
-
-    async def asset(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        job = q.get(request.match_info["job_id"])
-        if job is None or job.worker != _worker(request):
-            return web.json_response({"error": "not yours"}, status=409)
-        path = job.assets.get(request.match_info["name"])
-        if not path or not os.path.isfile(path):
-            return web.json_response({"error": "no such asset"}, status=404)
-        return web.FileResponse(path)
-
-    async def heartbeat(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        body = await _json_object(request)
-        who.hello(_worker(request))
-        progress = body.get("progress")
-        alive = q.heartbeat(request.match_info["job_id"], _worker(request),
-                            progress if isinstance(progress, dict) else None)
-
-        return web.json_response({"yours": alive}, status=200 if alive else 409)
-
-    async def result(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        job_id, worker = request.match_info["job_id"], _worker(request)
-        who.hello(worker)
-
-        if not q.heartbeat(job_id, worker):
-            return web.json_response({"error": "not yours"}, status=409)
-
-        handle, path = tempfile.mkstemp(prefix="render-result-", suffix=".mp4")
-        written = 0
-        try:
-            with os.fdopen(handle, "wb") as out:
-                async for chunk in request.content.iter_chunked(_CHUNK):
-                    written += len(chunk)
-                    if written > MAX_RESULT_BYTES:
-                        raise ValueError("result too large")
-                    out.write(chunk)
-        except (ValueError, OSError) as exc:
-            os.unlink(path)
-            logger.warning("result upload for %s failed: %s", job_id, exc)
-            return web.json_response({"error": str(exc)}, status=413)
-
-        meta = _meta(request)
-
-        if not q.finish(job_id, worker, {"path": path, "meta": meta}):
-            os.unlink(path)
-            return web.json_response({"error": "not yours"}, status=409)
-        who.delivered(worker)
-        return web.json_response({"ok": True})
-
-    async def give_back(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        body = await _json_object(request)
-        who.hello(_worker(request))
-        given = q.give_back(request.match_info["job_id"], _worker(request),
-                            str(body.get("reason") or "no reason given"))
-        if given:
-            who.handed_back(_worker(request))
-        return web.json_response({"ok": given}, status=200 if given else 409)
-
-    async def farm(request: web.Request) -> web.Response:
-        bad = await guard(request)
-        if bad:
-            return bad
-        busy = q.rendering()
-        return web.json_response({
-            "waiting": len(q.waiting()),
-            "workers": [{
-                "name": w.name,
-                "state": w.state(rendering=w.name in busy),
-                "build": engine_build.build_of(w.build),
-                "reason": w.reason,
-                "threads": w.threads,
-                "polite": w.polite,
-                "delivered": w.delivered,
-                "handed_back": w.handed_back,
-            } for w in who.here()],
-        })
-
-    async def join(request: web.Request) -> web.Response:
-        said = await _json_object(request)
-        if not said:
-            return web.json_response({"error": "bad request"}, status=400)
-
-        invite = invites.redeem(str(said.get("code", "")))
-        if invite is None:
-
-            return web.json_response({"error": "no such code"}, status=403)
-
-        token = await invites.issue(invite, str(said.get("name", ""))[:128])
-        return web.json_response({"token": token})
+        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": 0})
 
     async def pair(request: web.Request) -> web.Response:
         try:
@@ -664,17 +479,9 @@ def make_routes(queue: Optional[RenderQueue] = None,
         return web.json_response({"ok": True, "message_id": sent.message_id})
 
     return [
-        web.post("/render/join", join),
         web.post("/render/pair", pair),
         web.get("/render/pair/{code}", pair_status),
         web.get("/render/hello", hello),
-        web.get("/render/farm", farm),
-        web.post("/render/claim", claim),
-        web.get("/render/job/{job_id}/replay", replay),
-        web.get("/render/job/{job_id}/file/{name}", asset),
-        web.post("/render/job/{job_id}/heartbeat", heartbeat),
-        web.post("/render/job/{job_id}/result", result),
-        web.post("/render/job/{job_id}/give-back", give_back),
         web.get("/render/me", me),
         web.get("/render/me/avatar", me_avatar),
         web.get("/render/me/chats", chats),
@@ -685,10 +492,10 @@ def make_routes(queue: Optional[RenderQueue] = None,
         web.post("/render/send", send),
     ]
 
-def install(app: web.Application, queue: Optional[RenderQueue] = None) -> bool:
+def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:
         logger.info("no RENDER_WORKER_TOKEN: renders stay on this host")
         return False
-    app.add_routes(make_routes(queue))
+    app.add_routes(make_routes())
     logger.info("render worker endpoints ready")
     return True

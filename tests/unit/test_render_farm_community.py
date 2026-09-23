@@ -15,7 +15,6 @@ from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from services.leaderboard.periods import current_period_key
 from services.render_farm import community, http, invites
-from services.render_farm.queue import RenderQueue
 
 CHAT = -1001
 NOW = datetime(2026, 9, 23, 12, 0)
@@ -172,7 +171,7 @@ async def served(monkeypatch, factory):
     invites.remember(token, invites.Owner(7, "Naum"))
     http.set_bot(_Bot())
     app = web.Application()
-    app.add_routes(http.make_routes(RenderQueue()))
+    app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}

@@ -1,11 +1,8 @@
 import hashlib
-import time
 import types
 
 import pytest
 import pytest_asyncio
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from db.database import Base
@@ -13,55 +10,19 @@ from db.database import Base
 from db.models import RenderWorkerToken
 from services.render_farm import http as farm_http
 from services.render_farm import invites
-from services.render_farm.queue import RenderQueue
 
 @pytest.fixture(autouse=True)
 def fresh():
-    invites._codes.clear()
-    invites._tries.clear()
     invites._good.clear()
+    invites._owners.clear()
     yield
-    invites._codes.clear()
-    invites._tries.clear()
     invites._good.clear()
+    invites._owners.clear()
 
-def test_a_code_has_nothing_in_it_that_can_be_misread():
-    code = invites.offer(1)
-    assert len(code) == invites.CODE_LENGTH
-    assert set(code) <= set(invites.ALPHABET)
-    assert not set("OIL01U") & set(invites.ALPHABET)
-
-def test_it_is_shown_in_two_halves():
-    assert invites.pretty("ABCDEFGH") == "ABCD-EFGH"
-
-def test_the_dash_and_the_case_are_not_part_of_the_code():
-    code = invites.offer(1)
-    assert invites.redeem(invites.pretty(code).lower()) is not None
-
-def test_a_code_is_worth_one_machine():
-    code = invites.offer(7, "Naum")
-    assert invites.redeem(code).telegram_id == 7
-    assert invites.redeem(code) is None
-
-def test_a_code_that_sat_too_long_is_gone(monkeypatch):
-    code = invites.offer(7)
-
-    now = time.monotonic()
-    monkeypatch.setattr(invites.time, "monotonic",
-                        lambda: now + invites.GOOD_FOR + 1)
-    assert invites.redeem(code) is None
-
-def test_wrong_used_and_expired_all_answer_the_same_way():
-    code = invites.offer(7)
-    invites.redeem(code)
-    assert invites.redeem(code) is None
-    assert invites.redeem("22222222") is None
-
-def test_a_script_hammering_this_is_refused_rather_than_merely_futile():
-    good = invites.offer(7)
-    for _ in range(invites.MOST_TRIES):
-        invites.redeem("22222222")
-    assert invites.redeem(good) is None, "the real code went through the wall"
+def test_a_code_is_shown_in_two_halves_and_read_back_whatever_the_case():
+    assert invites.pretty("ABCD2345") == "ABCD-2345"
+    assert invites.tidy("abcd-2345") == "ABCD2345"
+    assert invites.tidy("O0I1-l") == ""
 
 def test_what_is_stored_is_not_the_token():
     token = "a" * 64
@@ -164,73 +125,3 @@ def test_anything_else_does_not(monkeypatch):
     invites.remember("mine")
     assert not farm_http._authorised(_asking("not-mine"))
     assert not farm_http._authorised(types.SimpleNamespace(headers={}))
-
-@pytest_asyncio.fixture
-async def farm(monkeypatch, database):
-    monkeypatch.setattr(farm_http, "RENDER_WORKER_TOKEN", "the-old-one")
-    app = web.Application()
-    app.add_routes(farm_http.make_routes(RenderQueue()))
-    served = TestClient(TestServer(app))
-    await served.start_server()
-    yield served
-    await served.close()
-
-async def test_a_code_becomes_a_working_token_over_http(farm, monkeypatch):
-    async def ours(*_args, **_kw):
-        return "dossier 0.1.0 (abc1234)"
-
-    monkeypatch.setattr(farm_http.engine_build, "local", ours)
-
-    code = invites.offer(7, "Naum")
-    reply = await farm.post("/render/join", json={"code": invites.pretty(code),
-                                                  "name": "drejk"})
-    assert reply.status == 200
-    token = (await reply.json())["token"]
-
-    said = await farm.get(
-        "/render/hello",
-        headers={"Authorization": f"Bearer {token}", "X-Render-Worker": "drejk"},
-    )
-    assert said.status == 200
-
-async def test_a_wrong_code_gets_nothing_and_says_little(farm):
-    reply = await farm.post("/render/join", json={"code": "22222222"})
-    assert reply.status == 403
-    assert "token" not in await reply.text()
-
-async def test_the_door_that_hands_out_tokens_needs_none_itself(farm):
-    code = invites.offer(7)
-    reply = await farm.post("/render/join", json={"code": code})
-    assert reply.status == 200
-
-async def test_nonsense_is_a_bad_request_rather_than_a_traceback(farm):
-    reply = await farm.post("/render/join", data=b"not json at all")
-    assert reply.status == 400
-
-async def test_the_real_client_swaps_a_code_for_a_key_and_then_gets_in(
-    farm, monkeypatch
-):
-    from dossier import console
-
-    async def ours(*_args, **_kw):
-        return "dossier 0.1.0 (abc1234)"
-
-    monkeypatch.setattr(farm_http.engine_build, "local", ours)
-    base = str(farm.make_url(""))
-
-    code = invites.pretty(invites.offer(7, "Naum"))
-    token, why = await console.redeem(base, code, "drejk")
-    assert token, why
-
-    said = await farm.get(
-        "/render/hello",
-        headers={"Authorization": f"Bearer {token}", "X-Render-Worker": "drejk"},
-    )
-    assert said.status == 200
-
-async def test_the_client_is_told_plainly_when_a_code_is_no_good(farm):
-    from dossier import console
-
-    token, why = await console.redeem(str(farm.make_url("")), "2222-2222", "drejk")
-    assert not token
-    assert "код не подошёл" in why, why

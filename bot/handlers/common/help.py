@@ -4,7 +4,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQu
 from bot.filters import TextTriggerFilter, TriggerArgs
 from utils.i18n import t
 from utils.language import get_language
-from utils.render_access import can_use_render
 from utils.logger import get_logger
 
 logger = get_logger("handlers.help")
@@ -13,8 +12,6 @@ router = Router(name="help")
 _SECTION_CODES = ("osu", "account")
 
 def _sections(user_id: int | None) -> tuple[str, ...]:
-    if user_id is not None and can_use_render(user_id):
-        return (*_SECTION_CODES, "dossier")
     return _SECTION_CODES
 
 def _home_kb(lang: str, codes: tuple[str, ...]) -> InlineKeyboardMarkup:

@@ -21,7 +21,6 @@ from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
 from bot.handlers.leaderboard import router as leaderboard_router
-from bot.handlers.dossier import router as dossier_router
 from bot.handlers.maplink import router as maplink_router
 from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
@@ -40,8 +39,6 @@ from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
 from db.migrations import run_all_migrations
 from config.settings import RENDER_WORKER_TOKEN
-from dossier import skins
-from services.dossier import shared
 import db.models
 
 logger = get_logger(__name__)
@@ -104,8 +101,6 @@ class App:
         self.dp.include_router(common_router)
         self.dp.include_router(leaderboard_router)
 
-        self.dp.include_router(dossier_router)
-
         self.dp.include_router(maplink_router)
 
         self.dp.include_router(scorelink_router)
@@ -134,20 +129,6 @@ class App:
             )
         else:
             logger.info("pp: the engine answers")
-
-        logger.info("Checking stored skins for readable samples...")
-        await asyncio.to_thread(skins.convert_stored)
-
-        if shared.enabled():
-            kept = shared.how_many()
-            logger.info(
-                "Shared replays: collecting into %s (%d held)",
-                shared.SHARED_REPLAY_DIR, kept,
-            )
-        else:
-            logger.info(
-                "Shared replays: not collecting — SHARED_REPLAY_DIR is unset"
-            )
 
         if RENDER_WORKER_TOKEN:
             import hashlib

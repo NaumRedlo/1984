@@ -90,40 +90,4 @@ CATALOG = {
                "<code>start</code> / <code>help</code> — приветствие / эта справка"),
     },
 
-    "help.sec.dossier.label": {"en": "Dossier", "ru": "Dossier"},
-    "help.sec.dossier.body": {
-        "en": ("<b>Dossier — replay rendering</b>\n\n"
-               "Send a <code>.osr</code> as a file. The replay is read and "
-               "judged, and then there is a choice:\n"
-               "🎬 <b>Render</b> — the play as a video\n"
-               "✂️ <b>Reel</b> — a short cut of it\n"
-               "🗺 <b>Map</b> — the beatmap card\n"
-               "🏆 <b>Map top</b> — the local leaderboard\n\n"
-               "Send a <code>.osk</code> as a file to keep your own skin. "
-               "Choose it — along with the size and the frame rate — in "
-               "<code>sts</code> → Render.\n\n"
-               "<code>/dossier</code> — whether the engine is up\n"
-               "<code>rdrw</code> — who is on the farm right now\n"
-               "<code>cltoken</code> — a join code for one machine (admins)\n\n"
-               "<i>The rendering happens on the machines people lend, not on "
-               "the bot's host. With nobody on the farm a job simply waits, and "
-               "the video arrives by itself once somebody switches theirs "
-               "on.</i>"),
-        "ru": ("<b>Dossier — рендер реплеев</b>\n\n"
-               "Пришли <code>.osr</code> файлом. Реплей будет разобран и "
-               "отсужен, а дальше на выбор:\n"
-               "🎬 <b>Отрендерить</b> — видео заезда\n"
-               "✂️ <b>Экспозитор</b> — короткая нарезка\n"
-               "🗺 <b>Карта</b> — карточка карты\n"
-               "🏆 <b>Топ карты</b> — локальный лидерборд\n\n"
-               "Пришли <code>.osk</code> файлом, чтобы сохранить свой скин. "
-               "Выбрать его — вместе с размером и частотой кадров — в "
-               "<code>sts</code> → Рендер.\n\n"
-               "<code>/dossier</code> — на связи ли движок\n"
-               "<code>rdrw</code> — кто сейчас на ферме\n"
-               "<code>cltoken</code> — код на одну машину (админы)\n\n"
-               "<i>Рендерят компьютеры, которые одалживают ребята, а не сервер "
-               "бота. Если на ферме никого, задача просто ждёт, и видео придёт "
-               "само, как только кто-нибудь включит свой.</i>"),
-    },
 }

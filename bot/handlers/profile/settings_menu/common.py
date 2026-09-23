@@ -1,11 +1,8 @@
 from aiogram import types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from db.database import get_db_session
 from utils.i18n import t
 from utils.language import get_language
-from utils.osu.resolve_user import get_registered_user
-from bot.handlers.dossier import renders
 
 _MENU_OWNERS: dict = {}
 _MENU_OWNERS_CAP = 2000
@@ -38,7 +35,6 @@ def _home_kb(lang: str = "en") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=t("sts.kb.account", lang), callback_data="st:acc")],
         [InlineKeyboardButton(text=t("sts.kb.title", lang), callback_data="st:tt")],
         [InlineKeyboardButton(text=t("sts.kb.language", lang), callback_data="st:lang")],
-        [InlineKeyboardButton(text=t("sts.kb.render", lang), callback_data="st:rnd")],
         [InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close")],
     ])
 
@@ -46,32 +42,4 @@ def _nav_row(lang: str = "en") -> list:
     return [
         InlineKeyboardButton(text=t("sts.kb.back", lang), callback_data="st:home"),
         InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
-    ]
-
-def sub_nav_row(lang: str = "en") -> list:
-    return [
-        InlineKeyboardButton(text=t("sts.fx.back", lang), callback_data="st:rnd"),
-        InlineKeyboardButton(text=t("sts.kb.close", lang), callback_data="st:close"),
-    ]
-
-async def _load(tg_id: int, tenant_chat_id) -> renders.Choices:
-    choices = renders.choices(tg_id)
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        return renders.restore_settings(user, choices)
-
-async def _store(tg_id: int, tenant_chat_id, choices: renders.Choices) -> None:
-    async with get_db_session() as session:
-        user = await get_registered_user(session, tg_id, tenant_chat_id)
-        if user:
-            renders.remember_settings(user, choices)
-            await session.commit()
-
-def switch_row(choices: renders.Choices, keys: tuple[str, ...], lang: str) -> list:
-    return [
-        InlineKeyboardButton(
-            text=f"{'☑️' if getattr(choices, key) else '⬜️'} {t(f'sts.rnd.{key}', lang)}",
-            callback_data=f"st:rnd:{key}:{'0' if getattr(choices, key) else '1'}",
-        )
-        for key in keys
     ]

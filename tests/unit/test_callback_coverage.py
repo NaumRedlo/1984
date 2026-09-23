@@ -64,8 +64,8 @@ def test_every_button_the_bot_draws_has_something_that_answers_it():
 
 def test_the_scan_would_notice_if_a_handler_went_away():
     produced, handled = _read()
-    without_render = [h for h in handled if h != ("prefix", "dsr:")]
+    without_pairing = [h for h in handled if h != ("prefix", "pair:")]
     assert any(
-        not _covered(value, exact, without_render)
+        not _covered(value, exact, without_pairing)
         for value, exact, _ in produced
     ), "dropping a real router changed nothing — the scan is not reading them"

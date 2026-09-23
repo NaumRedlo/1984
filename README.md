@@ -10,126 +10,57 @@ A Telegram bot for osu! players, and the replay engine that grew out of it.
 
 ## What this is
 
-Two things live here, and they are separable.
-
 **The bot** tracks osu! accounts for a Telegram group: profile cards, recent
 plays, leaderboards, a collection of titles, and weighted-pp top plays. It talks
 to the osu! API v2, keeps its own database, and renders every card itself with
 Pillow.
 
-**Dossier** is an osu! replay engine written from scratch in Rust. It reads a
-`.osr`, works out what the player actually hit, and draws the play back as
-video. Nothing about it is a wrapper around anything: the replay parser, the
-beatmap parser, the slider geometry, the judgement, the rasterised frames and
-the hit sounds are all its own. It has [its own
-repository](https://github.com/NaumRedlo/Dossier); this bot is what asks it for
-things.
+**Dossier** is an osu! replay engine written from scratch in Rust, and it lives
+in [its own repository](https://github.com/NaumRedlo/Dossier). Replays are no
+longer rendered through the bot: the Dossier application renders on the
+player's own machine, and the bot is what it pairs with.
 
 ---
 
-## Dossier
+## The Dossier application
 
-The engine is its own repository — **[NaumRedlo/Dossier](https://github.com/NaumRedlo/Dossier)**
-— and what it does is described there: the replay parser, the beatmap parser,
-the slider geometry, the judgement, the rasterised frames and the hit sounds
-are all written from scratch in Rust, and how each was checked against real
-replays is the larger half of that README.
+What the bot does for the application, and nothing more:
 
-This bot is one of the two things that drive it. The other is the render
-client, which lives in the same repository and does the work on somebody
-else's machine.
+- **pairs it** — the application asks for a code, the person confirms it in a
+  private chat with the bot (`/start pair-XXXX-XXXX`), and the machine gets a
+  token of its own;
+- **tells it who it belongs to** — the person, their avatar, their profile
+  card, their osu! friends, and the groups they share with the bot;
+- **shows it the group** — people, live plays, what happened this week, the
+  week's moves and the titles;
+- **delivers the finished video** to the person's private chat or to a group
+  they are in.
 
-What is here is the bot's side of it: the menu the settings are chosen in, the
-mini app that shows them as a page, the scoreboard drawn down the left of a
-render, the card a finished video is posted with, and the farm that decides
-which machine does the rendering.
+All of it is under `/render/*` (`services/render_farm/http.py`) and exists only
+while `RENDER_WORKER_TOKEN` is set. Pairing is open to the Telegram ids in
+`RENDER_TESTER_IDS` (`*` for everybody).
 
-### Keeping the engine in step
+Pairing is rate-limited per address, and the address is read from the
+`X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
+there is more than one proxy in front of it (a CDN, then Caddy), set
+`TRUSTED_PROXY_HOPS` to how many there are; the entries before those are
+whatever the client chose to send.
 
-The bot and every worker have to be on the same **build** of the engine, not
-merely the same version: a worker running a different one is turned away,
-because a stale binary renders something that looks right and is not.
+### The engine, for pp
 
-One line decides which, and it is the line `pip` already reads:
-
-```
-dossier @ git+https://github.com/NaumRedlo/Dossier@v0.11.0#subdirectory=client
-```
-
-Everything else follows from it. `scripts/engine.py` reads that tag, downloads
-the release built from it, checks it against the hash published beside it, and
-moves a symlink:
+The engine binary is still what the bot counts pp with (`utils/osu/assay.py`,
+falling back to rosu-pp-py). Which release it runs is the commented `dossier @`
+line in `requirements.txt`; `scripts/engine.py` downloads that release, checks
+it against the published hash and moves a symlink:
 
 ```bash
 ./venv/bin/python scripts/engine.py
 ```
 
-So `.env` names the link once and never again:
-
-```
-DOSSIER_BIN=/root/.dossier/engine/dossier
-```
-
-Run it from systemd as well as by hand, and the two cannot drift while nobody
-is looking — a bot that starts is a bot whose engine matches it:
-
-```
-[Service]
-ExecStartPre=-/root/1984/venv/bin/python /root/1984/scripts/engine.py
-```
-
-The leading `-` matters: without it a failure here stops the unit, so a GitHub
-outage at the wrong moment would keep the bot down over an engine already on
-disk. With it, a start that cannot check keeps what it has.
-
-Nothing is deleted: previous versions stay unpacked under `~/.dossier/engines`,
-`--list` says what is there, and going back is the same link moved the other
-way. `--force` fetches again regardless.
-
-Updating, then, is two commands — bump the tag in `requirements.txt`, and:
-
-```bash
-./venv/bin/pip install -r requirements.txt && ./venv/bin/python scripts/engine.py
-```
-
-Maps and skins are shared through `BEATMAP_STORE_DIR` and `SKIN_STORE_DIR` and
-belong to neither side.
-
-Building from source instead of downloading is still a `git clone` and a
-`cargo build --release` in the engine's repository, with `DOSSIER_BIN` pointed
-at `target/release/dossier`. That is the only route on a machine no release is
-built for — a Raspberry Pi, for one.
-
-
-### Rendering somewhere else
-
-A render is minutes of drawing and encoding, and the host this bot runs on has
-one core. So every render goes to a worker — any machine running the render
-client from the [engine's repository](https://github.com/NaumRedlo/Dossier) —
-and **this host draws nothing**.
-
-It used to fall back: a job nobody claimed within twelve seconds was rendered
-here instead. That was right while the farm was one laptop and a maybe, and it
-stopped being right once the engine had a release somebody could just run. What
-replaced it is honesty about waiting. A job nobody takes is a person watching a
-message that will not change, so they are told which of the two it is — nobody
-on the farm at all, or every machine busy — and told plainly when half an hour
-has passed and it is time to come back later.
-
-The worker pulls rather than listens, so nothing has to be reachable from
-outside it and no address has to stay put. Almost nothing crosses the network
-either: a replay names its map by MD5 and nothing else, so the worker fetches
-the beatmap itself, and the job is an `.osr`, four settings and the scoreboard's
-thumbnails. Only the finished video comes back.
-
-How hard it works is the worker's own decision, made per job from the battery,
-the energy mode, whether anyone is at the keyboard and whether the machine is
-already hot — see `machine.py` in the engine's repository, which documents what
-was measured and which two of those measurements changed the policy.
-
-Rendering from the bot is gated to a separate `RENDER_TESTER_IDS` list — not to
-admins. Running the bot and running an unfinished engine that shells out to a
-native binary and fetches maps on demand are different levels of trust.
+`.env` names the link once: `DOSSIER_BIN=/root/.dossier/engine/dossier`. Run it
+as `ExecStartPre=-…/scripts/engine.py` in the systemd unit so the bot and the
+engine cannot drift; the leading `-` keeps a GitHub outage from stopping the
+bot. Previous versions stay under `~/.dossier/engines` (`--list`, `--force`).
 
 ---
 
@@ -184,129 +115,10 @@ read automatically. Everything else has a default — see
 [config/settings.py](config/settings.py), which documents each one where it is
 defined.
 
-Everything render-related is behind `RENDER_TESTER_IDS`. A comma-separated
-list of Telegram ids is an allowlist; `*` opens it to everybody; unset means
-nobody, which is the right default for an engine still under construction.
-
-Dossier is optional, cloned and built separately — see **Two folders, one
-server** above.
-
-`SHARED_REPLAY_DIR` is where replays go when their player ticked "send replay
-data to the developer" in `sts`. Unset means nothing is kept whatever anybody
-ticked. What is kept is the `.osr` and the engine's reading of it — exactly
-what the consent text on that toggle says, and all that finding a judging
-error needs.
-
-`ffmpeg` has to be on the host for video. Judging and single frames do not need
-it.
-
-### Lending a machine to the farm
-
-There is a Russian guide covering both halves — rendering a replay through
-the bot, and running a worker — at [docs/guide.ru.html](docs/guide.ru.html).
-That page is what to hand somebody rather than this section, and the bot serves
-it at `/guide` on its own hostname: see `services/site.py`, and route the path
-to the same upstream in Caddy alongside `/oauth/*` and `/render/*`.
-
-Any machine with the engine built can render for the bot — a clone of the
-[engine's repository](https://github.com/NaumRedlo/Dossier), not of this one.
-It needs two lines in `~/.dossier/worker.env`:
-
-```
-RENDER_SERVER=https://your.host
-RENDER_WORKER_TOKEN=the-same-string-the-bot-has
-```
-
-Two lines, not four: the bot has already looked the map up to draw the card, so
-it sends what it found with the job and a worker needs no osu! account of its
-own. That was the setup step most people got wrong.
-
-Then ask whether the machine is ready. This answers every question at once —
-the token, the engine, `ffmpeg`, what this machine would give right now, and
-whether the bot agrees with its build — and it reaches the bot without claiming
-anybody's replay:
-
-```bash
-python client/worker.py --check
-```
-
-When it says ready, run it:
-
-```bash
-python client/worker.py
-```
-
-`--polite` if somebody is using the machine, `--threads N` for a hard cap on
-what the farm may take. Both, plus `RENDER_PAUSE` and `RENDER_HOURS=22-6`, can
-also live in the config file, which is re-read every poll — a machine can be
-handed back to its owner from a text editor, with nothing restarted.
-
-`farm` in the bot lists every worker: what it is doing, what it is giving, and
-whether its engine has drifted from the bot's. `--service` prints the launchd plist or systemd unit
-that would keep it running, with the two commands to install it — it prints
-rather than installs, and carries no token, so the output can be pasted
-anywhere.
-
-A worker whose engine differs from the bot's is turned away, because a stale
-binary renders something that looks right and is not. It stands by and comes
-back on its own once the build matches, so the fix is `git pull && cargo build
---release` in the engine's checkout and nothing else.
-
-With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
-render happens on the bot's own host, as it did before there was a worker.
-
-Pairing is rate-limited per address, and the address is read from the
-`X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
-there is more than one proxy in front of it (a CDN, then Caddy), set
-`TRUSTED_PROXY_HOPS` to how many there are; the entries before those are
-whatever the client chose to send.
-
-### The mini-app — switched off
-
-**Off as of 2026-09-02**, by `MINIAPP_ENABLED`, which defaults to `0`. Its
-endpoints are not registered and `/app` is not served: a route that answers 403
-has to be explained to somebody, and one that does not exist explains itself.
-Everything below still describes what happens when it is turned on, and turning
-it on is one environment variable.
-
-It is being replaced by a desktop application — the same settings and the same
-catalogue, on the machine the renders actually happen on, for people who would
-rather not live in a terminal. A screen that exists only inside one messenger is
-the wrong home for the thing somebody spends an evening in. The code is kept
-rather than deleted until that replacement is finished; a switch costs one
-boolean read twice, and a deletion costs having nothing to fall back to.
-
-`services/miniapp/auth.py` proves who opened the page from Telegram's signed
-`initData`; `services/miniapp/api.py` reads and writes the same render settings
-`sts` shows, reusing the bot's own parsers, ration and access check rather than
-restating any of them. Both refuse to do anything without `TELEGRAM_BOT_TOKEN`.
-
-The page itself is `docs/miniapp.html`, served at `/app` — settings on one
-screen, and a grid of skins behind the row that names the current one, with the
-client's Back Button to return. Skin thumbnails are drawn by
-`services/dossier/preview.py` and served at `/app/preview/<name>.png` *without*
-a signature, because a grid loads them with `<img src>` and that cannot carry
-one; the name is looked up in the store's own listing, so nothing a request
-says reaches a file. It holds no setting
-name, label, bound or grouping of its own — all of that comes down from
-`/app/api/settings`, so a setting renamed or re-bounded moves without the page
-being touched. It takes its colours from Telegram's theme rather than bringing
-its own, and saves through the client's Main Button.
-
-Two tabs: settings, with the skin grid a tap behind the row that names the
-current one, and the farm — who is out there, what they are doing, and what is
-queued. A worker sends *why* it is not taking work as a word as well as a
-sentence, so the app can say it in the reader's language; the sentence is the
-fallback for a worker too old to send one.
-
-Route `/app/*` to the same upstream in Caddy alongside `/oauth/*`, `/render/*`
-and `/guide`.
-
 ### Tests
 
 ```bash
-./venv/bin/python -m pytest -q     # 906 tests
-cd dossier && cargo test           # 501 tests
+./venv/bin/python -m pytest -q
 ```
 
 ---
@@ -316,7 +128,7 @@ cd dossier && cargo test           # 501 tests
 | | |
 |---|---|
 | **Bot** | Python 3.12, aiogram 3.29, SQLAlchemy 2.0 (async) over SQLite, Pillow |
-| **Engine** | Rust 2021, tiny-skia for rasterising, fontdue for glyphs, lzma-rs, ffmpeg for encoding |
+| **pp** | the Dossier engine binary, rosu-pp-py as the fallback |
 | **API** | osu! API v2 |
 | **Host** | Ubuntu Server 24.04 LTS |
 

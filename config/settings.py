@@ -34,37 +34,12 @@ RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 _raw_proxy_hops = os.getenv("TRUSTED_PROXY_HOPS", "1").strip()
 TRUSTED_PROXY_HOPS: int = max(1, int(_raw_proxy_hops)) if _raw_proxy_hops.isdigit() else 1
 
-RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
-
-RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "1800"))
-
-MINIAPP_ENABLED = os.getenv("MINIAPP_ENABLED", "0").strip().lower() not in (
-    "",
-    "0",
-    "no",
-    "off",
-    "false",
-)
-
 OSU_OAUTH_REDIRECT_URI = os.getenv("OSU_OAUTH_REDIRECT_URI", "https://onenineeightfour.ignorelist.com/oauth/callback")
 OSU_OAUTH_SCOPES = "public identify friends.read"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
-SHARED_REPLAY_DIR = os.getenv("SHARED_REPLAY_DIR", "")
-
-from dossier.settings import (
-    BEATMAP_STORE_DIR,
-    DOSSIER_BIN,
-    DOSSIER_CRF,
-    DOSSIER_ENCODER_THREADS,
-    DOSSIER_FFMPEG,
-    DOSSIER_GAME_SOUNDS,
-    DOSSIER_PRESET,
-    DOSSIER_SKIN,
-    MAX_SKIN_MB,
-    SKIN_STORE_DIR,
-)
+DOSSIER_BIN = os.getenv("DOSSIER_BIN") or os.path.expanduser("~/.dossier/engine/dossier")
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

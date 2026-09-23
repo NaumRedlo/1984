@@ -11,19 +11,18 @@ from db.database import Base
 from db.models import RenderWorkerToken
 from services.render_farm import http as farm_http
 from services.render_farm import invites, pairing
-from services.render_farm.queue import RenderQueue
 
 MAC = pairing.Machine("MacBook Pro Наума", "macOS on ARM", 10, "0.11.0")
 
 @pytest.fixture(autouse=True)
 def fresh():
     for book in (pairing._pending, pairing._starts, pairing._misses,
-                 invites._codes, invites._tries, invites._good):
+                 invites._good, invites._owners):
         book.clear()
     pairing.set_bot_username("")
     yield
     for book in (pairing._pending, pairing._starts, pairing._misses,
-                 invites._codes, invites._tries, invites._good):
+                 invites._good, invites._owners):
         book.clear()
     pairing.set_bot_username("")
 
@@ -147,13 +146,8 @@ def test_old_addresses_are_forgotten(monkeypatch):
 @pytest_asyncio.fixture
 async def farm(monkeypatch):
     monkeypatch.setattr(farm_http, "RENDER_WORKER_TOKEN", "the-old-one")
-
-    async def ours(*_args, **_kw):
-        return "dossier 0.1.0 (abc1234)"
-
-    monkeypatch.setattr(farm_http.engine_build, "local", ours)
     app = web.Application()
-    app.add_routes(farm_http.make_routes(RenderQueue()))
+    app.add_routes(farm_http.make_routes())
     served = TestClient(TestServer(app))
     await served.start_server()
     yield served

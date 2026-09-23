@@ -32,7 +32,7 @@ def wanted_tag(requirements: str = "") -> str:
     except OSError as exc:
         raise Unavailable(f"нет {path}: {exc}") from exc
 
-    found = re.search(r"^\s*dossier\s*@\s*git\+[^\s@]+@([^\s#]+)", body, re.M)
+    found = re.search(r"^\s*(?:#\s*)?dossier\s*@\s*git\+[^\s@]+@([^\s#]+)", body, re.M)
     if not found:
         raise Unavailable(
             f"{path} не называет версию движка — строка вида\n"
