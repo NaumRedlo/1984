@@ -14,6 +14,7 @@ class UserMapAttempt(Base):
     beatmapset_id = Column(Integer, nullable=True)
     score = Column(BigInteger, nullable=True)
     pp = Column(Float, nullable=False)
+    pp_estimated = Column(Float, nullable=True)
     accuracy = Column(Float, nullable=True)
     max_combo = Column(Integer, nullable=True)
     rank = Column(String(10), nullable=True)

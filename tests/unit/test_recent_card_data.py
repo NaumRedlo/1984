@@ -99,4 +99,4 @@ async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
             _raw_score(), username="kazaki1865", player_id=999, client=client,
         )
     assert data["star_rating"] == 10.58
-    assert client.asked == [(129891, "HDDT", 7.42)]
+    assert client.asked == [(129891, [{"acronym": "HD"}, {"acronym": "DT"}], 7.42)]

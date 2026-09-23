@@ -46,9 +46,22 @@ there is more than one proxy in front of it (a CDN, then Caddy), set
 `TRUSTED_PROXY_HOPS` to how many there are; the entries before those are
 whatever the client chose to send.
 
+### pp and star ratings
+
+With `ASSAY_URL` set, pp and star ratings come from [assay-server](assay-server/README.md),
+which runs osu!'s own packages beside the bot: a recent play, what-if, star
+ratings with mods (their settings included, so DT ×1.2 is ×1.2), and plays
+osu! gave no pp — loved, unranked — whose estimate the map leaderboard shows
+with a `~`. A ranked play whose pp differs from osu!'s by more than 1% is logged
+as `pp drift`. Keeping it current is a Dependabot pull request for the
+`ppy.osu.Game*` packages.
+
+Without the service — or when it does not answer — star ratings come from the
+osu! API and pp from the engine below, then rosu-pp-py.
+
 ### The engine, for pp
 
-The engine binary is still what the bot counts pp with (`utils/osu/assay.py`,
+The engine binary is the second choice for pp (`utils/osu/assay.py`,
 falling back to rosu-pp-py). Which release it runs is the commented `dossier @`
 line in `requirements.txt`; `scripts/engine.py` downloads that release, checks
 it against the published hash and moves a symlink:

@@ -34,6 +34,7 @@ from db.migrations.add_is_fc_fields import run_is_fc_fields_migration
 from db.migrations.add_title_meta_fields import run_title_meta_fields_migration
 from db.migrations.add_w4_logging_fields import run_w4_logging_fields_migration
 from db.migrations.add_was_supporter_field import run_was_supporter_field_migration
+from db.migrations.add_pp_estimated import run_pp_estimated_migration
 from db.migrations.add_completion_fields import run_completion_fields_migration
 from db.migrations.add_batch2_profile_stats import run_batch2_profile_stats_migration
 from db.migrations.add_effective_fields import run_effective_fields_migration
@@ -99,5 +100,6 @@ async def run_all_migrations(engine) -> None:
 
     await run_last_full_update_migration(engine)
     await run_render_worker_tokens_migration(engine)
+    await run_pp_estimated_migration(engine)
 
 __all__ = ["run_all_migrations"]

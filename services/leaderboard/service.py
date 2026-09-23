@@ -685,6 +685,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         select(
             User,
             UserMapAttempt.pp,
+            UserMapAttempt.pp_estimated,
             UserMapAttempt.score,
             UserMapAttempt.accuracy,
             UserMapAttempt.max_combo,
@@ -697,8 +698,9 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))
     )
 
-    for position, (user, pp, score, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
-        pp_f = float(pp or 0)
+    for position, (user, pp, pp_estimated, score, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
+        estimated = not pp and pp_estimated is not None
+        pp_f = float(pp_estimated if estimated else pp or 0)
         score_i = int(score or 0)
 
         primary_str = f"{score_i:,}" if rank_by_score else f"{pp_f:.0f}pp"
@@ -708,6 +710,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             "username": user.osu_username,
             "value": f"{primary_str} | {float(accuracy or 0.0):.2f}% | {int(max_combo or 0)}x | {_parse_mods(mods)}",
             "pp": pp_f,
+            "pp_estimated": estimated,
             "score": score_i,
             "primary_str": primary_str,
             "accuracy": float(accuracy or 0.0),

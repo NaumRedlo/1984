@@ -89,6 +89,10 @@ _MLB_STRINGS = {
 def _panel(draw: ImageDraw.ImageDraw, box, fill=PANEL, edge=PANEL_EDGE, radius=RADIUS, width=1):
     draw.rounded_rectangle(box, radius=radius, fill=fill, outline=edge, width=width)
 
+def _pp_text(row: dict) -> str:
+    value = f"{float(row.get('pp') or 0):.1f}"
+    return f"~{value}" if row.get("pp_estimated") else value
+
 class MapLeaderboardCardMixin:
 
     MLB_ROWS_PER_PAGE = 9
@@ -340,7 +344,7 @@ class MapLeaderboardCardMixin:
         for key, text, font, colour in (
             ("acc", f"{float(row.get('accuracy') or 0):.2f}%", self.font_label, TEXT),
             ("combo", f"{int(row.get('combo') or 0):,}x", self.font_label, TEXT),
-            ("pp", f"{float(row.get('pp') or 0):.1f}", self.font_label, pp_colour),
+            ("pp", _pp_text(row), self.font_label, pp_colour),
             ("score", f"{int(row.get('score') or 0):,}", self.font_label, MUTED),
         ):
             w = self._text_size(draw, text, font)[0]
@@ -374,7 +378,7 @@ class MapLeaderboardCardMixin:
         stats = (
             (S["accuracy"], f"{float(viewer.get('accuracy') or 0):.2f}%", TEXT),
             (S["combo"], f"{int(viewer.get('combo') or 0):,}x", TEXT),
-            (S["pp"], f"{float(viewer.get('pp') or 0):.1f}", MINE),
+            (S["pp"], _pp_text(viewer), MINE),
             (S["score"], f"{int(viewer.get('score') or 0):,}", TEXT),
         )
         span = (x1 - x0 - 260) // len(stats)

@@ -1,3 +1,4 @@
+import json
 import aiohttp
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -41,9 +42,31 @@ _SR_MOD_BITS = {
     "DT": 64, "HT": 256, "NC": 64 | 512, "FL": 1024,
 }
 
+async def _estimate_pp(raw: dict, beatmap: dict, beatmap_id: int, mods, stats: dict) -> Optional[float]:
+    from utils.osu import assay_service
+
+    if not assay_service.enabled():
+        return None
+    served = await assay_service.score(
+        beatmap_id,
+        mods=mods,
+        statistics=stats,
+        checksum=beatmap.get("checksum"),
+        accuracy=raw.get("accuracy"),
+        max_combo=raw.get("max_combo"),
+        legacy_total_score=raw.get("legacy_total_score") or None,
+        is_legacy=bool(raw.get("legacy_score_id")),
+    )
+    if not served or served.get("pp") is None:
+        return None
+    return round(float(served["pp"]), 2)
+
 def _sr_mods_bitset(mods_str) -> int:
     if isinstance(mods_str, (list, tuple, set)):
-        seen = {str(a).strip().upper() for a in mods_str if a}
+        seen = {
+            str(a.get("acronym", "") if isinstance(a, dict) else a).strip().upper()
+            for a in mods_str if a
+        }
     else:
         text = str(mods_str or "").upper()
         if "," in text:
@@ -488,7 +511,7 @@ class OsuApiClient:
                 if score_obj.ar is None and b_ar is not None:
                     score_obj.ar = b_ar
                 if score_obj.eff_sr is None:
-                    score_obj.eff_sr = await self.effective_sr(beatmap.get("id"), mods_str, star_rating)
+                    score_obj.eff_sr = await self.effective_sr(beatmap.get("id"), mods_list, star_rating, beatmap.get("checksum"))
                 if abs((score_obj.pp or 0) - pp_val) > 0.01:
                     if not is_baseline_sync:
                         score_obj.previous_pp = score_obj.pp
@@ -518,7 +541,7 @@ class OsuApiClient:
                     creator=beatmapset.get("creator", ""),
                     star_rating=star_rating,
                     ar=b_ar,
-                    eff_sr=await self.effective_sr(beatmap.get("id"), mods_str, star_rating),
+                    eff_sr=await self.effective_sr(beatmap.get("id"), mods_list, star_rating, beatmap.get("checksum")),
                     bpm=b_bpm,
                     length=b_len,
                     map_max_combo=b_combo,
@@ -622,7 +645,7 @@ class OsuApiClient:
                 "creator": beatmapset.get("creator", ""),
                 "star_rating": star_rating,
                 "ar": beatmap.get("ar"),
-                "eff_sr": await self.effective_sr(beatmap_id, mods_str, star_rating),
+                "eff_sr": await self.effective_sr(beatmap_id, mods_list, star_rating, beatmap.get("checksum")),
                 "bpm": b_bpm,
                 "length": beatmap.get("total_length"),
                 "map_max_combo": beatmap.get("max_combo"),
@@ -641,6 +664,8 @@ class OsuApiClient:
             }
 
             attempt = existing.get(score_id)
+            if raw.get("pp") is None and raw.get("passed") and (attempt is None or attempt.pp_estimated is None):
+                attrs["pp_estimated"] = await _estimate_pp(raw, beatmap, beatmap_id, mods_list, stats)
             if attempt:
                 for key, value in attrs.items():
                     setattr(attempt, key, value)
@@ -707,13 +732,26 @@ class OsuApiClient:
             return data.get("attributes")
         return None
 
-    async def effective_sr(self, beatmap_id, mods_str: Optional[str], nominal_sr) -> Optional[float]:
-        bits = _sr_mods_bitset(mods_str)
-        if not bits or not beatmap_id:
+    async def effective_sr(self, beatmap_id, mods_str, nominal_sr, checksum: Optional[str] = None) -> Optional[float]:
+        from utils.osu import assay_service
+
+        if not beatmap_id:
             return nominal_sr
         cache = getattr(self, "_eff_sr_cache", None)
         if cache is None:
             cache = self._eff_sr_cache = {}
+        served_mods = [m for m in assay_service.mods_of(mods_str) if m["acronym"] != "CL"]
+        if served_mods and assay_service.enabled():
+            key = (int(beatmap_id), json.dumps(served_mods, sort_keys=True))
+            if key in cache:
+                return cache[key]
+            served = await assay_service.beatmap(beatmap_id, mods=served_mods, checksum=checksum)
+            if served and served.get("star_rating") is not None:
+                cache[key] = float(served["star_rating"])
+                return cache[key]
+        bits = _sr_mods_bitset(mods_str)
+        if not bits:
+            return nominal_sr
         key = (int(beatmap_id), bits)
         if key in cache:
             return cache[key]

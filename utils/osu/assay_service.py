@@ -67,6 +67,12 @@ async def health() -> Optional[dict]:
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
 
+async def beatmap(beatmap_id: int, *, mods, checksum: Optional[str] = None) -> Optional[dict]:
+    if not beatmap_id:
+        return None
+    body = {"beatmap_id": int(beatmap_id), "checksum": checksum or None, "mods": mods_of(mods)}
+    return await _post("/v1/beatmap", body)
+
 async def score(
     beatmap_id: int,
     *,

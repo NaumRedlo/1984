@@ -111,7 +111,7 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
 
     stars = await star_rating.resolve(
         osu_api_client, card_data["beatmap_id"], mods_str,
-        card_data.get("star_rating") or whatif["star_rating"],
+        card_data.get("star_rating") or whatif["star_rating"], card_data.get("checksum"),
     )
 
     adjusted = apply_mods(

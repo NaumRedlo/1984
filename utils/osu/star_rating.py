@@ -5,10 +5,12 @@ from utils.logger import get_logger
 
 logger = get_logger("utils.osu.star_rating")
 
-async def resolve(client, beatmap_id, mods, nominal) -> Optional[float]:
+async def resolve(client, beatmap_id, mods, nominal, checksum: Optional[str] = None) -> Optional[float]:
     if client is None or not beatmap_id:
         return nominal
     try:
+        if checksum:
+            return await client.effective_sr(beatmap_id, mods, nominal, checksum)
         return await client.effective_sr(beatmap_id, mods, nominal)
     except Exception:
         logger.debug("star rating lookup failed for %s (%s)", beatmap_id, mods, exc_info=True)

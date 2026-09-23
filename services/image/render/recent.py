@@ -781,7 +781,7 @@ async def build_recent_card_data(
     except Exception:
         logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
 
-    modded_stars = await star_rating.resolve(client, beatmap_id, mods_joined, stars)
+    modded_stars = await star_rating.resolve(client, beatmap_id, raw_mods or mods_joined, stars, beatmap.get("checksum"))
 
     return {
         "lang": lang,
