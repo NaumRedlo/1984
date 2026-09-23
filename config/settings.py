@@ -31,6 +31,9 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 
 RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 
+_raw_proxy_hops = os.getenv("TRUSTED_PROXY_HOPS", "1").strip()
+TRUSTED_PROXY_HOPS: int = max(1, int(_raw_proxy_hops)) if _raw_proxy_hops.isdigit() else 1
+
 RENDER_WORKER_WAIT = float(os.getenv("RENDER_WORKER_WAIT", "12"))
 
 RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "1800"))

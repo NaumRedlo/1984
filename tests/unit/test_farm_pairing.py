@@ -225,10 +225,16 @@ async def test_too_many_wrong_codes_answer_429(farm, monkeypatch):
         assert (await farm.get("/render/pair/22222222")).status == 404
     assert (await farm.get("/render/pair/22222222")).status == 429
 
-def test_the_address_behind_a_proxy_is_the_first_forwarded_one():
-    behind = types.SimpleNamespace(headers={"X-Forwarded-For": "9.9.9.9, 10.0.0.1"},
+def test_the_address_behind_a_proxy_is_the_one_the_proxy_added(monkeypatch):
+    behind = types.SimpleNamespace(headers={"X-Forwarded-For": "6.6.6.6, 9.9.9.9"},
                                    remote="127.0.0.1")
     assert farm_http._address(behind) == "9.9.9.9"
+    monkeypatch.setattr(farm_http, "TRUSTED_PROXY_HOPS", 2)
+    two = types.SimpleNamespace(headers={"X-Forwarded-For": "6.6.6.6, 9.9.9.9, 10.0.0.1"},
+                                remote="127.0.0.1")
+    assert farm_http._address(two) == "9.9.9.9"
+    monkeypatch.setattr(farm_http, "TRUSTED_PROXY_HOPS", 5)
+    assert farm_http._address(behind) == "6.6.6.6"
     direct = types.SimpleNamespace(headers={}, remote="8.8.8.8")
     assert farm_http._address(direct) == "8.8.8.8"
 

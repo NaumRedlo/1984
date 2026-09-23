@@ -7,7 +7,7 @@ from typing import Optional
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import RENDER_WORKER_TOKEN
+from config.settings import RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
 from dossier import build as engine_build
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm import community as gathered, invites, pairing
@@ -142,8 +142,31 @@ def _worker(request: web.Request) -> str:
 def _address(request: web.Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
-        return forwarded.split(",")[0].strip() or "?"
+        hops = [part.strip() for part in forwarded.split(",")]
+        return hops[-min(TRUSTED_PROXY_HOPS, len(hops))] or "?"
     return request.remote or "?"
+
+async def _json_object(request: web.Request) -> dict:
+    try:
+        said = await request.json()
+    except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
+        return {}
+    return said if isinstance(said, dict) else {}
+
+def _meta(request: web.Request) -> dict:
+    raw = request.headers.get("X-Render-Meta")
+    if not raw:
+        return {}
+    try:
+        meta = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+def _dimension(value) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+        return None
+    return int(value) if 0 < value < 1 << 31 else None
 
 def make_routes(queue: Optional[RenderQueue] = None,
                 roster: Optional[Roster] = None) -> list[web.RouteDef]:
@@ -183,10 +206,13 @@ def make_routes(queue: Optional[RenderQueue] = None,
         theirs = None
         capacity = None
         if request.can_read_body:
-            body = await request.json()
-            if isinstance(body, dict):
-                theirs = body.get("engine")
-                capacity = body.get("capacity")
+            body = await _json_object(request)
+            theirs = body.get("engine")
+            capacity = body.get("capacity")
+            if not isinstance(theirs, str):
+                theirs = None
+            if not isinstance(capacity, dict):
+                capacity = None
         who.hello(_worker(request), build=theirs, capacity=capacity)
 
         if capacity is not None and not capacity.get("take", True):
@@ -239,13 +265,11 @@ def make_routes(queue: Optional[RenderQueue] = None,
         bad = await guard(request)
         if bad:
             return bad
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await _json_object(request)
         who.hello(_worker(request))
+        progress = body.get("progress")
         alive = q.heartbeat(request.match_info["job_id"], _worker(request),
-                            body.get("progress"))
+                            progress if isinstance(progress, dict) else None)
 
         return web.json_response({"yours": alive}, status=200 if alive else 409)
 
@@ -273,13 +297,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
             logger.warning("result upload for %s failed: %s", job_id, exc)
             return web.json_response({"error": str(exc)}, status=413)
 
-        meta = {}
-        raw = request.headers.get("X-Render-Meta")
-        if raw:
-            try:
-                meta = json.loads(raw)
-            except (json.JSONDecodeError, ValueError):
-                logger.warning("job %s sent unreadable meta", job_id)
+        meta = _meta(request)
 
         if not q.finish(job_id, worker, {"path": path, "meta": meta}):
             os.unlink(path)
@@ -291,10 +309,7 @@ def make_routes(queue: Optional[RenderQueue] = None,
         bad = await guard(request)
         if bad:
             return bad
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await _json_object(request)
         who.hello(_worker(request))
         given = q.give_back(request.match_info["job_id"], _worker(request),
                             str(body.get("reason") or "no reason given"))
@@ -322,9 +337,8 @@ def make_routes(queue: Optional[RenderQueue] = None,
         })
 
     async def join(request: web.Request) -> web.Response:
-        try:
-            said = await request.json()
-        except Exception:
+        said = await _json_object(request)
+        if not said:
             return web.json_response({"error": "bad request"}, status=400)
 
         invite = invites.redeem(str(said.get("code", "")))
@@ -620,28 +634,23 @@ def make_routes(queue: Optional[RenderQueue] = None,
             return web.json_response({"error": "too large", "most": _max_send_bytes()}, status=413)
         except OSError as exc:
             return web.json_response({"error": str(exc)}, status=500)
-        meta = {}
-        raw = request.headers.get("X-Render-Meta")
-        if raw:
-            try:
-                meta = json.loads(raw)
-            except (json.JSONDecodeError, ValueError):
-                meta = {}
+        meta = _meta(request)
         caption = str(meta.get("caption", ""))[:1024]
         where = meta.get("chat")
         where = int(where) if isinstance(where, (int, str)) and str(where).lstrip("-").isdigit() else owner.telegram_id
         if where != owner.telegram_id and not await _member(where, owner.telegram_id):
             os.unlink(path)
             return web.json_response({"error": "not your chat"}, status=403)
+        filename = os.path.basename(str(meta.get("name") or "")).strip()[:128] or "render.mp4"
         try:
             sent = await _bot.send_video(
                 where,
-                types.FSInputFile(path, filename=str(meta.get("name") or "render.mp4")),
+                types.FSInputFile(path, filename=filename),
                 caption=caption or None,
                 supports_streaming=True,
-                width=meta.get("width") or None,
-                height=meta.get("height") or None,
-                duration=meta.get("duration") or None,
+                width=_dimension(meta.get("width")),
+                height=_dimension(meta.get("height")),
+                duration=_dimension(meta.get("duration")),
             )
         except Exception as exc:
             logger.warning("sending a video to %s failed: %s", where, exc)

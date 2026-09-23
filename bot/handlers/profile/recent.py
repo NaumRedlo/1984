@@ -34,7 +34,8 @@ def _play_from_score(raw: dict) -> dict:
     return {
         "star_rating": bm.get("difficulty_rating") or 0.0,
         "rank": raw.get("rank") if passed else "F",
-        "mods": "".join(
+        "beatmap_id": bm.get("id"),
+        "mods": ",".join(
             m.get("acronym", "") if isinstance(m, dict) else str(m)
             for m in (raw.get("mods") or [])
         ),

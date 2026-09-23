@@ -20,7 +20,7 @@ from utils.i18n import t
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_reply_target_user
 from utils.title_progress import build_titles_summary, calc_title_rarity, refresh_user_titles
-from utils.titles import RARITY_META, RARITY_ORDER, TITLE_REGISTRY
+from utils.titles import RARITY_META, RARITY_ORDER, TITLE_REGISTRY, rarity_label_for
 from utils.timeutils import utcnow
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -50,7 +50,8 @@ def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
 
-_FILTERS = [("all", "ALL")] + [(r, RARITY_META[r]["label"]) for r in RARITY_ORDER]
+def _filters(lang: str = "en") -> list[tuple[str, str]]:
+    return [("all", t("tt.kb.all", lang))] + [(r, rarity_label_for(r, lang)) for r in RARITY_ORDER]
 
 def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, lang: str = "en") -> InlineKeyboardMarkup:
     btns = [
@@ -58,7 +59,7 @@ def _titles_keyboard(uid: int, flt: str, page: int, total_pages: int, lang: str 
             text=(f"● {lbl}" if code == flt else lbl),
             callback_data=f"tt|f|{uid}|{code}",
         )
-        for code, lbl in _FILTERS
+        for code, lbl in _filters(lang)
     ]
     rows = [btns[:4], btns[4:]]
     if total_pages > 1:
@@ -238,23 +239,26 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
             return
         unlocked = await _unlocked_codes(session, user.id)
         ql = arg.lower()
-        matches = [(c, TITLE_REGISTRY[c]) for c in unlocked
-                   if c in TITLE_REGISTRY and ql in TITLE_REGISTRY[c].name.lower()]
-        exact = [m for m in matches if m[1].name.lower() == ql]
+        matches = [(c, TITLE_REGISTRY[c]) for c in TITLE_REGISTRY
+                   if c in unlocked and any(ql in n for n in _names_of(TITLE_REGISTRY[c]))]
+        exact = [m for m in matches if ql in _names_of(m[1])]
         if exact:
             matches = exact
         if not matches:
             await message.answer(t("st.not_found", lang, query=escape_html(arg)), parse_mode="HTML")
             return
         if len(matches) > 1:
-            names = ", ".join(td.name for _, td in matches[:8])
+            names = ", ".join(td.name_for(lang) for _, td in matches[:8])
             await message.answer(t("st.ambiguous", lang, names=escape_html(names)), parse_mode="HTML")
             return
         code, td = matches[0]
         user.active_title_code = code
         await session.commit()
         await message.answer(
-            t("st.set", lang, name=escape_html(td.name), rarity=td.rarity_label),
+            t("st.set", lang, name=escape_html(td.name_for(lang)), rarity=td.rarity_label_for(lang)),
             parse_mode="HTML")
+
+def _names_of(td) -> set[str]:
+    return {n.lower() for n in (td.name, td.name_ru, td.code) if n}
 
 __all__ = ["router"]

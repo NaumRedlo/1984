@@ -68,7 +68,7 @@ def _progress_of(raw: dict[str, Any]) -> Optional[Progress]:
             seconds_left=float(raw.get("seconds_left") or 0.0),
             clip=tuple(clip) if clip else None,
         )
-    except (KeyError, TypeError, ValueError):
+    except (AttributeError, KeyError, TypeError, ValueError):
         return None
 
 class Waiting(NamedTuple):

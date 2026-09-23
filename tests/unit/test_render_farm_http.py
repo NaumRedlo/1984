@@ -239,3 +239,25 @@ async def test_a_chat_photo_is_refused_for_a_chat_the_person_left(linked, monkey
     monkeypatch.setattr(_Sent, "get_chat_member", staticmethod(_member_left), raising=False)
     mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     assert (await client.get("/render/chat/-300/avatar", headers=mine)).status == 403
+
+async def test_odd_bodies_are_read_as_empty_not_as_a_crash(farm):
+    client, queue, tmp_path = farm
+    job = offer(queue, tmp_path)
+    assert (await client.post("/render/claim", headers=MINE, json=["not", "a", "dict"])).status == 200
+    beat = await client.post(f"/render/job/{job.id}/heartbeat", headers=MINE, json={"progress": [1, 2]})
+    assert beat.status == 200
+    assert job.progress is None
+    assert (await client.post(f"/render/job/{job.id}/heartbeat", headers=MINE, data=b"\xff\xfe")).status == 200
+    assert (await client.post("/render/claim", headers=MINE, json={"capacity": 3})).status in (204, 409)
+    result = await client.post(f"/render/job/{job.id}/result",
+                               headers={**MINE, "X-Render-Meta": "[1, 2]"}, data=b"video")
+    assert result.status == 200
+    assert job.payload["meta"] == {}
+
+def test_a_video_s_numbers_are_checked():
+    assert http._dimension(1280) == 1280
+    assert http._dimension(12.7) == 12
+    assert http._dimension("1280") is None
+    assert http._dimension(True) is None
+    assert http._dimension(-5) is None
+    assert http._dimension(float("nan")) is None

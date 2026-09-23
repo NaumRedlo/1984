@@ -23,6 +23,7 @@ from services import site
 from services.miniapp import api as miniapp_api
 from utils.aio import spawn
 from utils.crypto import encrypt_token
+from utils.formatting.text import escape_html
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
@@ -101,7 +102,7 @@ async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
             lang = (await get_language(telegram_id)).lower()
             success_msg = await _bot.send_message(
                 chat_id,
-                t("oauth.notify_linked", lang, username=osu_username),
+                t("oauth.notify_linked", lang, username=escape_html(osu_username)),
                 parse_mode="HTML",
             )
             await asyncio.sleep(10)
@@ -185,7 +186,7 @@ async def handle_callback(request: web.Request) -> web.Response:
         if bound_osu_ids and osu_id not in bound_osu_ids:
             other_id = next(iter(bound_osu_ids))
             return web.Response(
-                text=t("oauth.account_conflict", lang, other_id=other_id, username=osu_username, osu_id=osu_id),
+                text=t("oauth.account_conflict", lang, other_id=other_id, username=escape_html(osu_username), osu_id=osu_id),
                 content_type="text/html",
                 status=409,
             )
@@ -222,7 +223,7 @@ async def handle_callback(request: web.Request) -> web.Response:
     spawn(_notify_telegram(telegram_id, osu_username), name=f"oauth_notify_{telegram_id}")
 
     return web.Response(
-        text=t("oauth.success_page", lang, username=osu_username),
+        text=t("oauth.success_page", lang, username=escape_html(osu_username)),
         content_type="text/html",
     )
 

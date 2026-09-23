@@ -61,6 +61,14 @@ async def _exists_best(session, user_id, **crit) -> int:
             return 1
     return 0
 
+def _mod_set(mods) -> set:
+    if isinstance(mods, (list, tuple, set)):
+        return {str(m).strip().upper() for m in mods if m}
+    text = str(mods or "").upper()
+    if "," in text:
+        return {m.strip() for m in text.split(",") if m.strip()}
+    return {text[i:i + 2] for i in range(0, len(text) - 1, 2)}
+
 def _play_matches(play: Dict, **crit) -> bool:
     if not play.get("passed"):
         return False
@@ -73,7 +81,7 @@ def _play_matches(play: Dict, **crit) -> bool:
         return False
     if crit.get("min_acc") is not None and (play.get("accuracy") or 0) < crit["min_acc"]:
         return False
-    mods = play.get("mods") or ""
+    mods = _mod_set(play.get("mods"))
     if any(m not in mods for m in (crit.get("mods_all") or [])):
         return False
     if crit.get("mods_any") and not any(m in mods for m in crit["mods_any"]):
@@ -353,17 +361,9 @@ async def unlock_title(user, code: str, session, *, value=None) -> bool:
     td = TITLE_REGISTRY.get(code)
     if td is None:
         return False
-    prog = (await session.execute(
-        select(UserTitleProgress).where(
-            UserTitleProgress.user_id == user.id,
-            UserTitleProgress.title_code == code)
-    )).scalar_one_or_none()
-    if prog and prog.unlocked:
+    prog = (await _ensure_progress_rows(session, user.id))[code]
+    if prog.unlocked:
         return False
-    if not prog:
-        prog = UserTitleProgress(user_id=user.id, title_code=code,
-                                 current_value=0, unlocked=False)
-        session.add(prog)
     prog.current_value = value if value is not None else (td.target or 1)
     prog.unlocked = True
     prog.unlocked_at = utcnow()
@@ -410,6 +410,8 @@ async def _calc_last_note(session, uid) -> int:
             return 1
     return 0
 
+_NOT_MASKS = {"CL", "NM"}
+
 async def _calc_masks(session, uid) -> int:
     seen: set[str] = set()
     for M in (UserBestScore, UserMapAttempt):
@@ -417,8 +419,8 @@ async def _calc_masks(session, uid) -> int:
             select(M.mods).where(M.user_id == uid, M.mods.isnot(None))
         )).scalars().all():
             for ac in str(mstr).split(","):
-                ac = ac.strip()
-                if ac:
+                ac = ac.strip().upper()
+                if ac and ac not in _NOT_MASKS:
                     seen.add(ac)
     return len(seen)
 
@@ -445,10 +447,10 @@ def _row_is_fc(is_fc, miss, mc, mmc) -> bool:
 def _eff_bpm(bpm, mods) -> float:
     if not bpm:
         return 0.0
-    m = mods or ""
-    if "DT" in m or "NC" in m:
+    m = _mod_set(mods)
+    if m & {"DT", "NC"}:
         return float(bpm) * 1.5
-    if "HT" in m:
+    if m & {"HT", "DC"}:
         return float(bpm) * 0.75
     return float(bpm)
 
@@ -535,7 +537,7 @@ def _crit_calc(crit):
 
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}
 _CALCULATORS.update({
-    "registered":   lambda u, uid, s: 1 if (u.play_count or 0) > 0 else 0,
+    "registered":   lambda u, uid, s: 1 if u.osu_user_id else 0,
     "played_100k":  lambda u, uid, s: u.play_count or 0,
     "doublethink":  lambda u, uid, s: _calc_doublethink(s, uid),
     "broken_record": lambda u, uid, s: _calc_broken_record(s, uid),
@@ -602,18 +604,11 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
 async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:
     if not plays:
         return []
-    rows = {
-        p.title_code: p
-        for p in (
-            await session.execute(
-                select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
-            )
-        ).scalars().all()
-    }
+    rows = await _ensure_progress_rows(session, user.id)
     newly: List[TitleDef] = []
     for code, td in TITLE_REGISTRY.items():
-        prog = rows.get(code)
-        if prog and prog.unlocked:
+        prog = rows[code]
+        if prog.unlocked:
             continue
         unlocked_now = False
         for play in plays:
@@ -622,11 +617,6 @@ async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[
                 break
         if not unlocked_now:
             continue
-        if not prog:
-            prog = UserTitleProgress(user_id=user.id, title_code=code,
-                                     current_value=td.target, unlocked=False)
-            session.add(prog)
-            rows[code] = prog
         prog.current_value = max(prog.current_value or 0, td.target)
         prog.unlocked = True
         prog.unlocked_at = utcnow()
@@ -636,10 +626,46 @@ async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[
 async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
     return await evaluate_recent_plays(user, [play], session)
 
+async def _progress_rows(session, user_id: int) -> Dict[str, UserTitleProgress]:
+    rows = (await session.execute(
+        select(UserTitleProgress).where(UserTitleProgress.user_id == user_id)
+    )).scalars().all()
+    return {p.title_code: p for p in rows}
+
+def _insert_ignoring_duplicates(session):
+    bind = session.get_bind()
+    name = getattr(getattr(bind, "dialect", None), "name", "")
+    if name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    elif name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        return None
+    return insert(UserTitleProgress)
+
+async def _ensure_progress_rows(session, user_id: int) -> Dict[str, UserTitleProgress]:
+    existing = await _progress_rows(session, user_id)
+    missing = [code for code in TITLE_REGISTRY if code not in existing]
+    if not missing:
+        return existing
+    insert = _insert_ignoring_duplicates(session)
+    if insert is None:
+        for code in missing:
+            prog = UserTitleProgress(user_id=user_id, title_code=code,
+                                     current_value=0, unlocked=False)
+            session.add(prog)
+            existing[code] = prog
+        return existing
+    await session.execute(
+        insert.values([
+            {"user_id": user_id, "title_code": code, "current_value": 0, "unlocked": False}
+            for code in missing
+        ]).on_conflict_do_nothing(index_elements=["user_id", "title_code"])
+    )
+    return await _progress_rows(session, user_id)
+
 async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dict]:
-    stmt = select(UserTitleProgress).where(UserTitleProgress.user_id == user.id)
-    result = await session.execute(stmt)
-    existing = {p.title_code: p for p in result.scalars().all()}
+    existing = await _ensure_progress_rows(session, user.id)
 
     progress_list = []
 
@@ -651,20 +677,10 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
         raw = calc(user, user.id, session)
         current = await raw if hasattr(raw, "__await__") else raw
 
-        prog = existing.get(code)
-        if not prog:
-            prog = UserTitleProgress(
-                user_id=user.id,
-                title_code=code,
-                current_value=current,
-                unlocked=False,
-            )
-            session.add(prog)
-            existing[code] = prog
-
+        prog = existing[code]
         prog.current_value = current
 
-        if current >= title_def.target and not prog.unlocked and not title_def.secret:
+        if current >= title_def.target and not prog.unlocked:
             prog.unlocked = True
             prog.unlocked_at = utcnow()
 

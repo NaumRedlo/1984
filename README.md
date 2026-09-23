@@ -255,6 +255,12 @@ back on its own once the build matches, so the fix is `git pull && cargo build
 With `RENDER_WORKER_TOKEN` unset the endpoints are never registered and every
 render happens on the bot's own host, as it did before there was a worker.
 
+Pairing is rate-limited per address, and the address is read from the
+`X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
+there is more than one proxy in front of it (a CDN, then Caddy), set
+`TRUSTED_PROXY_HOPS` to how many there are; the entries before those are
+whatever the client chose to send.
+
 ### The mini-app — switched off
 
 **Off as of 2026-09-02**, by `MINIAPP_ENABLED`, which defaults to `0`. Its

@@ -4,6 +4,7 @@ CATALOG = {
         "ru": "Произошла ошибка при загрузке коллекции титулов.",
     },
     "tt.not_your_collection": {"en": "Not your collection.", "ru": "Не ваша коллекция."},
+    "tt.kb.all": {"en": "ALL", "ru": "ВСЕ"},
     "tt.stale": {
         "en": "Expired — write titles again.",
         "ru": "Устарело — напишите titles заново.",

@@ -35,7 +35,7 @@ async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en
     active_name = None
     if active:
         td = TITLE_REGISTRY.get(active)
-        active_name = td.name if td else active
+        active_name = td.name_for(lang) if td else active
 
     ordered = [c for c in TITLE_REGISTRY if c in codes]
     text = t("sts.title.header", lang, name=escape_html(active_name) if active_name else t("sts.title.none", lang))
@@ -54,7 +54,7 @@ async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en
             td = TITLE_REGISTRY[code]
             mark = "★ " if code == active else ""
             rows.append([InlineKeyboardButton(
-                text=f"{mark}{td.name}", callback_data=f"st:tt:set:{page}:{code}")])
+                text=f"{mark}{td.name_for(lang)}", callback_data=f"st:tt:set:{page}:{code}")])
         if total_pages > 1:
             nav = []
             if page > 0:
@@ -119,7 +119,7 @@ async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code,
         await callback.answer(t("st.cleared", lang))
     else:
         td = TITLE_REGISTRY.get(code)
-        await callback.answer(t("sts.title.set_alert", lang, name=td.name if td else code))
+        await callback.answer(t("sts.title.set_alert", lang, name=td.name_for(lang) if td else code))
 
 @router.callback_query(F.data.startswith("st:tt:set:"))
 async def cb_title_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
