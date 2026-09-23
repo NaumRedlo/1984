@@ -118,8 +118,13 @@ defined.
 ### Tests
 
 ```bash
+./venv/bin/pip install -r requirements-dev.txt
 ./venv/bin/python -m pytest -q
 ```
+
+GitHub Actions runs the same on every push and pull request, on Python 3.11
+and 3.12, and nothing in the suite reaches the network. Dependabot proposes
+updates to the pinned packages and the actions once a week.
 
 ---
 

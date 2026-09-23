@@ -32,15 +32,16 @@ class _Engine:
             return None
         return self.args[self.args.index(name) + 1]
 
+async def _download(_beatmap_id):
+    return b"osu file format v14\n\n[HitObjects]\n" + b"x" * 100
+
 @pytest.fixture
 def map_on_disk(tmp_path, monkeypatch):
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(pp_calculator, "_download_osu_file", _download)
     path = tmp_path / "1494828.osu"
     path.write_bytes(b"osu file format v14\n\n[HitObjects]\n" + b"x" * 100)
     return path
-
-async def _download(_beatmap_id):
-    return b"osu file format v14\n\n[HitObjects]\n" + b"x" * 100
 
 async def test_a_map_is_downloaded_once_and_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(assay, "CACHE_DIR", tmp_path)
