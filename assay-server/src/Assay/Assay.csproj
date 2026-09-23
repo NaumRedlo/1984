@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Assay</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ppy.osu.Game" Version="2026.916.0" />
+    <PackageReference Include="ppy.osu.Game.Rulesets.Osu" Version="2026.916.0" />
+    <PackageReference Include="ppy.osu.Game.Rulesets.Taiko" Version="2026.916.0" />
+    <PackageReference Include="ppy.osu.Game.Rulesets.Catch" Version="2026.916.0" />
+    <PackageReference Include="ppy.osu.Game.Rulesets.Mania" Version="2026.916.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assay.Tests" />
+  </ItemGroup>
+  <Target Name="LeaveOutGameResources" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)osu.Game.Resources.dll" />
+  </Target>
+</Project>

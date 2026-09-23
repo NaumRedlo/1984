@@ -1,0 +1,15 @@
+[Unit]
+Description=1984 assay — pp from osu!'s own packages
+After=network-online.target
+
+[Service]
+Environment=ASSAY_URLS=http://127.0.0.1:5077
+Environment=ASSAY_MAPS=/var/lib/assay/maps
+EnvironmentFile=-/etc/assay.env
+ExecStart=/opt/assay/Assay
+Restart=on-failure
+DynamicUser=yes
+StateDirectory=assay
+
+[Install]
+WantedBy=multi-user.target

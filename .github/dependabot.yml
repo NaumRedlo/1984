@@ -1,5 +1,18 @@
 version: 2
 updates:
+  - package-ecosystem: nuget
+    directory: /assay-server
+    schedule:
+      interval: daily
+    groups:
+      osu:
+        patterns:
+          - "ppy.osu.Game*"
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directory: /assay-server
+    schedule:
+      interval: weekly
   - package-ecosystem: pip
     directory: /
     schedule:

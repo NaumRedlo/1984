@@ -1,0 +1,56 @@
+name: assay
+
+on:
+  push:
+    paths: ["assay-server/**", ".github/workflows/assay.yml"]
+  pull_request:
+    paths: ["assay-server/**", ".github/workflows/assay.yml"]
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: assay-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Corpus and service tests
+        run: dotnet test Assay.sln -c Release
+      - name: Self-test of the published service
+        run: |
+          dotnet publish src/Assay/Assay.csproj -c Release -r linux-x64 --self-contained false -o out
+          ./out/Assay --self-test
+
+  live:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      OSU_CLIENT_ID: ${{ secrets.OSU_CLIENT_ID }}
+      OSU_CLIENT_SECRET: ${{ secrets.OSU_CLIENT_SECRET }}
+    defaults:
+      run:
+        working-directory: assay-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Compare with osu! as it is today
+        if: env.OSU_CLIENT_ID != ''
+        run: |
+          dotnet publish src/Assay/Assay.csproj -c Release -r linux-x64 --self-contained false -o out
+          ASSAY_MAPS="$RUNNER_TEMP/maps" ./out/Assay &
+          for i in $(seq 30); do curl -sf http://127.0.0.1:5077/health && break; sleep 1; done
+          python3 tools/check_live.py
+      - name: No osu! credentials
+        if: env.OSU_CLIENT_ID == ''
+        run: echo "::warning::OSU_CLIENT_ID / OSU_CLIENT_SECRET are not set — the live comparison was skipped"
