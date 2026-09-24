@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from services.image.constants import (
+    status_colours,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     ACCENT_RED,
@@ -27,8 +28,8 @@ from services.image.utils import (
     download_image,
     load_icon,
     load_mod_icon,
+    mod_ink,
     cover_center_crop,
-    rounded_rect_crop,
 )
 from utils.osu.pp_calculator import calculate_strains, calculate_pp, note_drift
 from utils.osu import star_rating
@@ -85,11 +86,18 @@ def _strain_y_at(series: List[float], frac: float) -> float:
         + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
     )
 
-_STATUS_COLORS = {
-    "ranked": (80, 190, 90), "approved": (80, 190, 90), "qualified": (80, 150, 230),
-    "loved": (230, 110, 170), "pending": (210, 190, 60), "wip": (210, 190, 60),
-    "graveyard": (120, 120, 135),
-}
+def _whole_picture(src: Image.Image, w: int, h: int) -> Image.Image:
+    backdrop = cover_center_crop(src, w, h).convert("RGB").filter(ImageFilter.GaussianBlur(10))
+    backdrop = Image.blend(backdrop, Image.new("RGB", (w, h), (0, 0, 0)), 0.45)
+    scale = min(w / src.width, h / src.height)
+    size = (max(1, round(src.width * scale)), max(1, round(src.height * scale)))
+    whole = src.convert("RGB").resize(size, Image.LANCZOS)
+    backdrop.paste(whole, ((w - size[0]) // 2, (h - size[1]) // 2))
+    return backdrop
+
+async def _map_background(covers: str) -> Optional[Image.Image]:
+    return await download_image(f"{covers}/raw.jpg") or await download_image(f"{covers}/cover.jpg")
+
 _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
                0: "pending", -1: "wip", -2: "graveyard"}
 
@@ -241,7 +249,7 @@ class RecentCardMixin:
         cov_w = int(cov_h * 1.85)
         cov_x, cov_y = M + pad, hero_y + pad
         if cover:
-            thumb = cover_center_crop(cover, cov_w, cov_h).convert("RGB")
+            thumb = _whole_picture(cover, cov_w, cov_h)
             img.paste(thumb, (cov_x, cov_y), self._rounded_mask((cov_w, cov_h), 12))
         else:
             panel(cov_x, cov_y, cov_w, cov_h, r=12, fill=(40, 40, 58))
@@ -259,14 +267,9 @@ class RecentCardMixin:
 
         mav_sz = 28
         mrow_y = hero_y + 22
-        if mapper_avatar:
-            mav = rounded_rect_crop(mapper_avatar, mav_sz, radius=6)
-            img.paste(mav, (mx, mrow_y), mav)
-            draw = ImageDraw.Draw(img)
-        else:
-            panel(mx, mrow_y, mav_sz, mav_sz, r=6, fill=(50, 50, 70))
-        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y - 1), S["mapped_by"], f_lbl, TEXT_SECONDARY)
-        self._draw_text_shadow(draw, (mx + mav_sz + 8, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
+        draw = self._paste_ringed_avatar(img, mapper_avatar, mx + 2, mrow_y, mav_sz)
+        self._draw_text_shadow(draw, (mx + mav_sz + 12, mrow_y - 1), S["mapped_by"], f_lbl, TEXT_SECONDARY)
+        self._draw_text_shadow(draw, (mx + mav_sz + 12, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
 
         t_y = hero_y + 60
         disp = title
@@ -309,10 +312,10 @@ class RecentCardMixin:
 
         if status:
             slabel = status.upper()
-            sc = _STATUS_COLORS.get(status, (110, 110, 130))
+            sc, sink = status_colours(status)
             spw = self._text_size(draw, slabel, f_pill)[0] + 18
             self._aa_rounded_fill(img, (cx, chip_y - 3, cx + spw, chip_y + 23), radius=13, fill=sc)
-            self._text_center(draw, cx + spw // 2, chip_y + 1, slabel, f_pill, (255, 255, 255))
+            self._text_center(draw, cx + spw // 2, chip_y + 1, slabel, f_pill, sink)
         draw = ImageDraw.Draw(img)
 
         mods = data.get("mods", "")
@@ -326,14 +329,13 @@ class RecentCardMixin:
                 col = MOD_COLORS.get(m, (100, 100, 120))
                 self._aa_rounded_fill(img, (bx, my, bx + mw, my + mh), radius=9, fill=col)
                 glyph = load_mod_icon(m, size=gsz)
+                ink = mod_ink(col)
                 if glyph:
-                    lum = 0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]
-                    ink = (25, 22, 26) if lum > 140 else (255, 255, 255)
                     tinted = Image.new("RGBA", glyph.size, ink + (255,))
                     tinted.putalpha(glyph.split()[3])
                     img.paste(tinted, (bx + (mw - glyph.width) // 2, my + (mh - glyph.height) // 2), tinted)
                 else:
-                    self._text_center(ImageDraw.Draw(img), bx + mw // 2, my + mh // 2 - 8, m, f_pill, (255, 255, 255))
+                    self._text_center(ImageDraw.Draw(img), bx + mw // 2, my + mh // 2 - 8, m, f_pill, ink)
                 bx -= 6
             draw = ImageDraw.Draw(img)
 
@@ -628,12 +630,12 @@ class RecentCardMixin:
         mods = data.get("mods", "") or ""
         player_cover_url = data.get("player_cover_url") or None
 
-        cover_url = f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg" if bsid else None
+        covers = f"https://assets.ppy.sh/beatmaps/{bsid}/covers" if bsid else None
         mapper_avatar_url = f"https://a.ppy.sh/{mapper_id}" if mapper_id else None
         player_avatar_url = f"https://a.ppy.sh/{player_id}" if player_id else None
 
         cover, mapper_avatar, player_avatar, player_cover, strains = await asyncio.gather(
-            download_image(cover_url) if cover_url else _none_coro(),
+            _map_background(covers) if covers else _none_coro(),
             download_image(mapper_avatar_url) if mapper_avatar_url else _none_coro(),
             download_image(player_avatar_url) if player_avatar_url else _none_coro(),
             download_image(player_cover_url) if player_cover_url else _none_coro(),

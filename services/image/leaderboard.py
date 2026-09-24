@@ -5,6 +5,7 @@ from typing import Dict, Optional
 from PIL import Image, ImageDraw
 
 from services.image.constants import (
+    status_colours, status_name,
     BG_COLOR, HEADER_BG, ROW_EVEN, ROW_ODD,
     TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_RED,
     TOP_COLORS, PANEL_BG, GRADE_COLORS, CARD_WIDTH, PADDING_X, VALUE_RIGHT_X,
@@ -156,12 +157,9 @@ class LeaderboardCardGenerator(BaseCardRenderer):
             mav = mapper_avatar if isinstance(mapper_avatar, Image.Image) else self._image_from_bytes(mapper_avatar)
             mav_y = hero_y + 34
             if mav:
-                av = rounded_rect_crop(mav, 28, radius=6)
-                img.paste(av, (PADDING_X, mav_y), av)
-                self._aa_rounded_outline(img, (PADDING_X - 1, mav_y - 1, PADDING_X + 29, mav_y + 29), radius=6, outline=TEXT_SECONDARY, width=2)
-                draw = ImageDraw.Draw(img)
-                draw.text((PADDING_X + 36, mav_y), "mapped by", font=self.font_stat_label, fill=TEXT_SECONDARY)
-                draw.text((PADDING_X + 36, mav_y + 14), mapper_name, font=self.font_small, fill=(200, 200, 210))
+                draw = self._paste_ringed_avatar(img, mav, PADDING_X + 2, mav_y, 28)
+                draw.text((PADDING_X + 40, mav_y), "mapped by", font=self.font_stat_label, fill=TEXT_SECONDARY)
+                draw.text((PADDING_X + 40, mav_y + 14), mapper_name, font=self.font_small, fill=(200, 200, 210))
             else:
                 _shadow_text(draw, (PADDING_X, mav_y + 4), f"mapped by {mapper_name}", self.font_small, TEXT_SECONDARY)
 
@@ -192,27 +190,17 @@ class LeaderboardCardGenerator(BaseCardRenderer):
                 ver_text = f"[{version}...]"
             _shadow_text(draw, (PADDING_X, ver_y), ver_text, self.font_small, TEXT_SECONDARY)
 
-            STATUS_COLORS = {
-                'ranked': (80, 180, 80), 'approved': (80, 180, 80),
-                'qualified': (80, 140, 220), 'loved': (220, 100, 160),
-                'pending': (200, 180, 50), 'wip': (200, 180, 50),
-                'graveyard': (100, 100, 100),
-            }
-            STATUS_INT_MAP = {
-                4: 'loved', 3: 'qualified', 2: 'approved', 1: 'ranked',
-                0: 'pending', -1: 'wip', -2: 'graveyard',
-            }
             raw_status = data.get("beatmap_status", "")
-            beatmap_status = STATUS_INT_MAP.get(raw_status, "") if isinstance(raw_status, int) else (str(raw_status) if raw_status else "")
+            beatmap_status = status_name(raw_status)
             if beatmap_status:
                 status_label = beatmap_status.upper()
-                status_color = STATUS_COLORS.get(beatmap_status.lower(), (100, 100, 120))
+                status_color, status_ink = status_colours(beatmap_status)
                 ver_end_bbox = draw.textbbox((0, 0), ver_text, font=self.font_small)
                 status_x = PADDING_X + ver_end_bbox[2] - ver_end_bbox[0] + 10
                 sb_bbox = draw.textbbox((0, 0), status_label, font=self.font_stat_label)
                 sb_w = sb_bbox[2] - sb_bbox[0] + 12
                 self._aa_rounded_fill(img, (status_x, ver_y + 1, status_x + sb_w, ver_y + 19), radius=4, fill=status_color)
-                self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, (255, 255, 255))
+                self._text_center(draw, status_x + sb_w // 2, ver_y + 2, status_label, self.font_stat_label, status_ink)
 
             id_text = f"ID: {beatmap_id}"
             id_bbox = draw.textbbox((0, 0), id_text, font=self.font_small)

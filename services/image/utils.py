@@ -7,7 +7,7 @@ import aiohttp
 from PIL import Image, ImageDraw
 
 from utils.logger import get_logger
-from services.image.constants import ICONS_DIR, FLAGS_DIR, FALLBACK_CANDIDATES
+from services.image.constants import ICONS_DIR, FLAGS_DIR, FALLBACK_CANDIDATES, MOD_INK
 
 logger = get_logger("services.image_gen")
 
@@ -41,6 +41,10 @@ def load_icon(name: str, size: int = 20, colour=None) -> Optional[Image.Image]:
     except Exception:
         _icon_cache[key] = None
         return None
+
+def mod_ink(colour) -> tuple[int, int, int]:
+    r, g, b = colour[:3]
+    return MOD_INK if 0.299 * r + 0.587 * g + 0.114 * b > 120 else (255, 255, 255)
 
 def load_mod_icon(acronym: str, size: int = 24) -> Optional[Image.Image]:
     if not acronym:

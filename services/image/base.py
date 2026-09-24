@@ -1,18 +1,18 @@
 from io import BytesIO
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from utils.logger import get_logger
 from services.image.constants import (
     BG_COLOR, TEXT_PRIMARY, TEXT_SECONDARY,
-    ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS,
+    ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS, MAPPER_RING,
     PADDING_X,
     TORUS_BOLD, TORUS_SEMI, TORUS_REG,
     MPLUS_BOLD, MPLUS_REG,
     PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG,
 )
-from services.image.utils import _find_font, load_mod_icon, cover_center_crop
+from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
 from services.image.text_render import (
     draw_text_multifont, text_size_multifont,
 )
@@ -366,13 +366,16 @@ class BaseCardRenderer:
             outline=(0, 0, 0, 80), width=max(1, ss),
         )
 
+        ink = mod_ink(col)
         glyph_target = int(big * 0.78)
         glyph = load_mod_icon(mod, size=glyph_target) if mod else None
         if glyph is not None:
+            tinted = Image.new("RGBA", glyph.size, ink + (255,))
+            tinted.putalpha(glyph.split()[3])
             disc.paste(
-                glyph,
+                tinted,
                 ((big - glyph.width) // 2, (big - glyph.height) // 2),
-                glyph,
+                tinted,
             )
 
         disc = disc.resize((size, size), Image.LANCZOS)
@@ -385,9 +388,40 @@ class BaseCardRenderer:
             th = bb[3] - bb[1]
             d.text(
                 (x + (size - tw) // 2 - bb[0], y + (size - th) // 2 - bb[1]),
-                mod, font=self.font_stat_label, fill=(255, 255, 255),
+                mod, font=self.font_stat_label, fill=ink,
             )
         return x + size
+
+    def _paste_ringed_avatar(
+        self, img: Image.Image, avatar: Optional[Image.Image], x: int, y: int, size: int,
+        *, ring=MAPPER_RING, width: int = 2, glow: int = 6,
+    ) -> ImageDraw.ImageDraw:
+        ss = 4
+        pad = width + glow * 2
+        full = size + 2 * pad
+        halo = Image.new("RGBA", (full * ss, full * ss), (0, 0, 0, 0))
+        edge = (pad - width) * ss
+        ImageDraw.Draw(halo).ellipse(
+            (edge, edge, full * ss - edge - 1, full * ss - edge - 1),
+            outline=tuple(ring) + (255,), width=width * 3 * ss,
+        )
+        halo = halo.resize((full, full), Image.LANCZOS).filter(ImageFilter.GaussianBlur(glow * 0.6))
+        img.paste(halo, (x - pad, y - pad), halo)
+        img.paste(halo, (x - pad, y - pad), halo)
+
+        face = Image.new("RGBA", (size * ss, size * ss), (50, 50, 70, 255))
+        if avatar is not None:
+            face = cover_center_crop(avatar, size * ss, size * ss).convert("RGBA")
+        mask = Image.new("L", (size * ss, size * ss), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, size * ss - 1, size * ss - 1), fill=255)
+        face.putalpha(mask)
+        face = face.resize((size, size), Image.LANCZOS)
+        img.paste(face, (x, y), face)
+        self._aa_ellipse_outline(
+            img, (x - width, y - width, x + size + width, y + size + width),
+            outline=tuple(ring), width=width,
+        )
+        return ImageDraw.Draw(img)
 
     def _normalize_mods(self, mods) -> list[str]:
         if not mods:

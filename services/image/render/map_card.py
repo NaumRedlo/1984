@@ -4,7 +4,7 @@ from typing import Dict, Optional
 from PIL import Image, ImageDraw
 
 from services.image import colors
-from services.image.constants import TEXT_SECONDARY
+from services.image.constants import TEXT_SECONDARY, status_colours
 from services.image.utils import download_image, cover_center_crop, load_icon, tint_icon
 from services.image.render.recent import _sr_color
 from utils.formatting.text import format_length
@@ -22,11 +22,6 @@ _WHATIF_W = 900
 _PANEL = colors.CARD
 _WHITE = colors.TEXT_PRIMARY
 
-_STATUS_COLORS = {
-    "ranked": (118, 188, 86), "approved": (118, 188, 86),
-    "loved": (255, 102, 171), "qualified": (102, 170, 255),
-}
-_STATUS_DEFAULT = (120, 122, 140)
 
 _WHATIF_CELL = colors.PANEL
 _WHATIF_MUTED = colors.TEXT_MUTED
@@ -40,7 +35,10 @@ _WHATIF_STRINGS = {
 }
 
 def _status_pill_color(status: Optional[str]) -> tuple:
-    return _STATUS_COLORS.get((status or "").lower(), _STATUS_DEFAULT)
+    return status_colours(status)[0]
+
+def _status_pill_ink(status: Optional[str]) -> tuple:
+    return status_colours(status)[1]
 
 def _vertical_shade(w: int, h: int, top_a: int, bot_a: int) -> Image.Image:
     col = Image.new("L", (1, h))
@@ -119,7 +117,7 @@ class MapCardMixin:
                                   radius=(th + py * 2) // 2, fill=col)
             d2 = ImageDraw.Draw(card)
             d2.text((_PAD + px, 18 + py - 1), status, font=self.font_stat_label,
-                    fill=(15, 15, 18))
+                    fill=_status_pill_ink(data.get("status")))
             draw = ImageDraw.Draw(card)
 
         self._draw_sr_badge_centered(card, draw, w - _PAD - 36, 30, sr)
@@ -375,7 +373,7 @@ class MapCardMixin:
             self._aa_rounded_fill(card, (sx0, sy0, sx1, sy1), radius=(sth + spy * 2) // 2, fill=scol)
             draw = ImageDraw.Draw(card)
             self._draw_text(draw, (sx0 + spx, self._tt_cy(status, self.font_stat_label, (sy0 + sy1) // 2)),
-                            status, self.font_stat_label, (15, 15, 18))
+                            status, self.font_stat_label, _status_pill_ink(data.get("status")))
             draw = ImageDraw.Draw(card)
 
         sr = float(data.get("star_rating") or 0.0)

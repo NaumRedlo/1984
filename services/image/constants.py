@@ -36,21 +36,60 @@ GRADE_COLORS = {
     "F": (100, 100, 100),
 }
 
-MOD_COLORS = {
-    "HR": (200, 50, 50),
-    "DT": (160, 80, 200),
-    "NC": (160, 80, 200),
-    "HD": (200, 140, 50),
-    "SD": (140, 100, 60),
-    "PF": (140, 100, 60),
-    "NF": (60, 120, 200),
-    "EZ": (100, 200, 180),
-    "FL": (220, 200, 60),
-    "HT": (100, 160, 100),
-    "SO": (180, 180, 180),
-    "CL": (180, 180, 200),
-    "TD": (120, 180, 170),
+MOD_TYPE_COLORS = {
+    "reduction": (178, 255, 102),
+    "increase": (255, 102, 102),
+    "conversion": (140, 102, 255),
+    "automation": (102, 204, 255),
+    "fun": (255, 102, 171),
+    "system": (255, 204, 34),
 }
+
+MOD_TYPES = {
+    "reduction": ("DC", "EZ", "HT", "NF"),
+    "increase": ("AC", "BL", "DT", "FI", "FL", "HD", "HR", "NC", "PF", "SD", "ST", "TC"),
+    "conversion": ("AL", "CL", "CO", "DA", "MR", "RD", "SG", "TP"),
+    "automation": ("AP", "AT", "CN", "RX", "SO"),
+    "fun": ("AD", "AS", "BM", "BR", "BU", "DF", "DP", "FR", "GR", "MG", "MU", "NS",
+            "RP", "SI", "SY", "TR", "WD", "WG", "WU"),
+    "system": ("SV2", "TD"),
+}
+
+MOD_COLORS = {
+    acronym: MOD_TYPE_COLORS[kind]
+    for kind, acronyms in MOD_TYPES.items()
+    for acronym in acronyms
+}
+
+MOD_INK = (34, 34, 34)
+
+MAPPER_RING = (235, 64, 64)
+
+STATUS_COLORS = {
+    "ranked": (179, 255, 102),
+    "approved": (179, 255, 102),
+    "qualified": (102, 204, 255),
+    "loved": (255, 102, 171),
+    "pending": (255, 217, 102),
+    "wip": (255, 153, 102),
+    "graveyard": (0, 0, 0),
+}
+STATUS_INK = (70, 57, 63)
+GRAVEYARD_INK = (112, 92, 101)
+STATUS_DEFAULT = (110, 110, 130)
+_STATUS_BY_NUMBER = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
+                     0: "pending", -1: "wip", -2: "graveyard"}
+
+def status_name(status) -> str:
+    if isinstance(status, int):
+        return _STATUS_BY_NUMBER.get(status, "")
+    return str(status or "").strip().lower()
+
+def status_colours(status) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    name = status_name(status)
+    if name not in STATUS_COLORS:
+        return STATUS_DEFAULT, (255, 255, 255)
+    return STATUS_COLORS[name], GRAVEYARD_INK if name == "graveyard" else STATUS_INK
 
 MOD_ACRONYMS = frozenset({
     "AD", "AL", "AP", "AS", "AT", "BL", "BM", "BR", "BU", "CL", "CN", "CO",
