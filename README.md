@@ -156,7 +156,6 @@ project's to relicense:
 | | |
 |---|---|
 | `assets/fonts/Nunito-*` | Nunito (SIL OFL 1.1, `OFL-Nunito.txt`); static Regular, Bold and ExtraBold from Google Fonts (ExtraBold for bold text, Bold for semibold: drawn smoothed they read as Commissioner's Bold and SemiBold did) |
-| `assets/fonts/JetBrainsMono-*` | JetBrains Mono (SIL OFL 1.1, `OFL-JetBrainsMono.txt`) |
 | `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c (SIL OFL 1.1, `OFL-MPLUSRounded1c.txt`) |
 | `assets/flags/` | Country flags, taken from the osu! framework repository |
 | `assets/icons/` | Card icons from [Flaticon](https://www.flaticon.com/) |

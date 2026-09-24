@@ -8,7 +8,7 @@ from services.image.constants import (
     BG_COLOR, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS, MAPPER_RING,
     PADDING_X,
-    SANS_BOLD, SANS_SEMI, SANS_REG, MONO_BOLD,
+    SANS_BOLD, SANS_SEMI, SANS_REG, NUM_BOLD,
     MPLUS_BOLD, MPLUS_REG,
 )
 from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
@@ -24,7 +24,7 @@ class BaseCardRenderer:
         bold = _find_font(SANS_BOLD)
         semi = _find_font(SANS_SEMI)
         reg = _find_font(SANS_REG)
-        mono = _find_font(MONO_BOLD) or bold
+        mono = _find_font(NUM_BOLD) or bold
 
         if bold:
             self.font_title = ImageFont.truetype(bold, 28)

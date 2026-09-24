@@ -166,7 +166,7 @@ class RecentCardMixin:
         draw = ImageDraw.Draw(img)
 
         if not hasattr(self, "_rc_fonts"):
-            from services.image.constants import MONO_BOLD, MPLUS_BOLD, SANS_BOLD, SANS_SEMI, SANS_REG
+            from services.image.constants import NUM_BOLD, MPLUS_BOLD, SANS_BOLD, SANS_SEMI, SANS_REG
             mpb = _find_font(MPLUS_BOLD)
 
             cyrillic_for = {
@@ -178,9 +178,9 @@ class RecentCardMixin:
                 "head": (SANS_BOLD, 24, self.font_title), "title": (SANS_BOLD, 34, self.font_big),
                 "artist": (SANS_SEMI, 20, self.font_subtitle), "chip": (SANS_BOLD, 20, self.font_label),
                 "pill": (SANS_BOLD, 15, self.font_stat_label), "section": (SANS_BOLD, 15, self.font_stat_label),
-                "val": (MONO_BOLD, 32, self.font_big), "val2": (MONO_BOLD, 26, self.font_stat_value),
+                "val": (NUM_BOLD, 32, self.font_big), "val2": (NUM_BOLD, 26, self.font_stat_value),
                 "lbl": (SANS_SEMI, 13, self.font_stat_label), "small": (SANS_REG, 15, self.font_small),
-                "grade": (MONO_BOLD, 76, self.font_vs), "player": (SANS_BOLD, 20, self.font_label),
+                "grade": (NUM_BOLD, 76, self.font_vs), "player": (SANS_BOLD, 20, self.font_label),
             }
             fonts = {}
             for k, (path, size, fb) in specs.items():

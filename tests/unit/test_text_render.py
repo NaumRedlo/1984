@@ -1,7 +1,7 @@
 from PIL import Image, ImageDraw, ImageFont
 
 from services.image import text_render as tr
-from services.image.constants import MONO_BOLD, MPLUS_BOLD, SANS_BOLD
+from services.image.constants import NUM_BOLD, MPLUS_BOLD, SANS_BOLD
 from services.image.utils import _find_font
 
 def _draw():
@@ -11,7 +11,7 @@ def _draw():
 def _fonts():
     sans = ImageFont.truetype(_find_font(SANS_BOLD), 24)
     mplus = ImageFont.truetype(_find_font(MPLUS_BOLD), 24)
-    mono = ImageFont.truetype(_find_font(MONO_BOLD), 24)
+    mono = ImageFont.truetype(_find_font(NUM_BOLD), 24)
     return sans, mplus, mono
 
 def test_cyrillic_range_covers_russian_alphabet():

@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from services.image.constants import (
     SANS_BOLD,
-    MONO_BOLD,
+    NUM_BOLD,
     SANS_SEMI,
     SANS_REG,
     MPLUS_BOLD,
@@ -74,7 +74,7 @@ class TopPlaysCardMixin:
         b = _find_font(SANS_BOLD)
         s = _find_font(SANS_SEMI) or b
         r = _find_font(SANS_REG) or b
-        m = _find_font(MONO_BOLD) or b
+        m = _find_font(NUM_BOLD) or b
 
         def mk(path, size, fallback):
             try:

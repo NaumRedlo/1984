@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from config.settings import TIMEZONE
 from services.image.constants import (
-    GRADE_COLORS, MOD_ACRONYMS, MONO_BOLD, RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL,
+    GRADE_COLORS, MOD_ACRONYMS, NUM_BOLD, RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL,
     RECENT_TRACK, TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS, status_colours, status_name,
 )
 from services.image.utils import (
@@ -448,7 +448,7 @@ class MapLeaderboardCardMixin:
     def _mlb_grade_font(self):
         font = getattr(self, "_mlb_grade_cache", None)
         if font is None:
-            path = _find_font(MONO_BOLD)
+            path = _find_font(NUM_BOLD)
             font = ImageFont.truetype(path, 24) if path else self.font_label
             self._mlb_grade_cache = font
         return font
@@ -456,7 +456,7 @@ class MapLeaderboardCardMixin:
     def _mlb_grade_font(self):
         font = getattr(self, "_mlb_grade_cache", None)
         if font is None:
-            path = _find_font(MONO_BOLD)
+            path = _find_font(NUM_BOLD)
             font = ImageFont.truetype(path, 20) if path else self.font_label
             self._mlb_grade_cache = font
         return font
