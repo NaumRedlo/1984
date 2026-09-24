@@ -209,6 +209,17 @@ async def test_a_group_the_person_is_not_in_is_refused(served, factory):
     client, mine = served
     assert (await client.get("/render/community?chat=-5", headers=mine)).status == 403
 
+async def test_a_member_opens_another_member_s_dossier(served, factory):
+    naum, koto, lumen = await _seed(factory)
+    client, mine = served
+    reply = await client.get(f"/render/community/person?chat={CHAT}&id={lumen}", headers=mine)
+    assert reply.status == 200
+    them = await reply.json()
+    assert them["name"] == "lumen" and them["you"] is False
+    assert them["history"][0]["pp"] == 5000.0
+    assert (await client.get(f"/render/community/person?chat={CHAT}&id=999", headers=mine)).status == 404
+    assert (await client.get(f"/render/community/person?chat=-5&id={lumen}", headers=mine)).status == 403
+
 async def test_friends_need_a_linked_osu_account(served, factory):
     client, mine = served
     reply = await client.get("/render/me/friends", headers=mine)

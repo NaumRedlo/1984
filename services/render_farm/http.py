@@ -368,6 +368,28 @@ def make_routes() -> list[web.RouteDef]:
                 logger.info("chat %s is not reachable: %s", chat_id, exc)
         return web.json_response(body)
 
+    async def someone(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        chat_said, user_said = request.query.get("chat", ""), request.query.get("id", "")
+        if not chat_said.lstrip("-").isdigit() or not user_said.isdigit():
+            return web.json_response({"error": "no one"}, status=400)
+        chat_id, user_id = int(chat_said), int(user_said)
+        if chat_id > 0 or not await _member(chat_id, owner.telegram_id):
+            return web.json_response({"error": "not your chat"}, status=403)
+
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await gathered.someone(session, user_id, chat_id, owner.telegram_id)
+        if body is None:
+            return web.json_response({"error": "no one"}, status=404)
+        return web.json_response(body)
+
     async def card(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -484,6 +506,7 @@ def make_routes() -> list[web.RouteDef]:
         web.get("/render/me/chats", chats),
         web.get("/render/chat/{chat_id}/avatar", chat_avatar),
         web.get("/render/community", community),
+        web.get("/render/community/person", someone),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

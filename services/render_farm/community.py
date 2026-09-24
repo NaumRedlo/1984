@@ -250,6 +250,17 @@ async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optio
     mine = await chosen(session, viewer, chat_id)
     if mine is None:
         return None
+    return await _profile(session, mine, you=True, now=now)
+
+async def someone(session, user_id: int, chat_id: int, viewer: int, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+    found = (await session.execute(
+        select(User).where(User.id == user_id, User.chat_id == chat_id, User.osu_user_id.isnot(None))
+    )).scalars().first()
+    if found is None:
+        return None
+    return await _profile(session, found, you=found.telegram_id == viewer, now=now)
+
+async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) -> dict[str, Any]:
     held = [
         row for row in (await session.execute(
             select(UserTitleProgress).where(UserTitleProgress.user_id == mine.id, UserTitleProgress.unlocked.is_(True))
@@ -272,7 +283,7 @@ async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optio
         top=[_play(row) for row in top],
         moved=[0] * len(DELTA_CATEGORIES),
         gained=[0.0] * len(DELTA_CATEGORIES),
-        you=True,
+        you=you,
     )
     body["recent"] = [{"passed": row.passed is not False, **_play(row, when=row.played_at)} for row in recent]
     body["duels"] = [int(mine.duel_wins or 0), int(mine.duel_losses or 0)]
