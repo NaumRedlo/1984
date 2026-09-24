@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
@@ -104,7 +105,16 @@ def _hits_per_play(user) -> float:
     plays = user.play_count or 0
     return round((user.total_hits or 0) / plays, 1) if plays else 0.0
 
-def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: list[float], you: bool) -> dict[str, Any]:
+def _was(anchor) -> list[int]:
+    try:
+        closing = json.loads(anchor.prev_positions) if anchor is not None and anchor.prev_positions else {}
+    except (ValueError, TypeError):
+        closing = {}
+    if not isinstance(closing, dict):
+        closing = {}
+    return [int(closing.get(key) or 0) for key in DELTA_CATEGORIES]
+
+def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: list[float], you: bool, was: Optional[list[int]] = None) -> dict[str, Any]:
     return {
         "id": user.id,
         "osu_id": user.osu_user_id,
@@ -130,6 +140,7 @@ def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: 
         "cover": user.cover_url or "",
         "moved": moved,
         "gained": gained,
+        "was": was or [0] * len(DELTA_CATEGORIES),
         "top": top,
         "you": you,
     }
@@ -176,6 +187,7 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
             top=[_play(row) for row in best[u.id][:TOP]],
             moved=moved[u.id],
             gained=gained[u.id],
+            was=_was(anchors.get(u.id)),
             you=u.telegram_id == viewer,
         ))
     people.sort(key=lambda p: p["pp"], reverse=True)
@@ -216,6 +228,8 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
     return {
         "chat": chat_id,
         "week": week_number(period),
+        "week_began": stamp(period_start_utc(period)),
+        "collecting": not anchors,
         "people": people,
         "live": live,
         "happened": happened[:60],

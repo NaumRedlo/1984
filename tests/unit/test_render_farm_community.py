@@ -66,7 +66,8 @@ async def _seed(factory):
                               unlocked_at=NOW - timedelta(days=1)),
             LeaderboardSnapshot(tenant_chat_id=CHAT, user_id=naum.id, period_key=current_period_key(NOW),
                                 player_pp=3000, accuracy=97.0, play_count=900, play_time=7000,
-                                ranked_score=900_000, total_hits=390_000),
+                                ranked_score=900_000, total_hits=390_000,
+                                prev_positions='{"pp": 4, "play_count": 2}'),
             LeaderboardSnapshot(tenant_chat_id=CHAT, user_id=lumen.id, period_key=current_period_key(NOW),
                                 player_pp=5000, accuracy=97.0, play_count=1000, play_time=7200,
                                 ranked_score=1_000_000, total_hits=400_000),
@@ -98,6 +99,23 @@ async def test_the_week_s_moves_come_from_its_anchors(factory):
     assert me["gained"][0] == 6870.0
     climbs = [h for h in got["happened"] if h["kind"] == "climb"]
     assert climbs == [{"who": naum, "kind": "climb", "board": "pp", "from": 3, "to": 2, "at": climbs[0]["at"]}]
+
+async def test_the_last_week_s_places_and_the_collecting_state_come_along(factory):
+    naum, koto, lumen = await _seed(factory)
+    async with factory() as s:
+        got = await community.gather(s, CHAT, 7, now=NOW)
+    me = next(p for p in got["people"] if p["you"])
+    koto_was = next(p for p in got["people"] if p["name"] == "kotofey")["was"]
+    assert me["was"] == [4, 0, 2, 0, 0, 0]
+    assert koto_was == [0] * 6
+    assert got["collecting"] is False
+    assert got["week_began"] > 0
+
+def test_a_broken_closing_record_reads_as_no_places():
+    class Anchor:
+        prev_positions = "not json"
+    assert community._was(Anchor()) == [0] * 6
+    assert community._was(None) == [0] * 6
 
 async def test_plays_arrive_newest_first(factory):
     naum, koto, lumen = await _seed(factory)
