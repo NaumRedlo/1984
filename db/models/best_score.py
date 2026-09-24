@@ -31,6 +31,7 @@ class UserBestScore(Base):
     count_50 = Column(Integer, nullable=True)
     count_miss = Column(Integer, nullable=True)
     is_fc = Column(Boolean, nullable=True)
+    is_legacy = Column(Boolean, nullable=True)
     status = Column(String(20), nullable=True)
     ranked_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

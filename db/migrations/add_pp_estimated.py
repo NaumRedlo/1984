@@ -5,6 +5,7 @@ logger = logging.getLogger(__name__)
 
 _COLUMNS = [
     ("user_map_attempts", "pp_estimated", "FLOAT"),
+    ("user_best_scores", "is_legacy", "BOOLEAN"),
 ]
 
 async def run_pp_estimated_migration(engine):

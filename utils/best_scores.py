@@ -38,6 +38,10 @@ def build_top_plays_list(best_scores, *, now: Optional[datetime] = None) -> list
     out = []
     for i, s in enumerate(ordered):
         pp = _get(s, "pp", 0.0) or 0.0
+        mods = [m for m in (_get(s, "mods", "") or "").split(",") if m]
+        legacy = _get(s, "is_legacy")
+        if legacy is None:
+            legacy = "CL" in mods
         weight = WEIGHT_DECAY ** i
         delta = _classify_delta(s, now)
         out.append({
@@ -49,7 +53,8 @@ def build_top_plays_list(best_scores, *, now: Optional[datetime] = None) -> list
             "title": _get(s, "title", "") or "",
             "version": _get(s, "version", "") or "",
             "creator": _get(s, "creator", "") or "",
-            "mods": [m for m in (_get(s, "mods", "") or "").split(",") if m],
+            "mods": [m for m in mods if m not in ("CL", "NM")],
+            "client": "stable" if legacy else "lazer",
             "star_rating": _get(s, "star_rating") or 0.0,
             "eff_sr": _get(s, "eff_sr") or _get(s, "star_rating") or 0.0,
             "accuracy": _get(s, "accuracy", 0.0) or 0.0,

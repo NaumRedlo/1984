@@ -90,6 +90,7 @@ def _flatten_raw_score(raw: dict) -> dict:
         "max_combo": raw.get("max_combo", 0),
         "rank": raw.get("rank", "F"),
         "pp": raw.get("pp") or 0.0,
+        "is_legacy": bool(raw.get("legacy_score_id")),
         "previous_pp": None,
         "pp_changed_at": None,
     }

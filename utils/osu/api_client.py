@@ -464,6 +464,7 @@ class OsuApiClient:
             n_50 = _pick_stat(stats, "count_50", "meh")
             n_miss = _pick_stat(stats, "count_miss", "miss")
             is_fc_val = _is_perfect(raw)
+            is_legacy = bool(raw.get("legacy_score_id"))
 
             pp_val = raw.get("pp") or 0.0
             acc_val = raw.get("accuracy")
@@ -504,6 +505,7 @@ class OsuApiClient:
                     score_obj.count_miss = n_miss
                 if score_obj.is_fc is None and is_fc_val is not None:
                     score_obj.is_fc = is_fc_val
+                score_obj.is_legacy = is_legacy
                 if score_obj.status is None and b_status is not None:
                     score_obj.status = b_status
                 if score_obj.ranked_date is None and b_ranked_date is not None:
@@ -549,6 +551,7 @@ class OsuApiClient:
                     count_50=n_50,
                     count_miss=n_miss,
                     is_fc=is_fc_val,
+                    is_legacy=is_legacy,
                     status=b_status,
                     ranked_date=b_ranked_date,
                     pp_changed_at=None if is_baseline_sync else sync_time,

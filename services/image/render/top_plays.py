@@ -94,6 +94,7 @@ class TopPlaysCardMixin:
             "grade_badge": mk(m, 24, self.font_label),
             "pp_big": mk(m, 24, self.font_row),
             "pp_lbl": mk(s, 13, self.font_stat_label),
+            "client": mk(s, 12, self.font_stat_label),
         }
 
         mpb = _find_font(MPLUS_BOLD)
@@ -119,6 +120,7 @@ class TopPlaysCardMixin:
             "sr_chip": (mpb, pxb, 14),
             "grade_badge": (mpb, pxb, 24),
             "pp_big": (mpb, pxb, 24), "pp_lbl": (mpb, pxs, 13),
+            "client": (mpb, pxs, 12),
         }
         if isinstance(fb_map, dict):
             for key, (mp_path, _, size) in sizes.items():
@@ -177,14 +179,13 @@ class TopPlaysCardMixin:
         gap = (sparkle.width + 10) if sparkle else 0
         total_w = gap + title_w
         start_x = (TP_W - total_w) // 2
-        head_y = HEAD_Y0 + 10
-        cy = head_y + 18
+        cy = (HEAD_Y0 + STRIP_Y0) // 2
         if sparkle:
             tinted = Image.new("RGBA", sparkle.size, (228, 76, 76, 255))
             tinted.putalpha(sparkle.split()[3])
-            img.paste(tinted, (start_x, cy - sparkle.height // 2 + 2), tinted)
+            img.paste(tinted, (start_x, int(round(cy - sparkle.height / 2))), tinted)
             draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (start_x + gap, head_y + 10), title, fonts["h_title"], COL_WHITE)
+        self._text_mid(draw, start_x + gap, cy, title, fonts["h_title"], COL_WHITE)
 
     def _tp_bg_wash(self, img, cover, x, y, w, h, *, radius, darken):
         if not cover or w <= 0 or h <= 0:
@@ -261,16 +262,19 @@ class TopPlaysCardMixin:
         pp_w = self._text_size(draw, pp_txt, fonts["pp_big"])[0]
         suffix_w = self._text_size(draw, "pp", fonts["pp_lbl"])[0]
 
-        pp_top = self._tp_cy(pp_txt, fonts["pp_big"], mid)
-        _, pa, _, pb = fonts["pp_big"].getbbox(pp_txt)
-        pp_bottom = pp_top + pb
-        _, sa, _, sb = fonts["pp_lbl"].getbbox("pp")
-        suffix_top = pp_bottom - sb
-        self._draw_text(draw, (pp_right - suffix_w, suffix_top), "pp", fonts["pp_lbl"], COL_MUTED)
-        self._draw_text(draw, (pp_right - suffix_w - 4 - pp_w, pp_top), pp_txt, fonts["pp_big"], COL_CORAL)
+        client = t.get("client")
+        pp_cy = mid - 7 if client else mid
+        big_top, big_bot = draw.textbbox((0, 0), "H", font=fonts["pp_big"])[1::2]
+        base = pp_cy + (big_bot - big_top) / 2
+        lbl_top, lbl_bot = draw.textbbox((0, 0), "H", font=fonts["pp_lbl"])[1::2]
+        self._text_mid(draw, pp_right, base - (lbl_bot - lbl_top) / 2, "pp", fonts["pp_lbl"], COL_MUTED, align="right")
+        pp_left = self._text_mid(draw, pp_right - suffix_w - 4, pp_cy, pp_txt, fonts["pp_big"], COL_CORAL,
+                                 align="right") - pp_w
+        if client:
+            self._text_mid(draw, pp_right, base + 14, client, fonts["client"], COL_MUTED, align="right")
 
         text_x = badge_cx + GRADE_BADGE_R + 18
-        text_right = pp_right - suffix_w - 4 - pp_w - 16
+        text_right = pp_left - 16
         self._tp_row_text_and_chips(img, text_x, y, h, text_right, t, fonts)
 
     def _tp_grade_badge(self, img, cx, cy, grade, fonts):
@@ -291,7 +295,6 @@ class TopPlaysCardMixin:
     def _tp_row_text_and_chips(self, img, x, y, h, right_limit, t, fonts):
         draw = ImageDraw.Draw(img)
         max_w = right_limit - x
-        t_y = y + 6
         title = t.get("title") or "?"
         version = t.get("version") or ""
         vlabel = ""
@@ -301,39 +304,37 @@ class TopPlaysCardMixin:
             vpw = self._text_size(draw, vlabel, fonts["version_pill"])[0] + 16
         title_max_w = max_w - (vpw + 10 if vpw else 0)
         title = self._tp_ellipsize(draw, title, fonts["row_title"], title_max_w)
-        self._draw_text(draw, (x, t_y), title, fonts["row_title"], COL_WHITE)
+        t_cy = y + 17
+        tpx = self._text_mid(draw, x, t_cy, title, fonts["row_title"], COL_WHITE) + 10
         draw = ImageDraw.Draw(img)
         if vlabel:
-            tpx = x + self._text_size(draw, title, fonts["row_title"])[0] + 10
             if tpx + vpw <= x + max_w:
-                pill_top, pill_bot = t_y, t_y + 17
-                self._aa_rounded_fill(img, (tpx, pill_top, tpx + vpw, pill_bot), radius=8, fill=(70, 90, 150))
+                vcy = t_cy
+                self._aa_rounded_fill(img, (tpx, vcy - 10, tpx + vpw, vcy + 10), radius=10, fill=(70, 90, 150))
                 draw = ImageDraw.Draw(img)
-                vcy = (pill_top + pill_bot) // 2
-                self._draw_text(draw, (tpx + 8, self._tp_cy(vlabel, fonts["version_pill"], vcy)), vlabel, fonts["version_pill"], (235, 240, 255))
+                self._text_mid(draw, tpx + vpw / 2, vcy, vlabel, fonts["version_pill"], (235, 240, 255), align="center")
 
-        a_y = y + 27
         artist = t.get("artist") or ""
         if artist:
             art_txt = self._tp_ellipsize(draw, artist, fonts["row_artist"], max_w)
-            self._draw_text(draw, (x, a_y), art_txt, fonts["row_artist"], COL_WHITE)
+            self._text_mid(draw, x, y + 37, art_txt, fonts["row_artist"], (200, 196, 204))
             draw = ImageDraw.Draw(img)
 
         chip_y = y + h - 28
         chip_cy = chip_y + 10
 
         sr = t.get("eff_sr") or t.get("star_rating", 0.0)
-        cxp = self._draw_sr_pill(img, x, chip_y, sr, fonts["sr_chip"],
-                                 radius=6, height=24, center_y=chip_cy)
+        cxp = self._draw_sr_pill(img, x, chip_y, sr, fonts["sr_chip"], height=24, center_y=chip_cy) - 4
         draw = ImageDraw.Draw(img)
         for m in t.get("mods", []):
+            if m in ("CL", "NM"):
+                continue
             cxp = self._tt_mod_pill(img, cxp, chip_cy, m, dim=False) + 6
             draw = ImageDraw.Draw(img)
         acc_txt = f"{t.get('accuracy', 0.0):.2f}%"
-        self._draw_text(draw, (cxp + 4, self._tp_cy(acc_txt, fonts["row_meta"], chip_cy)), acc_txt, fonts["row_meta"], (208, 206, 214))
-        cxp += self._text_size(draw, acc_txt, fonts["row_meta"])[0] + 20
+        cxp = self._text_mid(draw, cxp + 4, chip_cy, acc_txt, fonts["row_meta"], (208, 206, 214)) + 20
         combo_txt = f"{_sp(t.get('max_combo', 0))}x"
-        self._draw_text(draw, (cxp, self._tp_cy(combo_txt, fonts["row_meta"], chip_cy)), combo_txt, fonts["row_meta"], COL_MUTED)
+        self._text_mid(draw, cxp, chip_cy, combo_txt, fonts["row_meta"], COL_MUTED)
 
     def _tp_cy(self, text, font, yc):
         try:

@@ -97,3 +97,13 @@ def test_profile_stats_pass_through_unchanged():
     assert data["global_rank"] == 12345
     assert data["player_pp"] == 8901.4
     assert data["accuracy"] == 98.76
+
+def test_client_comes_from_the_score_and_classic_is_not_a_mod():
+    built = build_top_plays_list([
+        _score(0, 300, mods="HD,CL", is_legacy=True),
+        _score(1, 290, mods="CL", is_legacy=False),
+        _score(2, 280, mods="DT,CL"),
+        _score(3, 270, mods="NM"),
+    ])
+    assert [r["client"] for r in built] == ["stable", "lazer", "stable", "lazer"]
+    assert [r["mods"] for r in built] == [["HD"], [], ["DT"], []]
