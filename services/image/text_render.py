@@ -53,6 +53,22 @@ def _pick_font(ch: str, primary, fallback, cyrillic_fallback):
         return cyrillic_fallback
     return fallback if fallback is not None else primary
 
+def _runs(text: str, primary, fallback, cyrillic_fallback):
+    runs: list[tuple[object, str]] = []
+    for ch in text:
+        f = _pick_font(ch, primary, fallback, cyrillic_fallback)
+        if runs and runs[-1][0] is f:
+            runs[-1] = (f, runs[-1][1] + ch)
+        else:
+            runs.append((f, ch))
+    return runs
+
+def _run_width(draw: ImageDraw.ImageDraw, run: str, font) -> int:
+    try:
+        return int(round(font.getlength(run)))
+    except Exception:
+        return sum(_glyph_width(draw, ch, font) for ch in run)
+
 def draw_text_multifont(
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int],
@@ -68,12 +84,11 @@ def draw_text_multifont(
     if not text:
         return xy[0]
     x, y = xy
-    for ch in text:
-        f = _pick_font(ch, primary, fallback, cyrillic_fallback)
+    for f, run in _runs(text, primary, fallback, cyrillic_fallback):
         if shadow:
-            draw.text((x + 1, y + 1), ch, font=f, fill=shadow_color)
-        draw.text((x, y), ch, font=f, fill=fill)
-        x += _glyph_width(draw, ch, f)
+            draw.text((x + 1, y + 1), run, font=f, fill=shadow_color)
+        draw.text((x, y), run, font=f, fill=fill)
+        x += _run_width(draw, run, f)
     return x
 
 def text_size_multifont(
@@ -88,13 +103,10 @@ def text_size_multifont(
         return 0, 0
     width = 0
     height = 0
-    for ch in text:
-        f = _pick_font(ch, primary, fallback, cyrillic_fallback)
-        width += _glyph_width(draw, ch, f)
-        bbox = draw.textbbox((0, 0), ch, font=f)
-        h = bbox[3] - bbox[1]
-        if h > height:
-            height = h
+    for f, run in _runs(text, primary, fallback, cyrillic_fallback):
+        width += _run_width(draw, run, f)
+        bbox = draw.textbbox((0, 0), run, font=f)
+        height = max(height, bbox[3] - bbox[1])
     return width, height
 
 __all__ = [

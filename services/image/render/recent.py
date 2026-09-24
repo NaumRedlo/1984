@@ -18,9 +18,9 @@ from services.image.constants import (
     RECENT_PANEL,
     GRADE_COLORS,
     MOD_COLORS,
-    TORUS_BOLD,
-    TORUS_SEMI,
-    TORUS_REG,
+    SANS_BOLD,
+    SANS_SEMI,
+    SANS_REG,
 )
 from services.image.utils import (
     _none_coro,
@@ -141,28 +141,28 @@ class RecentCardMixin:
         draw = ImageDraw.Draw(img)
 
         if not hasattr(self, "_rc_fonts"):
-            from services.image.constants import MPLUS_BOLD, PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG
+            from services.image.constants import MONO_BOLD, MPLUS_BOLD, SANS_BOLD, SANS_SEMI, SANS_REG
             mpb = _find_font(MPLUS_BOLD)
 
-            proxima_for = {
-                TORUS_BOLD: _find_font(PROXIMA_BOLD),
-                TORUS_SEMI: _find_font(PROXIMA_SEMI),
-                TORUS_REG: _find_font(PROXIMA_REG),
+            cyrillic_for = {
+                SANS_BOLD: _find_font(SANS_BOLD),
+                SANS_SEMI: _find_font(SANS_SEMI),
+                SANS_REG: _find_font(SANS_REG),
             }
             specs = {
-                "head": (TORUS_BOLD, 24, self.font_title), "title": (TORUS_BOLD, 34, self.font_big),
-                "artist": (TORUS_SEMI, 20, self.font_subtitle), "chip": (TORUS_BOLD, 20, self.font_label),
-                "pill": (TORUS_BOLD, 15, self.font_stat_label), "section": (TORUS_BOLD, 15, self.font_stat_label),
-                "val": (TORUS_BOLD, 32, self.font_big), "val2": (TORUS_BOLD, 26, self.font_stat_value),
-                "lbl": (TORUS_SEMI, 13, self.font_stat_label), "small": (TORUS_REG, 15, self.font_small),
-                "grade": (TORUS_BOLD, 76, self.font_vs), "player": (TORUS_BOLD, 20, self.font_label),
+                "head": (SANS_BOLD, 24, self.font_title), "title": (SANS_BOLD, 34, self.font_big),
+                "artist": (SANS_SEMI, 20, self.font_subtitle), "chip": (SANS_BOLD, 20, self.font_label),
+                "pill": (SANS_BOLD, 15, self.font_stat_label), "section": (SANS_BOLD, 15, self.font_stat_label),
+                "val": (MONO_BOLD, 32, self.font_big), "val2": (MONO_BOLD, 26, self.font_stat_value),
+                "lbl": (SANS_SEMI, 13, self.font_stat_label), "small": (SANS_REG, 15, self.font_small),
+                "grade": (MONO_BOLD, 76, self.font_vs), "player": (SANS_BOLD, 20, self.font_label),
             }
             fonts = {}
             for k, (path, size, fb) in specs.items():
                 f = _fnt(path, size, fb)
                 if mpb:
                     self._fb_map[id(f)] = ImageFont.truetype(mpb, size)
-                px = proxima_for.get(path)
+                px = cyrillic_for.get(path)
                 if px:
                     self._fb_cyrillic_map[id(f)] = ImageFont.truetype(px, size)
                 fonts[k] = f
@@ -615,7 +615,7 @@ class RecentCardMixin:
             fv = max(0.0, min(1.0, _strain_y_at(series, completion)))
             fy = int(y + h - h * fv)
             draw.ellipse((fx - 4, fy - 4, fx + 4, fy + 4), fill=ACCENT_RED)
-            lbl = f"{S['failed']} {completion * 100:.0f}%"
+            lbl = f"{S['failed']}  {completion * 100:.0f}%"
             tw = self._text_size(draw, lbl, f_lbl)[0]
             bw = tw + 12
             bx = min(fx + 6, x + w - bw)

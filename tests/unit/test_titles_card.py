@@ -82,11 +82,11 @@ def test_tabs_fit_within_card_width_both_languages():
 
     from PIL import Image, ImageDraw, ImageFont
     from services.image.utils import _find_font
-    from services.image.constants import TORUS_SEMI, TORUS_BOLD
+    from services.image.constants import SANS_SEMI, SANS_BOLD
     from services.image.render.titles import INNER_L, INNER_R
 
     draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-    tab_path = _find_font(TORUS_SEMI) or _find_font(TORUS_BOLD)
+    tab_path = _find_font(SANS_SEMI) or _find_font(SANS_BOLD)
     font = ImageFont.truetype(tab_path, 15)
     pad_x, gap = 12, 8
     for lang in ("en", "ru"):

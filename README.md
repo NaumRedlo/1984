@@ -169,9 +169,9 @@ project's to relicense:
 
 | | |
 |---|---|
-| `assets/fonts/ProximaSoft-*` | Commercial typeface (Mark Simonson Studio) |
-| `assets/fonts/TorusNotched-*` | osu!'s own typeface (ppy) |
-| `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c |
+| `assets/fonts/Commissioner-*` | Commissioner (SIL OFL 1.1, `OFL-Commissioner.txt`); the Bold is an instance of the variable font from google/fonts |
+| `assets/fonts/JetBrainsMono-*` | JetBrains Mono (SIL OFL 1.1, `OFL-JetBrainsMono.txt`) |
+| `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c (SIL OFL 1.1, `OFL-MPLUSRounded1c.txt`) |
 | `assets/flags/` | Country flags, taken from the osu! framework repository |
 | `assets/icons/` | Card icons from [Flaticon](https://www.flaticon.com/) |
 | Dossier's arrow and spinner mark | Not files — paths, after work by [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) and [Radhe Icon](https://www.flaticon.com/authors/radhe-icon) (spinner centre) on Flaticon |

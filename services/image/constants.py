@@ -114,18 +114,16 @@ VALUE_RIGHT_X = CARD_WIDTH - PADDING_X
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
 FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
 
-TORUS_BOLD = os.path.join(FONT_DIR, "TorusNotched-Bold.ttf")
-TORUS_SEMI = os.path.join(FONT_DIR, "TorusNotched-SemiBold.ttf")
-TORUS_REG = os.path.join(FONT_DIR, "TorusNotched-Regular.ttf")
+SANS_BOLD = os.path.join(FONT_DIR, "Commissioner-Bold.ttf")
+SANS_SEMI = os.path.join(FONT_DIR, "Commissioner-SemiBold.ttf")
+SANS_REG = os.path.join(FONT_DIR, "Commissioner-Regular.ttf")
 
-HUNINN = os.path.join(FONT_DIR, "Huninn-Regular.ttf")
+MONO_XBOLD = os.path.join(FONT_DIR, "JetBrainsMono-ExtraBold.ttf")
+MONO_BOLD = os.path.join(FONT_DIR, "JetBrainsMono-Bold.ttf")
+MONO_REG = os.path.join(FONT_DIR, "JetBrainsMono-Regular.ttf")
 
 MPLUS_BOLD = os.path.join(FONT_DIR, "MPLUSRounded1c-Bold.ttf")
 MPLUS_REG  = os.path.join(FONT_DIR, "MPLUSRounded1c-Regular.ttf")
-
-PROXIMA_BOLD = os.path.join(FONT_DIR, "ProximaSoft-Bold.ttf")
-PROXIMA_SEMI = os.path.join(FONT_DIR, "ProximaSoft-SemiBold.ttf")
-PROXIMA_REG  = os.path.join(FONT_DIR, "ProximaSoft-Regular.ttf")
 
 FLAGS_DIR = os.path.join(ASSETS_DIR, "flags")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")

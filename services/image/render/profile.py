@@ -7,14 +7,12 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from services.image import colors
 from services.image.constants import (
-    TORUS_BOLD,
-    TORUS_SEMI,
-    TORUS_REG,
+    SANS_BOLD,
+    MONO_BOLD,
+    SANS_SEMI,
+    SANS_REG,
     MPLUS_BOLD,
     MPLUS_REG,
-    PROXIMA_BOLD,
-    PROXIMA_SEMI,
-    PROXIMA_REG,
     GRADE_COLORS,
 )
 from services.image.utils import (
@@ -159,9 +157,10 @@ class ProfileCardMixin:
         cache = getattr(self, "_pf_font_cache", None)
         if cache is not None:
             return cache
-        b = _find_font(TORUS_BOLD)
-        s = _find_font(TORUS_SEMI) or b
-        r = _find_font(TORUS_REG) or b
+        b = _find_font(SANS_BOLD)
+        s = _find_font(SANS_SEMI) or b
+        r = _find_font(SANS_REG) or b
+        m = _find_font(MONO_BOLD) or b
 
         def mk(path, size, fallback):
             try:
@@ -174,19 +173,19 @@ class ProfileCardMixin:
             "handle": mk(r, 28, self.font_subtitle),
             "country": mk(s, 23, self.font_subtitle),
             "atitle": mk(b, 33, self.font_big),
-            "rank_val": mk(b, 48, self.font_big),
+            "rank_val": mk(m, 48, self.font_big),
             "rank_lbl": mk(s, 20, self.font_label),
-            "country_val": mk(b, 42, self.font_big),
+            "country_val": mk(m, 42, self.font_big),
             "title": mk(s, 18, self.font_stat_label),
-            "stat_val": mk(b, 36, self.font_stat_value),
+            "stat_val": mk(m, 36, self.font_stat_value),
             "stat_lbl": mk(s, 16, self.font_stat_label),
-            "grade": mk(b, 34, self.font_row),
-            "count": mk(b, 20, self.font_label),
+            "grade": mk(m, 34, self.font_row),
+            "count": mk(m, 20, self.font_label),
             "ps_lbl": mk(r, 19, self.font_label),
-            "ps_val": mk(b, 19, self.font_row),
-            "poster_pp": mk(b, 16, self.font_row),
+            "ps_val": mk(m, 19, self.font_row),
+            "poster_pp": mk(m, 16, self.font_row),
             "poster_acc": mk(r, 13, self.font_small),
-            "poster_grade": mk(b, 42, self.font_grade),
+            "poster_grade": mk(m, 42, self.font_grade),
             "axis": mk(r, 14, self.font_small),
             "pill": mk(b, 18, self.font_label),
             "footer": mk(r, 17, self.font_small),
@@ -208,9 +207,9 @@ class ProfileCardMixin:
             fb_map[id(f["handle"])] = mfb(mpr, 28)
             fb_map[id(f["country"])] = mfb(mpr, 23)
 
-        pxb = _find_font(PROXIMA_BOLD)
-        pxs = _find_font(PROXIMA_SEMI) or pxb
-        pxr = _find_font(PROXIMA_REG) or pxb
+        pxb = _find_font(SANS_BOLD)
+        pxs = _find_font(SANS_SEMI) or pxb
+        pxr = _find_font(SANS_REG) or pxb
         fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
         if isinstance(fb_cy_map, dict):
             cy_sizes = {
@@ -642,7 +641,7 @@ class ProfileCardMixin:
         if label_w:
             widest = max(self._text_size(draw, s, axis_font)[0] for s in axis_labels)
             if widest > label_w:
-                path = _find_font(TORUS_REG)
+                path = _find_font(SANS_REG)
                 size = 14
                 while size > 9 and widest > label_w and path:
                     size -= 1

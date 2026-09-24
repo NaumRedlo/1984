@@ -6,14 +6,12 @@ from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from services.image.constants import (
-    TORUS_BOLD,
-    TORUS_SEMI,
-    TORUS_REG,
+    SANS_BOLD,
+    MONO_BOLD,
+    SANS_SEMI,
+    SANS_REG,
     MPLUS_BOLD,
     MPLUS_REG,
-    PROXIMA_BOLD,
-    PROXIMA_SEMI,
-    PROXIMA_REG,
     GRADE_COLORS,
 )
 from services.image.utils import (
@@ -73,9 +71,10 @@ class TopPlaysCardMixin:
         cache = getattr(self, "_tp_font_cache", None)
         if cache is not None:
             return cache
-        b = _find_font(TORUS_BOLD)
-        s = _find_font(TORUS_SEMI) or b
-        r = _find_font(TORUS_REG) or b
+        b = _find_font(SANS_BOLD)
+        s = _find_font(SANS_SEMI) or b
+        r = _find_font(SANS_REG) or b
+        m = _find_font(MONO_BOLD) or b
 
         def mk(path, size, fallback):
             try:
@@ -92,8 +91,8 @@ class TopPlaysCardMixin:
             "version_pill": mk(b, 12, self.font_stat_label),
             "row_meta": mk(s, 14, self.font_stat_label),
             "sr_chip": mk(b, 14, self.font_label),
-            "grade_badge": mk(b, 24, self.font_label),
-            "pp_big": mk(b, 24, self.font_row),
+            "grade_badge": mk(m, 24, self.font_label),
+            "pp_big": mk(m, 24, self.font_row),
             "pp_lbl": mk(s, 13, self.font_stat_label),
         }
 
@@ -107,9 +106,9 @@ class TopPlaysCardMixin:
                 return None
 
         fb_map = getattr(self, "_fb_map", None)
-        pxb = _find_font(PROXIMA_BOLD)
-        pxs = _find_font(PROXIMA_SEMI) or pxb
-        pxr = _find_font(PROXIMA_REG) or pxb
+        pxb = _find_font(SANS_BOLD)
+        pxs = _find_font(SANS_SEMI) or pxb
+        pxr = _find_font(SANS_REG) or pxb
         fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
 
         sizes = {

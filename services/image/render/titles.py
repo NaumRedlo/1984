@@ -7,14 +7,12 @@ from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from services.image.constants import (
-    TORUS_BOLD,
-    TORUS_SEMI,
-    TORUS_REG,
+    SANS_BOLD,
+    MONO_BOLD,
+    SANS_SEMI,
+    SANS_REG,
     MPLUS_BOLD,
     MPLUS_REG,
-    PROXIMA_BOLD,
-    PROXIMA_SEMI,
-    PROXIMA_REG,
     MOD_COLORS,
 )
 from services.image.utils import (
@@ -151,9 +149,10 @@ class TitlesCardMixin:
         cache = getattr(self, "_tt_font_cache", None)
         if cache is not None:
             return cache
-        b = _find_font(TORUS_BOLD)
-        s = _find_font(TORUS_SEMI) or b
-        r = _find_font(TORUS_REG) or b
+        b = _find_font(SANS_BOLD)
+        s = _find_font(SANS_SEMI) or b
+        r = _find_font(SANS_REG) or b
+        m = _find_font(MONO_BOLD) or b
 
         def mk(path, size, fallback):
             try:
@@ -168,11 +167,11 @@ class TitlesCardMixin:
             "name":      mk(b, 30, self.font_big),
             "handle":    mk(r, 18, self.font_subtitle),
             "sec":       mk(s, 18, self.font_stat_label),
-            "big_num":   mk(b, 44, self.font_big),
+            "big_num":   mk(m, 44, self.font_big),
             "big_den":   mk(s, 24, self.font_subtitle),
-            "pct":       mk(b, 21, self.font_label),
+            "pct":       mk(m, 21, self.font_label),
             "stat_lbl":  mk(r, 17, self.font_label),
-            "stat_val":  mk(b, 19, self.font_row),
+            "stat_val":  mk(m, 19, self.font_row),
             "rare_name": mk(b, 20, self.font_row),
             "rare_sub":  mk(r, 13, self.font_small),
             "row_name":  mk(b, 21, self.font_row),
@@ -180,7 +179,7 @@ class TitlesCardMixin:
             "pill_sr":   mk(b, 13, self.font_stat_label),
             "badge":     mk(b, 12, self.font_stat_label),
             "st_lbl":    mk(r, 13, self.font_small),
-            "st_val":    mk(b, 16, self.font_label),
+            "st_val":    mk(m, 16, self.font_label),
             "emb_q":     mk(b, 26, self.font_grade),
             "bot_lbl":   mk(s, 13, self.font_stat_label),
             "bot_val":   mk(b, 22, self.font_row),
@@ -211,9 +210,9 @@ class TitlesCardMixin:
             for key, (path, size) in sizes.items():
                 fb_map[id(f[key])] = mfb(path, size)
 
-        pxb = _find_font(PROXIMA_BOLD)
-        pxs = _find_font(PROXIMA_SEMI) or pxb
-        pxr = _find_font(PROXIMA_REG) or pxb
+        pxb = _find_font(SANS_BOLD)
+        pxs = _find_font(SANS_SEMI) or pxb
+        pxr = _find_font(SANS_REG) or pxb
         fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
         if isinstance(fb_cy_map, dict):
             cy_sizes = {

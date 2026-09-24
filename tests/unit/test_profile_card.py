@@ -3,7 +3,7 @@ from PIL import Image, ImageDraw, ImageFont
 from services.image.core import CardRenderer
 from services.image.render.profile import _fmt_last_seen, _PF_STRINGS
 from services.image.utils import _find_font
-from services.image.constants import TORUS_SEMI, TORUS_BOLD
+from services.image.constants import SANS_SEMI, SANS_BOLD
 
 def _data(lang=None, **overrides):
     d = {
@@ -62,7 +62,7 @@ def test_fmt_last_seen_relative_time_translates():
 
 def test_stats_strip_labels_fit_their_columns():
     draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-    semi_path = _find_font(TORUS_SEMI) or _find_font(TORUS_BOLD)
+    semi_path = _find_font(SANS_SEMI) or _find_font(SANS_BOLD)
     font = ImageFont.truetype(semi_path, 16)
 
     def w(text):

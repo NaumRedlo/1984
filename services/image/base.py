@@ -8,9 +8,8 @@ from services.image.constants import (
     BG_COLOR, TEXT_PRIMARY, TEXT_SECONDARY,
     ACCENT_RED, PANEL_BG, MOD_COLORS, MOD_ACRONYMS, MAPPER_RING,
     PADDING_X,
-    TORUS_BOLD, TORUS_SEMI, TORUS_REG,
+    SANS_BOLD, SANS_SEMI, SANS_REG, MONO_BOLD,
     MPLUS_BOLD, MPLUS_REG,
-    PROXIMA_BOLD, PROXIMA_SEMI, PROXIMA_REG,
 )
 from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
 from services.image.text_render import (
@@ -22,20 +21,21 @@ logger = get_logger("services.image_gen")
 class BaseCardRenderer:
 
     def __init__(self):
-        bold = _find_font(TORUS_BOLD)
-        semi = _find_font(TORUS_SEMI)
-        reg = _find_font(TORUS_REG)
+        bold = _find_font(SANS_BOLD)
+        semi = _find_font(SANS_SEMI)
+        reg = _find_font(SANS_REG)
+        mono = _find_font(MONO_BOLD) or bold
 
         if bold:
             self.font_title = ImageFont.truetype(bold, 28)
             self.font_big = ImageFont.truetype(bold, 34)
             self.font_subtitle = ImageFont.truetype(semi or bold, 20)
             self.font_row = ImageFont.truetype(bold, 22)
-            self.font_grade = ImageFont.truetype(bold, 40)
+            self.font_grade = ImageFont.truetype(mono, 40)
             self.font_label = ImageFont.truetype(semi or bold, 18)
             self.font_small = ImageFont.truetype(reg or bold, 16)
-            self.font_vs = ImageFont.truetype(bold, 48)
-            self.font_stat_value = ImageFont.truetype(bold, 26)
+            self.font_vs = ImageFont.truetype(mono, 48)
+            self.font_stat_value = ImageFont.truetype(mono, 26)
             self.font_stat_label = ImageFont.truetype(semi or bold, 14)
         else:
             logger.warning("No TTF fonts found, falling back to default bitmap font")
@@ -84,9 +84,9 @@ class BaseCardRenderer:
             id(self.font_stat_label):  self.fb_stat_label,
         }
 
-        px_bold = _find_font(PROXIMA_BOLD)
-        px_semi = _find_font(PROXIMA_SEMI)
-        px_reg  = _find_font(PROXIMA_REG)
+        px_bold = _find_font(SANS_BOLD)
+        px_semi = _find_font(SANS_SEMI)
+        px_reg  = _find_font(SANS_REG)
         if px_bold:
             self.fbcy_title       = ImageFont.truetype(px_bold, 28)
             self.fbcy_big         = ImageFont.truetype(px_bold, 34)
