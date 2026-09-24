@@ -375,10 +375,10 @@ class TitlesCardMixin:
 
     def _tt_cy(self, text, font, yc):
         try:
-            _, a, _, b = font.getbbox(text)
+            _, a, _, b = font.getbbox("H")
         except Exception:
             a, b = 0, getattr(font, "size", 16)
-        return int(yc - (a + b) / 2)
+        return int(round(yc - (a + b) / 2))
 
     def _tt_desc(self, img, x, dcy, text, fonts, *, dim=False):
         draw = ImageDraw.Draw(img)
