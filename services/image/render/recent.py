@@ -245,11 +245,12 @@ class RecentCardMixin:
         htw = self._text_size(draw, head_txt, f_head)[0]
         icon_w = 32 if _hicon else 0
         hx = (W - (icon_w + htw)) // 2
+        head_cy = top + 14  # the icon, the title, the date and the mode badge share this middle
         if _hicon:
-            img.paste(_hicon, (hx, top - 2), _hicon)
+            img.paste(_hicon, (hx, int(round(head_cy - _hicon.height / 2))), _hicon)
             draw = ImageDraw.Draw(img)
             hx += icon_w
-        self._draw_text(draw, (hx, top), head_txt, f_head, RECENT_ACCENT)
+        self._text_mid(draw, hx, head_cy, head_txt, f_head, RECENT_ACCENT)
         played_at = data.get("played_at", "")
         date_str = ""
         if played_at:
@@ -262,9 +263,9 @@ class RecentCardMixin:
             except Exception:
                 date_str = str(played_at)[:16]
         if date_str:
-            self._text_right(draw, W - M, top + 4, date_str, f_small, TEXT_SECONDARY)
+            self._text_mid(draw, W - M, head_cy, date_str, f_small, TEXT_SECONDARY, align="right")
         if ruleset:
-            self._draw_ruleset_badge(img, M, top + 12, ruleset, f_pill)
+            self._draw_ruleset_badge(img, M, head_cy, ruleset, f_pill)
             draw = ImageDraw.Draw(img)
 
         hero_y, hero_h = top + 40, 200
