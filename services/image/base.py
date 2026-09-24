@@ -208,6 +208,18 @@ class BaseCardRenderer:
         tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (x_right - tw, y), text, font, fill, shadow=shadow)
 
+    def _text_mid(self, draw: ImageDraw.Draw, x: float, cy: float, text: str, font, fill,
+                  *, align: str = "left", shadow: bool = False) -> int:
+        top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
+        w = self._text_size(draw, text, font)[0]
+        if align == "center":
+            x -= w / 2
+        elif align == "right":
+            x -= w
+        self._draw_text_shadow(draw, (int(round(x)), int(round(cy - (top + bottom) / 2))), text, font, fill,
+                               shadow=shadow)
+        return int(round(x + w))
+
     def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill, *, shadow: bool = False):
         tw, _ = self._text_size(draw, text, font)
         self._draw_text_shadow(draw, (cx - tw // 2, y), text, font, fill, shadow=shadow)
@@ -443,7 +455,7 @@ class BaseCardRenderer:
         for tok in raw:
             out.extend(self._split_mod_token(tok.upper()))
 
-        return [m for m in out if m != "CL"]
+        return [m for m in out if m not in ("CL", "NM")]
 
     @staticmethod
     def _split_mod_token(tok: str) -> list[str]:

@@ -137,10 +137,10 @@ class MapLeaderboardCardMixin:
 
     MLB_ROWS_PER_PAGE = 9
 
-    W = 1300
+    W = 1360
     PAD = 22
     GAP = 18
-    LEFT_W = 860
+    LEFT_W = 920
     ROW_H = 54
     RANK_W = 52
     HEAD_H = 150
@@ -315,9 +315,7 @@ class MapLeaderboardCardMixin:
             w = self._text_size(draw, label, f_v)[0] + 24
             self._aa_rounded_fill(img, (x, int(cy - h / 2), x + w, int(cy + h / 2)),
                                   radius=int(h // 2), fill=fill)
-            d = ImageDraw.Draw(img)
-            vh = self._text_size(d, label, f_v)[1]
-            self._text_center(d, x + w // 2, int(cy - vh / 2) - 1, label, f_v, ink)
+            self._text_mid(ImageDraw.Draw(img), x + w / 2, cy, label, f_v, ink, align="center")
             return x + w + 10
 
         version = (data.get("version") or "").strip()
@@ -325,21 +323,19 @@ class MapLeaderboardCardMixin:
             px = pill(px, self._fit(draw, version, f_v, 240), VERSION_PILL, VERSION_INK)
 
         def chip(x, icon_name, label):
-            icon = load_icon(icon_name, 16, TEXT)
+            icon = load_icon(icon_name, size=16)
             if icon:
-                img.paste(icon, (x, int(cy - 8)), icon)
-                x += 20
-            d = ImageDraw.Draw(img)
-            th = self._text_size(d, label, self.font_label)[1]
-            self._draw_text(d, (x, int(cy - th / 2) - 2), label, self.font_label, TEXT)
-            return x + self._text_size(d, label, self.font_label)[0] + 16
+                img.paste(icon, (x, int(round(cy - icon.height / 2))), icon)
+                x += 21
+            return self._text_mid(ImageDraw.Draw(img), x, cy, label, self.font_label, TEXT) + 16
 
-        bpm = float(data.get("bpm") or 0)
-        if bpm:
-            px = chip(px + 4, "bpm", f"{bpm:g}")
+        px += 4
         length = int(data.get("total_length") or 0)
         if length:
-            px = chip(px, "clock", f"{length // 60}:{length % 60:02d}")
+            px = chip(px, "timer", f"{length // 60}:{length % 60:02d}")
+        bpm = float(data.get("bpm") or 0)
+        if bpm:
+            px = chip(px, "bpm", f"{bpm:g}")
         status = status_name(data.get("beatmap_status"))
         if status:
             fill, ink = status_colours(status)
@@ -394,11 +390,11 @@ class MapLeaderboardCardMixin:
     def _mlb_columns(self, x0, x1):
         return {
             "name": x0 + 10 + self.RANK_W + 52,
-            "grade": x1 - 585,
-            "mods": x1 - 556,
-            "acc": x1 - 360,
-            "combo": x1 - 250,
-            "pp": x1 - 150,
+            "grade": x1 - 590,
+            "mods": x1 - 560,
+            "acc": x1 - 342,
+            "combo": x1 - 240,
+            "pp": x1 - 142,
             "score": x1 - 22,
         }
 
@@ -409,37 +405,28 @@ class MapLeaderboardCardMixin:
         else:
             draw.rounded_rectangle(box, radius=12, fill=ROW_ALT if alt else ROW)
 
-        mid = (y0 + y1) // 2
-
+        mid = (y0 + y1) / 2
         place = int(row.get("position") or 0)
-        rank_box = (x0, mid, x0 + self.RANK_W, mid)
-        crown = TOP_COLORS.get(place)
-        if crown:
-            icon = load_icon("trophy", 22, crown)
-            if icon:
-                img.paste(icon, (x0 + (self.RANK_W - icon.width) // 2, mid - 11), icon)
-        else:
-            self._mlb_centred(draw, rank_box, str(place), self.font_label, MUTED, dy=-11)
+        self._text_mid(draw, x0 + self.RANK_W / 2, mid, str(place), self.font_label,
+                       TOP_COLORS.get(place, MUTED), align="center")
 
-        self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, mid, 36)
+        self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, int(mid), 36)
 
-        name_limit = cols["grade"] - 18 - cols["name"]
-        self._draw_text(draw, (cols["name"], mid - 12),
-                        self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
-                        self.font_row, TEXT)
+        name_limit = cols["grade"] - 22 - cols["name"]
+        self._text_mid(draw, cols["name"], mid,
+                       self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
+                       self.font_row, TEXT)
 
         rank = (row.get("rank") or "").upper()
         if rank:
-            label = _grade_label(rank)
-            font = self._mlb_grade_font()
-            gw, gh = self._text_size(draw, label, font)
-            self._draw_text(draw, (cols["grade"] - gw / 2, mid - gh / 2 - 4), label, font,
-                            GRADE_COLORS.get(rank, GRADE_COLORS["F"]))
+            self._text_mid(draw, cols["grade"], mid, _grade_label(rank), self._mlb_grade_font(),
+                           GRADE_COLORS.get(rank, GRADE_COLORS["F"]), align="center")
 
-        mods = [m for m in self._normalize_mods(row.get("mods") or "") if m in MOD_ACRONYMS and m != "NM"][:4]
+        size = 28
+        mods = [m for m in self._normalize_mods(row.get("mods") or "") if m in MOD_ACRONYMS][:4]
         mx = cols["mods"]
         for mod in mods:
-            mx = self._draw_mod_badge(img, mx, mid - 11, mod, size=22) + 3
+            mx = self._draw_mod_badge(img, mx, int(round(mid - size / 2)), mod, size=size) + 4
         draw = ImageDraw.Draw(img)
 
         pp_colour = MINE if is_viewer else RECENT_ACCENT
@@ -449,8 +436,15 @@ class MapLeaderboardCardMixin:
             ("pp", _pp_text(row), self.font_label, pp_colour),
             ("score", f"{int(row.get('score') or 0):,}", self.font_label, MUTED),
         ):
-            w = self._text_size(draw, text, font)[0]
-            self._draw_text(draw, (cols[key] - w, mid - 11), text, font, colour)
+            self._text_mid(draw, cols[key], mid, text, font, colour, align="right")
+
+    def _mlb_grade_font(self):
+        font = getattr(self, "_mlb_grade_cache", None)
+        if font is None:
+            path = _find_font(MONO_BOLD)
+            font = ImageFont.truetype(path, 24) if path else self.font_label
+            self._mlb_grade_cache = font
+        return font
 
     def _mlb_grade_font(self):
         font = getattr(self, "_mlb_grade_cache", None)
@@ -482,11 +476,10 @@ class MapLeaderboardCardMixin:
         mid = (y0 + y1) // 2
         self._mlb_avatar(img, draw, viewer.get("avatar"), x0 + 20, mid, 44)
         tx = x0 + 80
-        self._draw_text(draw, (tx, y0 + 18), S["yours"], self.font_stat_label, MINE)
+        self._text_mid(draw, tx, mid - 12, S["yours"], self.font_stat_label, MINE)
         place = viewer.get("position")
-        self._draw_text(draw, (tx, y0 + 42),
-                        S["place"].format(n=place) if place else S["no_result"],
-                        self.font_row, TEXT)
+        self._text_mid(draw, tx, mid + 12, S["place"].format(n=place) if place else S["no_result"],
+                       self.font_row, TEXT)
         if not place:
             return
 
@@ -500,10 +493,8 @@ class MapLeaderboardCardMixin:
         span = (x1 - 20 - left) // len(stats)
         for i, (label, value, colour) in enumerate(stats):
             cx = left + span * i + span // 2
-            vw = self._text_size(draw, value, self.font_label)[0]
-            lw = self._text_size(draw, label, self.font_stat_label)[0]
-            self._draw_text(draw, (cx - vw / 2, y0 + 28), value, self.font_label, colour)
-            self._draw_text(draw, (cx - lw / 2, y0 + 54), label, self.font_stat_label, MUTED)
+            self._text_mid(draw, cx, mid - 10, value, self.font_label, colour, align="center")
+            self._text_mid(draw, cx, mid + 14, label, self.font_stat_label, MUTED, align="center")
 
     def _mlb_titles(self, img, draw, box, titles, S):
         x0, y0, x1, y1 = box
@@ -516,32 +507,28 @@ class MapLeaderboardCardMixin:
             _panel(draw, row, fill=ROW, radius=12)
             kind = title.get("kind")
             tint = TITLE_TINTS.get(kind, RECENT_ACCENT)
-            icon = load_icon(title.get("icon") or "trophy", 34, tint)
-            if icon:
-                img.paste(icon, (x0 + 26, ty + 17), icon)
-            tx = x0 + 76
+            tx = x0 + 30
+            mid = ty + 34
 
             if kind == "mods":
-                mods = [m for m in self._normalize_mods(title.get("value") or "") if m in MOD_ACRONYMS and m != "NM"]
-                size = 26
+                mods = [m for m in self._normalize_mods(title.get("value") or "") if m in MOD_ACRONYMS]
+                size = 32
                 vw = len(mods) * (size + 4) - 4 if mods else 0
-                mx = x1 - 26 - vw
+                mx = x1 - 28 - vw
                 for mod in mods:
-                    mx = self._draw_mod_badge(img, mx, ty + 21, mod, size=size) + 4
+                    mx = self._draw_mod_badge(img, mx, int(mid - size / 2), mod, size=size) + 4
                 draw = ImageDraw.Draw(img)
             else:
                 value = title.get("value") or ""
                 vw = self._text_size(draw, value, self.font_label)[0]
-                self._draw_text(draw, (x1 - 26 - vw, ty + 24), value, self.font_label, tint)
-            limit = (x1 - 26 - vw) - tx - 12
+                self._text_mid(draw, x1 - 28, mid, value, self.font_label, tint, align="right")
+            limit = (x1 - 28 - vw) - tx - 12
 
             label = S.get(f"t.{kind}", "")
-            self._draw_text(draw, (tx, ty + 13),
-                            self._fit(draw, label, self.font_stat_label, limit),
-                            self.font_stat_label, MUTED)
-            self._draw_text(draw, (tx, ty + 35),
-                            self._fit(draw, title.get("who") or "—", self.font_label, limit),
-                            self.font_label, TEXT)
+            self._text_mid(draw, tx, mid - 11, self._fit(draw, label, self.font_stat_label, limit),
+                           self.font_stat_label, MUTED)
+            self._text_mid(draw, tx, mid + 11, self._fit(draw, title.get("who") or "—", self.font_label, limit),
+                           self.font_label, TEXT)
             ty += 78
 
     def _mlb_stats(self, img, draw, box, data, S):
@@ -564,12 +551,9 @@ class MapLeaderboardCardMixin:
     def _mlb_updated(self, img, draw, box, data, S):
         x0, y0, x1, y1 = box
         _panel(draw, box, fill=ROW)
-        icon = load_icon("clock", 20, MUTED)
-        if icon:
-            img.paste(icon, (x0 + 18, y0 + 22), icon)
-        self._draw_text(draw, (x0 + 48, y0 + 12), S["updated"], self.font_small, MUTED)
-        self._draw_text(draw, (x0 + 48, y0 + 32), data.get("updated") or "",
-                        self.font_stat_label, TEXT)
+        mid = (y0 + y1) / 2
+        self._text_mid(draw, x0 + 20, mid - 10, S["updated"], self.font_small, MUTED)
+        self._text_mid(draw, x0 + 20, mid + 11, data.get("updated") or "", self.font_stat_label, TEXT)
 
     def _mlb_history(self, img, draw, box, history, S, data=None):
         x0, y0, x1, y1 = box
@@ -594,25 +578,24 @@ class MapLeaderboardCardMixin:
                 _panel(draw, cell, fill=ROW, radius=12)
 
             when = _when(entry.get("at"), lang) or entry.get("date") or ""
-            self._draw_text(draw, (cx + 14, hy + 10),
-                            self._fit(draw, when, self.font_stat_label, cell_w - 28),
-                            self.font_stat_label, MINE if i == 0 else MUTED)
+            self._text_mid(draw, cx + 14, hy + 20,
+                           self._fit(draw, when, self.font_stat_label, cell_w - 28),
+                           self.font_stat_label, MINE if i == 0 else MUTED)
 
-            av = 32
-            mid = hy + 58
+            av = 34
+            mid = hy + 60
             self._mlb_avatar(img, draw, entry.get("avatar"), cx + 14, mid, av)
             tx = cx + 14 + av + 12
             limit = cell_w - (tx - cx) - 12
-            self._draw_text(draw, (tx, mid - 21),
-                            self._fit(draw, entry.get("username") or "—", self.font_stat_label, limit),
-                            self.font_stat_label, TEXT)
+            self._text_mid(draw, tx, mid - 9,
+                           self._fit(draw, entry.get("username") or "—", self.font_stat_label, limit),
+                           self.font_stat_label, TEXT)
             value = f"{int(entry.get('score') or 0):,}" if by_score else f"{_pp_text(entry)} PP"
-            self._draw_text(draw, (tx, mid + 1),
-                            self._fit(draw, value, self.font_small, limit),
-                            self.font_small, MINE if i == 0 else MUTED)
+            self._text_mid(draw, tx, mid + 11, self._fit(draw, value, self.font_small, limit),
+                           self.font_small, MINE if i == 0 else MUTED)
 
             if i < count - 1:
                 chev = "›"
                 w = self._text_size(draw, chev, self.font_row)[0]
-                self._draw_text(draw, (cx + cell_w + (gap - w) / 2, hy + cell_h / 2 - 14),
-                                chev, self.font_row, PANEL_EDGE)
+                self._text_mid(draw, cx + cell_w + gap / 2, hy + cell_h / 2, chev, self.font_row,
+                               PANEL_EDGE, align="center")

@@ -291,7 +291,7 @@ class RecentCardMixin:
             vlabel = version if len(version) <= 18 else version[:17] + "…"
             vpw = self._text_size(draw, vlabel, f_pill)[0] + 18
             self._aa_rounded_fill(img, (apx, a_y - 1, apx + vpw, a_y + 23), radius=12, fill=(70, 90, 150))
-            self._text_center(draw, apx + vpw // 2, a_y + 3, vlabel, f_pill, (235, 240, 255))
+            self._text_mid(ImageDraw.Draw(img), apx + vpw / 2, a_y + 11, vlabel, f_pill, (235, 240, 255), align="center")
         draw = ImageDraw.Draw(img)
 
         chip_y = hero_y + hero_h - 48
@@ -315,7 +315,7 @@ class RecentCardMixin:
             sc, sink = status_colours(status)
             spw = self._text_size(draw, slabel, f_pill)[0] + 18
             self._aa_rounded_fill(img, (cx, chip_y - 3, cx + spw, chip_y + 23), radius=13, fill=sc)
-            self._text_center(draw, cx + spw // 2, chip_y + 1, slabel, f_pill, sink)
+            self._text_mid(ImageDraw.Draw(img), cx + spw / 2, chip_y + 10, slabel, f_pill, sink, align="center")
         draw = ImageDraw.Draw(img)
 
         mods = data.get("mods", "")
@@ -384,7 +384,7 @@ class RecentCardMixin:
             by = stats_y + stats_h - 26
             for lbl, col, bw in specs:
                 self._aa_rounded_fill(img, (bx, by, bx + bw, by + 18), radius=5, fill=col)
-                self._text_center(draw, bx + bw // 2, by + 2, lbl, f_lbl, (255, 255, 255))
+                self._text_mid(ImageDraw.Draw(img), bx + bw / 2, by + 9, lbl, f_lbl, (255, 255, 255), align="center")
                 bx += bw + 5
         draw = ImageDraw.Draw(img)
 
@@ -574,7 +574,7 @@ class RecentCardMixin:
             by = cy + r - 7 - bh // 2
             col = ACCENT_RED if completion < 0.5 else (205, 180, 55)
             self._aa_rounded_fill(img, (cx - w // 2, by, cx + w // 2, by + bh), radius=7, fill=col)
-            self._text_center(ImageDraw.Draw(img), cx, by + 4, lbl, f_pct, (255, 255, 255))
+            self._text_mid(ImageDraw.Draw(img), cx, by + bh / 2, lbl, f_pct, (255, 255, 255), align="center")
 
     def _draw_perf_graph(self, img, x, y, w, h, series, completion, passed, f_lbl, S, *, show_axis: bool = True):
         draw = ImageDraw.Draw(img)
@@ -620,7 +620,7 @@ class RecentCardMixin:
             bw = tw + 12
             bx = min(fx + 6, x + w - bw)
             self._aa_rounded_fill(img, (bx, fy - 22, bx + bw, fy - 3), radius=5, fill=ACCENT_RED)
-            self._text_center(ImageDraw.Draw(img), bx + bw // 2, fy - 20, lbl, f_lbl, (255, 255, 255))
+            self._text_mid(ImageDraw.Draw(img), bx + bw / 2, fy - 12.5, lbl, f_lbl, (255, 255, 255), align="center")
 
     async def generate_recent_card_async(self, data: Dict) -> BytesIO:
         bsid = data.get("beatmapset_id", 0)
