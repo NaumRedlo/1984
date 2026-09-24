@@ -95,6 +95,10 @@ def _tokenize_desc(text: str):
         out.append((text[i:], "text"))
     return out
 
+def _no_full_stop(text: str) -> str:
+    text = (text or "").rstrip()
+    return text[:-1] if text.endswith(".") and not text.endswith("..") else text
+
 def _fmt_dt(dt) -> str:
     if not dt:
         return "—"
@@ -385,11 +389,13 @@ class TitlesCardMixin:
         font = fonts["row_desc"]
         for seg, kind in _tokenize_desc(text):
             if kind == "sr":
-                x = self._tt_sr_pill(img, x, dcy, seg, fonts, dim=dim) + 3
+                x = self._tt_sr_pill(img, x + 3, dcy, seg, fonts, dim=dim) + 5
                 draw = ImageDraw.Draw(img)
             elif kind == "mod":
+                x += 3
                 for m in (seg[i:i + 2] for i in range(0, len(seg), 2)):
-                    x = self._tt_mod_pill(img, x, dcy, m, dim=dim) + 3
+                    x = self._tt_mod_pill(img, x, dcy, m, dim=dim) + 4
+                x += 1
                 draw = ImageDraw.Draw(img)
             else:
                 if kind == "grade":
@@ -490,7 +496,7 @@ class TitlesCardMixin:
         tx = ex + sz + 16
         masked = t["secret"] and not unlocked
         name = S["hidden_title"] if masked else t["name"]
-        desc = (t.get("hint") or S["hidden_desc"]) if masked else t["description"]
+        desc = _no_full_stop((t.get("hint") or S["hidden_desc"]) if masked else t["description"])
         ncol = COL_WHITE if unlocked else (150, 142, 150)
         mid = y + h // 2
         self._draw_text(draw, (tx, mid - 24), name, fonts["row_name"], ncol)
