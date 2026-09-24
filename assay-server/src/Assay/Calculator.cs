@@ -44,7 +44,8 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         Mod[] Mods,
         WorkingBeatmap Working,
         DifficultyAttributes Difficulty,
-        Dictionary<HitResult, int> Maximum);
+        Dictionary<HitResult, int> Maximum,
+        Dictionary<string, double> Extra);
 
     public async Task<MapResult> Map(MapRequest request, CancellationToken cancellationToken)
     {
@@ -152,7 +153,11 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         }
 
         var difficulty = ruleset.CreateDifficultyCalculator(working).Calculate(mods);
-        return new Prepared(beatmapId, md5, ruleset, mods, working, difficulty, MaximumOf(playable));
+        var extra = new Dictionary<string, double>();
+        // how many keys the mania map is played on: a converted map has no key count of its own
+        if (playable is osu.Game.Rulesets.Mania.Beatmaps.ManiaBeatmap mania)
+            extra["key_count"] = mania.TotalColumns;
+        return new Prepared(beatmapId, md5, ruleset, mods, working, difficulty, MaximumOf(playable), extra);
     }
 
     internal static Dictionary<HitResult, int> MaximumOf(IBeatmap playable)
@@ -369,7 +374,8 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
             prepared.Difficulty.StarRating,
             prepared.Difficulty.MaxCombo,
             ModUtils.CalculateRateWithMods(prepared.Mods),
-            Numbers(prepared.Difficulty).Where(p => p.Value.HasValue).ToDictionary(p => p.Key, p => p.Value!.Value));
+            Numbers(prepared.Difficulty).Where(p => p.Value.HasValue).Select(p => KeyValuePair.Create(p.Key, p.Value!.Value))
+                .Concat(prepared.Extra).ToDictionary(p => p.Key, p => p.Value));
 
     private static Dictionary<string, double?> Numbers(object attributes)
     {

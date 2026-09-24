@@ -67,10 +67,11 @@ async def health() -> Optional[dict]:
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
         return None
 
-async def beatmap(beatmap_id: int, *, mods, checksum: Optional[str] = None) -> Optional[dict]:
+async def beatmap(beatmap_id: int, *, mods, checksum: Optional[str] = None, ruleset: int = 0) -> Optional[dict]:
     if not beatmap_id:
         return None
-    body = {"beatmap_id": int(beatmap_id), "checksum": checksum or None, "mods": mods_of(mods)}
+    body = {"beatmap_id": int(beatmap_id), "checksum": checksum or None, "mods": mods_of(mods),
+            "ruleset": int(ruleset)}
     return await _post("/v1/beatmap", body)
 
 async def score(
@@ -83,6 +84,7 @@ async def score(
     max_combo: Optional[int] = None,
     legacy_total_score: Optional[int] = None,
     is_legacy: Optional[bool] = None,
+    ruleset: int = 0,
 ) -> Optional[dict]:
     counted = {str(k): int(v) for k, v in (statistics or {}).items() if isinstance(v, int) and v >= 0}
     if not beatmap_id or not counted:
@@ -96,6 +98,7 @@ async def score(
         "max_combo": max_combo,
         "legacy_total_score": legacy_total_score or None,
         "is_legacy": is_legacy,
+        "ruleset": int(ruleset),
     }
     return await _post("/v1/score", body)
 
@@ -117,9 +120,9 @@ async def whatif(
     return await _post("/v1/whatif", body)
 
 async def strains(beatmap_id: int, *, mods, points: int = 64,
-                  checksum: Optional[str] = None) -> Optional[dict]:
+                  checksum: Optional[str] = None, ruleset: int = 0) -> Optional[dict]:
     if not beatmap_id:
         return None
     body = {"beatmap_id": int(beatmap_id), "checksum": checksum or None,
-            "mods": mods_of(mods), "points": int(points)}
+            "mods": mods_of(mods), "points": int(points), "ruleset": int(ruleset)}
     return await _post("/v1/strains", body)

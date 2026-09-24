@@ -9,8 +9,9 @@ logger = get_logger("utils.pp_calculator")
 # Without it (ASSAY_URL unset or the service down) there is no figure rather than a wrong one.
 
 async def calculate_strains(beatmap_id: int, mods=None, points: int = 64,
-                            checksum: Optional[str] = None) -> Optional[list]:
-    served = await assay_service.strains(beatmap_id, mods=mods or "", points=points, checksum=checksum)
+                            checksum: Optional[str] = None, ruleset: int = 0) -> Optional[list]:
+    served = await assay_service.strains(beatmap_id, mods=mods or "", points=points, checksum=checksum,
+                                         ruleset=ruleset)
     strains = (served or {}).get("strains")
     return list(strains) if strains else None
 
@@ -24,6 +25,7 @@ async def calculate_pp(
     checksum: Optional[str] = None,
     legacy_total_score: Optional[int] = None,
     is_legacy: Optional[bool] = None,
+    ruleset: int = 0,
 ) -> Optional[Dict]:
     served = await assay_service.score(
         beatmap_id,
@@ -34,15 +36,19 @@ async def calculate_pp(
         max_combo=combo or None,
         legacy_total_score=legacy_total_score,
         is_legacy=is_legacy,
+        ruleset=ruleset,
     )
     if not served or served.get("pp") is None:
         return None
+    # if FC / if SS are only simulated for osu!standard; elsewhere they are left out
+    if_fc, if_ss = served.get("pp_if_fc"), served.get("pp_if_ss")
     return {
         "pp_current": round(served["pp"], 2),
-        "pp_if_fc": round(served.get("pp_if_fc") or served["pp"], 2),
-        "pp_if_ss": round(served.get("pp_if_ss") or served["pp"], 2),
+        "pp_if_fc": round(if_fc, 2) if if_fc is not None else None,
+        "pp_if_ss": round(if_ss, 2) if if_ss is not None else None,
         "star_rating": round(served["star_rating"], 2),
         "max_combo": int(served["map"]["max_combo"]),
+        "attributes": dict(served["map"].get("attributes") or {}),
         "source": "assay",
     }
 

@@ -32,7 +32,7 @@ from services.image.utils import (
     cover_center_crop,
 )
 from utils.osu.pp_calculator import calculate_strains, calculate_pp, note_drift
-from utils.osu import star_rating
+from utils.osu import assay_service, rulesets, star_rating
 from utils.osu.mod_utils import apply_mods
 from utils.logger import get_logger
 
@@ -86,6 +86,36 @@ def _strain_y_at(series: List[float], frac: float) -> float:
         + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
     )
 
+def _ruleset_icon(ruleset: int, size: int, colour) -> Image.Image:
+    """osu!'s mode marks drawn by hand: a ring, and inside it a dot (osu!), a drum (taiko),
+    three fruit (catch) or three keys (mania)."""
+    ss = 4
+    big = size * ss
+    layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    ink = tuple(colour) + (255,)
+    ring = max(2, big // 11)
+    d.ellipse((ring // 2, ring // 2, big - ring // 2 - 1, big - ring // 2 - 1), outline=ink, width=ring)
+    c = big / 2
+    if ruleset == 1:
+        r = big * 0.24
+        d.ellipse((c - r, c - r, c + r, c + r), outline=ink, width=ring)
+        d.line((c, c - r, c, c + r), fill=ink, width=ring)
+    elif ruleset == 2:
+        r = big * 0.09
+        for dx, dy in ((0, -0.16), (-0.15, 0.1), (0.15, 0.1)):
+            px, py = c + dx * big, c + dy * big
+            d.ellipse((px - r, py - r, px + r, py + r), fill=ink)
+    elif ruleset == 3:
+        bw = big * 0.08
+        for i, top in enumerate((0.3, 0.4, 0.3)):
+            px = c + (i - 1) * big * 0.17
+            d.rounded_rectangle((px - bw / 2, big * top, px + bw / 2, big * (1 - top)), radius=bw / 2, fill=ink)
+    else:
+        r = big * 0.18
+        d.ellipse((c - r, c - r, c + r, c + r), fill=ink)
+    return layer.resize((size, size), Image.LANCZOS)
+
 async def _map_background(covers: str) -> Optional[Image.Image]:
     return await download_image(f"{covers}/raw.jpg") or await download_image(f"{covers}/cover.jpg")
 
@@ -100,6 +130,8 @@ _RECENT_STRINGS = {
         "section_perf": "MAP DIFFICULTY", "section_details": "DETAILS",
         "section_player": "PLAYER", "played_by": "played by",
         "no_data": "NO DATA", "failed": "FAILED",
+        "great": "GREAT", "good": "GOOD", "fruits": "FRUITS", "drops": "DROPS",
+        "droplets": "DROPLETS", "max": "MAX", "KEYS": "KEYS",
     },
     "ru": {
         "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ",
@@ -108,6 +140,8 @@ _RECENT_STRINGS = {
         "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
         "section_player": "ИГРОК", "played_by": "сыграно",
         "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
+        "great": "GREAT", "good": "GOOD", "fruits": "ФРУКТЫ", "drops": "КАПЛИ",
+        "droplets": "КАПЕЛЬКИ", "max": "MAX", "KEYS": "КЛАВИШИ",
     },
 }
 
@@ -196,6 +230,9 @@ class RecentCardMixin:
 
         hit_objects = n300 + n100 + n50 + misses
         completion = min(hit_objects / total_objects, 1.0) if total_objects else (1.0 if is_passed else 0.0)
+        if data.get("judged_fraction") is not None:
+            completion = 1.0 if is_passed else float(data["judged_fraction"])
+        ruleset = int(data.get("ruleset") or 0)
 
         raw_status = data.get("beatmap_status", "")
         status = _STATUS_INT.get(raw_status, "") if isinstance(raw_status, int) else (str(raw_status or "").lower())
@@ -225,6 +262,9 @@ class RecentCardMixin:
                 date_str = str(played_at)[:16]
         if date_str:
             self._text_right(draw, W - M, top + 4, date_str, f_small, TEXT_SECONDARY)
+        if ruleset:
+            self._draw_ruleset_badge(img, M, top + 12, ruleset, f_pill)
+            draw = ImageDraw.Draw(img)
 
         hero_y, hero_h = top + 40, 200
         hero_w = W - 2 * M
@@ -334,7 +374,11 @@ class RecentCardMixin:
         inner_x = M + 24
         inner_w = W - 2 * M - 48
 
-        weights = [1.5, 1.7, 1.4, 1.0, 1.0, 1.0, 1.0]
+        counts = data.get("hit_counts") or [
+            ("300", n300, (120, 220, 130)), ("100", n100, (230, 205, 90)),
+            ("50", n50, (210, 150, 90)), ("miss", misses, ACCENT_RED),
+        ]
+        weights = [1.5, 1.7, 1.4] + [1.0] * len(counts)
         tot = sum(weights)
         xs, acc_x = [], inner_x
         for wgt in weights:
@@ -397,13 +441,9 @@ class RecentCardMixin:
                                    max_str, f_chip, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
 
-        counts = [
-            ("300", n300, (120, 220, 130)),
-            ("100", n100, (230, 205, 90)),
-            ("50", n50, (210, 150, 90)),
-            (S["miss"], misses, ACCENT_RED),
-        ]
-        for i, (lbl, val, col) in enumerate(counts):
+        for i, (key, val, col) in enumerate(counts):
+            lbl = S.get(key, key)
+            col = tuple(col)
             c = centers[3 + i]
             self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
             self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center", shadow=True)
@@ -426,11 +466,13 @@ class RecentCardMixin:
 
         panel(det_x, mid_y, det_w, mid_h)
         self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, RECENT_ACCENT)
-        params = [("CS", "cs", data.get("cs", 0.0)), ("AR", "ar", data.get("ar", 0.0)),
-                  ("OD", "od", data.get("od", 0.0)), ("HP", "hp", data.get("hp", 0.0))]
-        drow_y = mid_y + 52
+        params = data.get("details") or [
+            ("CS", "cs", data.get("cs", 0.0), 1), ("AR", "ar", data.get("ar", 0.0), 1),
+            ("OD", "od", data.get("od", 0.0), 1), ("HP", "hp", data.get("hp", 0.0), 1)]
         drow_gap = (mid_h - 64) // 4
-        for i, (lbl, icon, val) in enumerate(params):
+        drow_y = mid_y + 52 + (4 - len(params)) * drow_gap // 2
+        for i, (lbl, icon, val, places) in enumerate(params):
+            lbl = S.get(lbl, lbl)
             ry = drow_y + i * drow_gap
             lx = det_x + 18
             rcy = ry + 11
@@ -440,7 +482,7 @@ class RecentCardMixin:
                 draw = ImageDraw.Draw(img)
                 lx += 24
             self._text_mid(draw, lx, rcy, lbl, f_chip, TEXT_SECONDARY)
-            self._text_mid(draw, det_x + det_w - 18, rcy, f"{float(val):.1f}", f_chip, TEXT_PRIMARY, align="right")
+            self._text_mid(draw, det_x + det_w - 18, rcy, f"{float(val):.{places}f}", f_chip, TEXT_PRIMARY, align="right")
             bw = det_w - 36
             by = ry + 26
             frac = min(float(val) / 10.0, 1.0)
@@ -634,12 +676,26 @@ class RecentCardMixin:
             download_image(mapper_avatar_url) if mapper_avatar_url else _none_coro(),
             download_image(player_avatar_url) if player_avatar_url else _none_coro(),
             download_image(player_cover_url) if player_cover_url else _none_coro(),
-            calculate_strains(beatmap_id, self._mods_str(mods)) if beatmap_id else _none_coro(),
+            calculate_strains(beatmap_id, self._mods_str(mods), checksum=data.get("checksum"),
+                              ruleset=int(data.get("ruleset") or 0)) if beatmap_id else _none_coro(),
         )
         return await asyncio.to_thread(
             self.generate_recent_card, data, cover, mapper_avatar,
             player_avatar, player_cover, strains,
         )
+
+    def _draw_ruleset_badge(self, img, x, cy, ruleset, font):
+        """The mode a play was in, as osu! marks it: its ring icon and its name."""
+        label = rulesets.TITLES.get(ruleset, "osu!")
+        draw = ImageDraw.Draw(img)
+        size, pad = 22, 10
+        tw = self._text_size(draw, label, font)[0]
+        w, h = pad + size + 8 + tw + pad + 2, 30
+        y0 = int(cy - h / 2)
+        self._aa_rounded_fill(img, (x, y0, x + w, y0 + h), radius=h // 2, fill=(40, 34, 44))
+        icon = _ruleset_icon(ruleset, size, RECENT_ACCENT)
+        img.paste(icon, (x + pad, int(round(cy - size / 2))), icon)
+        self._text_mid(ImageDraw.Draw(img), x + pad + size + 8, cy, label, font, TEXT_PRIMARY)
 
     @staticmethod
     def _mods_str(mods) -> str:
@@ -676,6 +732,53 @@ def _detect_client(score: dict) -> str:
         return "stable"
     return "lazer"
 
+_RATE_MODS = {"DT", "NC", "HT", "DC"}
+
+def _hit_counts(ruleset: int, stats: dict) -> list:
+    """The judgement columns a mode shows, as (label key, count, colour)."""
+    def n(*keys):
+        return sum(int(stats.get(k) or 0) for k in keys)
+    good, fine, poor, bad = (120, 220, 130), (230, 205, 90), (210, 150, 90), ACCENT_RED
+    if ruleset == 1:
+        return [("great", n("great"), good), ("good", n("ok"), fine), ("miss", n("miss"), bad)]
+    if ruleset == 2:
+        return [("fruits", n("great"), good), ("drops", n("large_tick_hit"), fine),
+                ("droplets", n("small_tick_hit"), poor), ("miss", n("miss", "large_tick_miss"), bad)]
+    if ruleset == 3:
+        return [("max", n("perfect"), (160, 220, 255)), ("300", n("great"), good), ("200", n("good"), (180, 215, 110)),
+                ("100", n("ok"), fine), ("50", n("meh"), poor), ("miss", n("miss"), bad)]
+    return [("300", n("great", "count_300"), good), ("100", n("ok", "count_100"), fine),
+            ("50", n("meh", "count_50"), poor), ("miss", n("miss", "count_miss"), bad)]
+
+_BASIC_RESULTS = ("perfect", "great", "good", "ok", "meh", "miss", "large_tick_hit", "large_tick_miss",
+                  "small_tick_hit", "small_tick_miss")
+
+def _judged_fraction(raw_score: dict) -> Optional[float]:
+    """How much of the map a play got through, from what osu! says the whole map holds."""
+    most = raw_score.get("maximum_statistics") or {}
+    stats = raw_score.get("statistics") or {}
+    whole = sum(int(most.get(k) or 0) for k in _BASIC_RESULTS)
+    if not whole:
+        return None
+    judged = sum(int(stats.get(k) or 0) for k in _BASIC_RESULTS)
+    return max(0.0, min(1.0, judged / whole))
+
+def _details(ruleset: int, beatmap: dict, mods: list, adjusted: dict, key_count) -> list:
+    """The map settings a mode is played by, as (label, icon, value, decimals)."""
+    if ruleset == 0:
+        return [("CS", "cs", adjusted["cs"], 1), ("AR", "ar", adjusted["ar"], 1),
+                ("OD", "od", adjusted["od"], 1), ("HP", "hp", adjusted["hp"], 1)]
+    od = float(beatmap.get("accuracy", 0) or 0)
+    hp = float(beatmap.get("drain", 0) or 0)
+    if ruleset == 1:
+        # the rate does not change what taiko shows as OD; HR and EZ do
+        still = apply_mods(0, 0, od, hp, 0, 0, "".join(m for m in mods if m not in _RATE_MODS))
+        return [("OD", "od", still["od"], 1), ("HP", "hp", still["hp"], 1)]
+    if ruleset == 2:
+        return [("CS", "cs", adjusted["cs"], 1), ("AR", "ar", adjusted["ar"], 1), ("HP", "hp", adjusted["hp"], 1)]
+    keys = key_count or (float(beatmap.get("cs") or 0) if beatmap.get("mode") == "mania" else 0)
+    return [("KEYS", "cs", float(keys or 0), 0), ("OD", "od", od, 1), ("HP", "hp", hp, 1)]
+
 async def build_recent_card_data(
     raw_score: dict,
     *,
@@ -689,6 +792,7 @@ async def build_recent_card_data(
 ) -> Dict:
     beatmap = raw_score.get("beatmap", {}) or {}
     beatmapset = raw_score.get("beatmapset", {}) or {}
+    ruleset = rulesets.of_score(raw_score)
 
     artist = beatmapset.get("artist", "Unknown")
     title = beatmapset.get("title", "Unknown")
@@ -711,8 +815,9 @@ async def build_recent_card_data(
     mods_joined = "".join(mods_list) if mods_list else ""
 
 
-    stats = raw_score.get("statistics", {})
-    misses = stats.get("miss") or stats.get("count_miss") or 0
+    stats = raw_score.get("statistics", {}) or {}
+    counts = _hit_counts(ruleset, stats)
+    misses = counts[-1][1]
     count_300 = stats.get("great") or stats.get("count_300") or 0
     count_100 = stats.get("ok") or stats.get("count_100") or 0
     count_50 = stats.get("meh") or stats.get("count_50") or 0
@@ -737,6 +842,7 @@ async def build_recent_card_data(
     )
 
     map_max_combo = int(beatmap.get("max_combo") or 0)
+    pp_result = None
     try:
         pp_result = await calculate_pp(
             beatmap_id=beatmap_id,
@@ -747,12 +853,13 @@ async def build_recent_card_data(
             checksum=beatmap.get("checksum"),
             legacy_total_score=raw_score.get("legacy_total_score") or None,
             is_legacy=bool(raw_score.get("legacy_score_id")),
+            ruleset=ruleset,
         )
         if pp_result:
-            pp_if_fc = pp_result["pp_if_fc"]
-            pp_if_ss = pp_result["pp_if_ss"]
+            pp_if_fc = pp_result["pp_if_fc"] or 0.0
+            pp_if_ss = pp_result["pp_if_ss"] or 0.0
 
-            if not map_max_combo:
+            if ruleset or not map_max_combo:
                 map_max_combo = int(pp_result.get("max_combo") or 0)
             if not pp:
 
@@ -766,7 +873,17 @@ async def build_recent_card_data(
     except Exception:
         logger.debug("build_recent_card_data: PP calculation failed", exc_info=True)
 
-    modded_stars = await star_rating.resolve(client, beatmap_id, raw_mods or mods_joined, stars, beatmap.get("checksum"))
+    key_count = ((pp_result or {}).get("attributes") or {}).get("key_count")
+    if ruleset == 0:
+        modded_stars = await star_rating.resolve(client, beatmap_id, raw_mods or mods_joined, stars, beatmap.get("checksum"))
+    elif pp_result:
+        modded_stars = pp_result["star_rating"]
+    else:
+        # a converted map's own rating is its osu! one; ask for the mode it was played in
+        served = await assay_service.beatmap(beatmap_id, mods=raw_mods or mods_joined,
+                                             checksum=beatmap.get("checksum"), ruleset=ruleset)
+        modded_stars = served["star_rating"] if served else stars
+        key_count = key_count or ((served or {}).get("attributes") or {}).get("key_count")
 
     return {
         "lang": lang,
@@ -791,6 +908,11 @@ async def build_recent_card_data(
         "ar": adjusted["ar"],
         "od": adjusted["od"],
         "hp": adjusted["hp"],
+        "ruleset": ruleset,
+        "hit_counts": counts,
+        "details": _details(ruleset, beatmap, mods_list, adjusted, key_count),
+        "judged_fraction": _judged_fraction(raw_score) if ruleset else None,
+        "checksum": beatmap.get("checksum"),
         "bpm": adjusted["bpm"],
         "total_length": adjusted["total_length"],
 

@@ -341,8 +341,12 @@ class OsuApiClient:
             "monthly_playcounts": data.get("monthly_playcounts", []),
         }
 
-    async def get_user_recent_scores(self, user_id: int, limit: int = 1, oauth_token: Optional[str] = None) -> List[Dict]:
-        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params={"limit": limit, "include_fails": 1}, bearer_token=oauth_token)
+    async def get_user_recent_scores(self, user_id: int, limit: int = 1, oauth_token: Optional[str] = None,
+                                     mode: Optional[str] = None) -> List[Dict]:
+        params = {"limit": limit, "include_fails": 1}
+        if mode:
+            params["mode"] = mode
+        data = await self._make_request("GET", f"users/{user_id}/scores/recent", params=params, bearer_token=oauth_token)
         return data if isinstance(data, list) else []
 
     async def sync_user_stats_from_api(self, user_model, oauth_token: Optional[str] = None) -> bool:

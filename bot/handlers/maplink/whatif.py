@@ -44,7 +44,8 @@ def _reply_beatmap_ref(message: types.Message) -> Optional[BeatmapRef]:
     if reply is None:
         return None
     ctx = get_message_context(reply.chat.id, reply.message_id, strict=True)
-    if ctx and ctx.get("beatmap_id"):
+    # what-if is simulated for osu!standard only, so a taiko, catch or mania card is not answered
+    if ctx and ctx.get("beatmap_id") and not ctx.get("ruleset"):
         return BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
     return None
 

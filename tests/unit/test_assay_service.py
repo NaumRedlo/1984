@@ -13,8 +13,10 @@ async def service(monkeypatch):
     async def score(request):
         body = await request.json()
         asked.append(("score", body, request.headers.get("Authorization")))
+        standard = body.get("ruleset", 0) == 0
         return web.json_response({
-            "pp": 301.234, "pp_if_fc": 350.0, "pp_if_ss": 400.0, "star_rating": 6.789,
+            "pp": 301.234, "pp_if_fc": 350.0 if standard else None,
+            "pp_if_ss": 400.0 if standard else None, "star_rating": 6.789,
             "accuracy": 0.97, "max_combo": 900,
             "map": {"max_combo": 1000, "star_rating": 6.789},
         })
@@ -59,7 +61,8 @@ async def test_a_score_is_counted_by_the_service_with_everything_it_needs(servic
         checksum="a" * 32, legacy_total_score=None, is_legacy=False,
     )
     assert got == {"pp_current": 301.23, "pp_if_fc": 350.0, "pp_if_ss": 400.0,
-                   "star_rating": 6.79, "max_combo": 1000, "source": "assay"}
+                   "star_rating": 6.79, "max_combo": 1000, "attributes": {},
+                   "source": "assay"}
     kind, body, auth = service[0]
     assert kind == "score" and auth == "Bearer t0ken"
     assert body["statistics"] == stats
@@ -67,11 +70,12 @@ async def test_a_score_is_counted_by_the_service_with_everything_it_needs(servic
     assert body["checksum"] == "a" * 32
     assert body["accuracy"] == pytest.approx(0.97)
     assert body["max_combo"] == 800
+    assert body["ruleset"] == 0
 
 async def test_strains_come_from_the_service(service):
     assert await pp_calculator.calculate_strains(77, "HDDT", points=2, checksum="c" * 32) == [0.25, 1.0]
     body = service[0][1]
-    assert body == {"beatmap_id": 77, "checksum": "c" * 32, "points": 2,
+    assert body == {"beatmap_id": 77, "checksum": "c" * 32, "points": 2, "ruleset": 0,
                     "mods": [{"acronym": "HD"}, {"acronym": "DT"}]}
 
 async def test_whatif_comes_from_the_service_with_its_brackets(service):
@@ -103,3 +107,8 @@ def test_a_drift_is_reported_past_one_percent(monkeypatch):
     assert pp_calculator.note_drift(1, 77, 100.0, {"pp_current": 103.0, "source": "assay"}) == pytest.approx(0.03)
     assert len(warned) == 1
     assert pp_calculator.note_drift(1, 77, 0, {"pp_current": 3.0}) is None
+
+async def test_other_modes_are_asked_in_their_ruleset_and_have_no_if_fc(service):
+    got = await pp_calculator.calculate_pp(beatmap_id=77, statistics={"great": 700, "ok": 20}, ruleset=1)
+    assert service[-1][1]["ruleset"] == 1
+    assert got["pp_current"] == 301.23 and got["pp_if_fc"] is None and got["pp_if_ss"] is None

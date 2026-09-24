@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -15,11 +17,32 @@ from utils.osu.api_client import _is_perfect
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 from services.image.render.recent import build_recent_card_data, _pick_score_value
+from utils.osu import rulesets
 
 logger = get_logger("handlers.recent")
 router = Router(name="recent")
 
 RECENT_LIMIT = 50
+
+def _ended(raw: dict) -> str:
+    return str(raw.get("ended_at") or raw.get("created_at") or "")
+
+async def fetch_recent(client, osu_id: int, token, ruleset=None) -> tuple[list, dict | None]:
+    """osu!standard plays (the ones leaderboards and titles count) and the play to show.
+
+    With no mode named, the play to show is the newest of all four modes; osu! itself only
+    answers with the player's main mode when none is asked for."""
+    wanted = [ruleset] if ruleset is not None else list(rulesets.RULESETS)
+    lists = await asyncio.gather(*(
+        client.get_user_recent_scores(osu_id, limit=RECENT_LIMIT if rid == 0 else 1, oauth_token=token,
+                                      mode=rulesets.RULESETS[rid])
+        for rid in wanted
+    ), return_exceptions=True)
+    found = {rid: (got if isinstance(got, list) else []) for rid, got in zip(wanted, lists)}
+    standard = found.get(0, [])
+    newest = [plays[0] for plays in found.values() if plays]
+    shown = max(newest, key=_ended) if newest else None
+    return standard, shown
 
 def _play_from_score(raw: dict) -> dict:
     bm = raw.get("beatmap") or {}
@@ -60,7 +83,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         await message.answer(t("common.api_not_ready", lang))
         return
 
-    user_input = trigger_args.args
+    ruleset, user_input = rulesets.split_args(trigger_args.args or "")
 
     target_id = None
     display_name = ""
@@ -134,16 +157,15 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         if not token and target_tg_id and target_tg_id != requester_tg_id:
             token = await get_valid_token(target_tg_id)
 
-        recent_scores = await osu_api_client.get_user_recent_scores(target_id, limit=RECENT_LIMIT, oauth_token=token)
+        recent_scores, score = await fetch_recent(osu_api_client, target_id, token, ruleset)
 
-        if not recent_scores:
+        if not score:
             await wait_msg.edit_text(
                 t("rs.no_recent_plays", lang, name=escape_html(display_name)),
                 parse_mode="HTML",
             )
             return
-
-        score = recent_scores[0]
+        played_in = rulesets.of_score(score)
 
         logger.info(
             f"Score fields: total_score={score.get('total_score')!r}, "
@@ -162,6 +184,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id
                 try:
+                    # leaderboards and titles are osu!standard's: other modes are shown, not counted
 
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
                     plays = [_play_from_score(rs) for rs in recent_scores]
@@ -228,9 +251,9 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             buf = await card_renderer.generate_recent_card_async(recent_data)
             photo = BufferedInputFile(buf.read(), filename="recent.png")
 
-            beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{beatmap.get('mode', 'osu')}/{beatmap.get('id', 0)}"
+            beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{rulesets.RULESETS[played_in]}/{beatmap.get('id', 0)}"
             buttons = [InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)]
-            if beatmap_id:
+            if beatmap_id and played_in == 0:
                 buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}"))
             rows = [buttons]
             kb = InlineKeyboardMarkup(inline_keyboard=rows)

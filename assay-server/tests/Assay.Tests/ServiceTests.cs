@@ -89,6 +89,27 @@ public sealed class ServiceTests(CorpusFixture corpus) : IClassFixture<CorpusFix
     }
 
     [Fact]
+    public async Task Every_mode_is_counted_on_a_converted_map()
+    {
+        var osu = await corpus.Calculator.Map(new MapRequest { BeatmapId = Map }, CancellationToken.None);
+        var taiko = await corpus.Calculator.Score(new ScoreRequest { BeatmapId = Map, Ruleset = 1, Statistics = new() { ["great"] = 900, ["ok"] = 30, ["miss"] = 2 } }, CancellationToken.None);
+        var fruits = await corpus.Calculator.Score(new ScoreRequest { BeatmapId = Map, Ruleset = 2, Statistics = new() { ["great"] = 1000 } }, CancellationToken.None);
+        var mania = await corpus.Calculator.Score(new ScoreRequest { BeatmapId = Map, Ruleset = 3, Mods = [new ModInput("HD")], Statistics = new() { ["perfect"] = 1500, ["great"] = 100 } }, CancellationToken.None);
+
+        foreach (var (played, ruleset) in new[] { (taiko, 1), (fruits, 2), (mania, 3) })
+        {
+            Assert.Equal(ruleset, played.Map.Ruleset);
+            Assert.True(played.Pp > 0 && played.StarRating > 0);
+            Assert.NotEqual(osu.StarRating, played.StarRating, 3);
+            Assert.Null(played.PpIfFc);
+        }
+        Assert.InRange(mania.Map.Attributes["key_count"], 4, 10);
+        Assert.False(osu.Attributes.ContainsKey("key_count"));
+        var strains = await corpus.Calculator.Strains(new StrainsRequest { BeatmapId = Map, Ruleset = 1 }, CancellationToken.None);
+        Assert.Equal(64, strains.Strains.Count);
+    }
+
+    [Fact]
     public void Strains_are_scaled_and_averaged_down()
     {
         Assert.Equal([0.5, 1.0], Strains.Shape([1, 2], 64));
