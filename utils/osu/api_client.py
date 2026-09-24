@@ -61,6 +61,17 @@ async def _estimate_pp(raw: dict, beatmap: dict, beatmap_id: int, mods, stats: d
         return None
     return round(float(served["pp"]), 2)
 
+# osu! sends a score's map set without its ranked date (BeatmapsetCompact), so the date is
+# looked up once per map through /beatmaps, which carries the full set.
+DATED_STATUSES = ("ranked", "approved", "loved")
+_RANKED_DATES: Dict[int, Optional[datetime]] = {}
+_RANKED_DATES_KEPT = 20000
+
+def _remember_ranked_date(beatmap_id: int, when: Optional[datetime]) -> None:
+    if len(_RANKED_DATES) >= _RANKED_DATES_KEPT:
+        _RANKED_DATES.pop(next(iter(_RANKED_DATES)))
+    _RANKED_DATES[beatmap_id] = when
+
 def _sr_mods_bitset(mods_str) -> int:
     if isinstance(mods_str, (list, tuple, set)):
         seen = {
@@ -570,6 +581,7 @@ class OsuApiClient:
         if is_baseline_sync:
             user_model.best_scores_baseline_at = sync_time
 
+        await self._fill_ranked_dates_quietly(session, user_model.id)
         logger.debug(f"Synced best scores for {user_model.osu_username}: {len(incoming_ids)} current, {len(stale_ids)} removed")
         return True
 
@@ -667,6 +679,8 @@ class OsuApiClient:
             }
 
             attempt = existing.get(score_id)
+            if attrs["ranked_date"] is None:
+                attrs.pop("ranked_date")
             if raw.get("pp") is None and raw.get("passed") and (attempt is None or attempt.pp_estimated is None):
                 attrs["pp_estimated"] = await _estimate_pp(raw, beatmap, beatmap_id, mods_list, stats)
             if attempt:
@@ -676,6 +690,7 @@ class OsuApiClient:
                 session.add(UserMapAttempt(user_id=user_model.id, score_id=score_id, **attrs))
             synced += 1
 
+        await self._fill_ranked_dates_quietly(session, user_model.id)
         logger.debug(f"Synced map attempts for {user_model.osu_username}: {synced} rows")
         return synced
 
@@ -708,6 +723,53 @@ class OsuApiClient:
 
     async def get_match(self, match_id: int) -> Optional[Dict]:
         return await self._make_request("GET", f"matches/{match_id}")
+
+    async def ranked_dates(self, beatmap_ids) -> Dict[int, Optional[datetime]]:
+        wanted = [int(b) for b in dict.fromkeys(beatmap_ids) if b]
+        missing = [b for b in wanted if b not in _RANKED_DATES]
+        for i in range(0, len(missing), 50):
+            chunk = missing[i:i + 50]
+            try:
+                reply = await self._make_request("GET", "beatmaps", params=[("ids[]", b) for b in chunk])
+            except Exception as exc:
+                logger.warning(f"ranked dates for {len(chunk)} maps failed: {exc}")
+                break
+            found = {}
+            for bm in (reply or {}).get("beatmaps") or []:
+                found[bm.get("id")] = _parse_iso_dt((bm.get("beatmapset") or {}).get("ranked_date"))
+            for b in chunk:
+                _remember_ranked_date(b, found.get(b))
+        return {b: _RANKED_DATES[b] for b in wanted if b in _RANKED_DATES}
+
+    async def fill_ranked_dates(self, session, user_id: int, *, limit: int = 150) -> int:
+        from sqlalchemy import select
+
+        from db.models.best_score import UserBestScore
+        from db.models.map_attempt import UserMapAttempt
+
+        rows = []
+        for M in (UserBestScore, UserMapAttempt):
+            rows += (await session.execute(
+                select(M).where(M.user_id == user_id, M.ranked_date.is_(None),
+                                M.status.in_(DATED_STATUSES)).limit(limit)
+            )).scalars().all()
+        if not rows:
+            return 0
+        dates = await self.ranked_dates(r.beatmap_id for r in rows)
+        filled = 0
+        for r in rows:
+            when = dates.get(r.beatmap_id)
+            if when is not None:
+                r.ranked_date = when
+                filled += 1
+        return filled
+
+    async def _fill_ranked_dates_quietly(self, session, user_id: int) -> None:
+        try:
+            await session.flush()
+            await self.fill_ranked_dates(session, user_id)
+        except Exception as exc:
+            logger.warning(f"ranked dates for user_id={user_id} not filled: {exc}")
 
     async def get_beatmap(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")

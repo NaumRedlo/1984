@@ -41,6 +41,11 @@ async def service(monkeypatch):
     await server.start_server()
     monkeypatch.setattr(settings, "ASSAY_URL", str(server.make_url("")).rstrip("/"))
     monkeypatch.setattr(settings, "ASSAY_TOKEN", "")
+
+    async def no_dates(self, beatmap_ids):
+        return {}
+
+    monkeypatch.setattr(OsuApiClient, "ranked_dates", no_dates)
     yield asked
     await assay_service.close()
     await server.close()
