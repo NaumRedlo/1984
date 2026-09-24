@@ -7,6 +7,14 @@ CATALOG = {
     "sts.kb.account": {"en": "Account", "ru": "Аккаунт"},
     "sts.kb.title": {"en": "Titles", "ru": "Титулы"},
     "sts.kb.language": {"en": "Language", "ru": "Язык"},
+    "sts.kb.skin": {"en": "Render skin", "ru": "Скин для рендера"},
+    "sts.skin.home": {
+        "en": "🎨 <b>Render skin</b>\n\nVideos drawn for you on the farm use: <b>{skin}</b>\nAlways 1080p at 60 FPS with normalised loudness.",
+        "ru": "🎨 <b>Скин для рендера</b>\n\nВидео, которые для тебя рисует ферма, будут в скине: <b>{skin}</b>\nВсегда 1080p, 60 кадров, громкость нормализована.",
+    },
+    "sts.skin.default": {"en": "Dossier Default", "ru": "Dossier Default"},
+    "sts.skin.none_here": {"en": "No other skins are on the server yet.", "ru": "Других скинов на сервере пока нет."},
+    "sts.skin.saved": {"en": "Saved", "ru": "Сохранено"},
 
     "sts.kb.close": {"en": "Close", "ru": "Закрыть"},
     "sts.kb.back": {"en": "‹ Back", "ru": "‹ Назад"},

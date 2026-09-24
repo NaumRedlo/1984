@@ -9,6 +9,8 @@ from aiohttp import web
 
 from config.settings import RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
 from services.render_farm import community as gathered, invites, pairing
+from services.render_farm.queue import RenderQueue, queue as default_queue
+from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 from utils.ttl_cache import TTLCache
 
@@ -151,7 +153,13 @@ def _dimension(value) -> Optional[int]:
         return None
     return int(value) if 0 < value < 1 << 31 else None
 
-def make_routes() -> list[web.RouteDef]:
+def _key(request: web.Request) -> str:
+    return f"{invites.digest(_token(request))[:16]}:{_worker(request)}"
+
+def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = None) -> list[web.RouteDef]:
+    line = queue if queue is not None else default_queue
+    who = roster if roster is not None else default_roster
+
     async def guard(request: web.Request) -> Optional[web.Response]:
         if not _authorised(request):
             return web.json_response({"error": "unauthorised"}, status=401)
@@ -159,11 +167,127 @@ def make_routes() -> list[web.RouteDef]:
             return web.json_response({"error": "no worker name"}, status=400)
         return None
 
+    def _seen(request: web.Request, *, build: Optional[str] = None, take: Optional[bool] = None) -> str:
+        key = _key(request)
+        owner = invites.owner(_token(request))
+        who.hello(key, _worker(request)[:128], owner.telegram_id if owner else 0, build=build, take=take)
+        return key
+
+    def _mine(request: web.Request):
+        job = line.get(request.match_info["job_id"])
+        if job is None or job.worker != _key(request):
+            return None
+        return job
+
     async def hello(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
             return bad
-        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": 0})
+        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes()})
+
+    async def claim(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        said = await _json_object(request) if request.can_read_body else {}
+        build = said.get("build") if isinstance(said.get("build"), str) else None
+        take = said.get("take")
+        take = bool(take) if isinstance(take, bool) else True
+        key = _seen(request, build=build, take=take)
+        if not take:
+            return web.Response(status=204)
+        job = line.claim(key, _worker(request)[:128])
+        if job is None:
+            return web.Response(status=204)
+        handed = job.handed()
+        handed["most"] = _max_send_bytes()
+        return web.json_response(handed)
+
+    async def job_replay(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        job = _mine(request)
+        if job is None:
+            return web.json_response({"error": "not yours"}, status=409)
+        if not os.path.isfile(job.replay_path):
+            return web.json_response({"error": "replay is gone"}, status=410)
+        return web.FileResponse(job.replay_path)
+
+    async def job_skin(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        job = _mine(request)
+        if job is None:
+            return web.json_response({"error": "not yours"}, status=409)
+        path = (job.skin or {}).get("path")
+        if not path or not os.path.isfile(path):
+            return web.json_response({"error": "no skin"}, status=404)
+        return web.FileResponse(path)
+
+    async def job_heartbeat(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        said = await _json_object(request)
+        _seen(request)
+        progress = said.get("progress")
+        alive = line.heartbeat(request.match_info["job_id"], _key(request), progress if isinstance(progress, dict) else None)
+        return web.json_response({"yours": alive}, status=200 if alive else 409)
+
+    async def job_result(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        key = _seen(request)
+        job_id = request.match_info["job_id"]
+        if not line.heartbeat(job_id, key):
+            return web.json_response({"error": "not yours"}, status=409)
+        try:
+            path, written = await _spool(request, _max_send_bytes(), "render-result-")
+        except ValueError:
+            line.give_back(job_id, key, "the video was too large to send")
+            who.handed_back(key)
+            return web.json_response({"error": "too large", "most": _max_send_bytes()}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        if not line.finish(job_id, key, {"path": path, "meta": _meta(request), "bytes": written}):
+            os.unlink(path)
+            return web.json_response({"error": "not yours"}, status=409)
+        who.delivered(key)
+        return web.json_response({"ok": True})
+
+    async def job_give_back(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        said = await _json_object(request)
+        key = _seen(request)
+        given = line.give_back(request.match_info["job_id"], key, str(said.get("reason") or "no reason given")[:300])
+        if given:
+            who.handed_back(key)
+        return web.json_response({"ok": given}, status=200 if given else 409)
+
+    async def farm(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        mine = _key(request)
+        busy = line.rendering()
+        workers = []
+        for worker in who.here():
+            job = busy.get(worker.key)
+            state = "rendering" if job else ("ready" if worker.take else "resting")
+            workers.append({
+                "name": worker.name,
+                "state": state,
+                "delivered": worker.delivered,
+                "handed_back": worker.handed_back,
+                "mine": worker.key == mine,
+                "progress": (job.progress or {}) if job else None,
+            })
+        return web.json_response({"waiting": len(line.waiting()), "workers": workers})
 
     async def pair(request: web.Request) -> web.Response:
         try:
@@ -536,6 +660,13 @@ def make_routes() -> list[web.RouteDef]:
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),
+        web.post("/render/claim", claim),
+        web.get("/render/job/{job_id}/replay", job_replay),
+        web.get("/render/job/{job_id}/skin", job_skin),
+        web.post("/render/job/{job_id}/heartbeat", job_heartbeat),
+        web.post("/render/job/{job_id}/result", job_result),
+        web.post("/render/job/{job_id}/give-back", job_give_back),
+        web.get("/render/farm", farm),
     ]
 
 def install(app: web.Application) -> bool:

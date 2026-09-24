@@ -25,6 +25,7 @@ from bot.handlers.maplink import router as maplink_router
 from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
 from bot.handlers.errors import router as errors_router
+from bot.handlers.farm import router as farm_router
 
 from bot.middlewares.api_client_middleware import ApiClientMiddleware
 from bot.middlewares.group_restriction_middleware import GroupRestrictionMiddleware
@@ -93,6 +94,7 @@ class App:
         self.dp.callback_query.middleware(api_mw)
 
         self.dp.include_router(start_router)
+        self.dp.include_router(farm_router)
         self.dp.include_router(dm_tenant_router)
         self.dp.include_router(auth_router)
         self.dp.include_router(admin_router)

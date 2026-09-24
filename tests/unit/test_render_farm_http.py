@@ -30,12 +30,14 @@ async def test_a_worker_has_to_say_who_it_is(farm):
 
 async def test_hello_agrees_with_any_application_build(farm):
     got = await (await farm.get("/render/hello?engine=0.12.0", headers=MINE)).json()
-    assert got == {"build": "", "agree": True, "reason": "", "waiting": 0}
+    assert {key: got[key] for key in ("build", "agree", "reason")} == {"build": "", "agree": True, "reason": ""}
+    assert got["most"] > 0 and "waiting" in got
 
-async def test_the_render_queue_is_gone(farm):
-    for path in ("/render/claim", "/render/join", "/render/job/x/result"):
-        assert (await farm.post(path, headers=MINE)).status in (404, 405)
-    assert (await farm.get("/render/farm", headers=MINE)).status == 404
+async def test_the_farm_hands_out_work_again_but_codes_stay_gone(farm):
+    assert (await farm.post("/render/join", headers=MINE)).status in (404, 405)
+    assert (await farm.post("/render/job/x/result", headers=MINE)).status == 409
+    listed = await farm.get("/render/farm", headers=MINE)
+    assert listed.status == 200
 
 async def test_without_a_secret_the_endpoints_do_not_exist(monkeypatch):
     monkeypatch.setattr(http, "RENDER_WORKER_TOKEN", "")

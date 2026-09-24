@@ -16,9 +16,9 @@ to the osu! API v2, keeps its own database, and renders every card itself with
 Pillow.
 
 **Dossier** is an osu! replay engine written from scratch in Rust, and it lives
-in [its own repository](https://github.com/NaumRedlo/Dossier). Replays are no
-longer rendered through the bot: the Dossier application renders on the
-player's own machine, and the bot is what it pairs with.
+in [its own repository](https://github.com/NaumRedlo/Dossier). The bot draws no
+replay itself: the Dossier application renders on the player's own machine,
+and machines lent to the farm render the replays people send the bot.
 
 ---
 
@@ -34,11 +34,32 @@ What the bot does for the application, and nothing more:
 - **shows it the group** — people, live plays, what happened this week, the
   week's moves and the titles;
 - **delivers the finished video** to the person's private chat or to a group
-  they are in.
+  they are in;
+- **hands it work** when its person switches the worker on: the farm.
 
 All of it is under `/render/*` (`services/render_farm/http.py`) and exists only
 while `RENDER_WORKER_TOKEN` is set. Pairing is open to the Telegram ids in
 `RENDER_TESTER_IDS` (`*` for everybody).
+
+### The farm
+
+Anyone who shares a group with the bot can send it an osu!standard `.osr` — in
+a private chat or in a group, the same — and gets the video back as a reply.
+The bot reads the replay's header, finds the map by its hash, and queues a job
+(`services/render_farm/queue.py`); the reply that says so is kept current —
+the place in the queue and how many workers are online, then who took it and
+how far along it is. A paired application with its worker on claims the oldest
+job (`POST /render/claim`), fetches the replay and the chosen skin
+(`/render/job/<id>/replay`, `/skin`), finds or downloads the map itself,
+reports progress (`/heartbeat`) and uploads the video (`/result`) or hands the
+job back (`/give-back`); `/render/farm` lists who is online. A job is leased for
+90 seconds at a time and goes back in line when its worker goes quiet; after
+three tries, or when nobody takes it within `RENDER_GIVE_UP` seconds (900), the
+person is told. Every video is 1920×1080 at 60 FPS with normalised loudness; the
+skin is the person's choice in `sts` → *Render skin*, from the `.osk` files in
+`RENDER_SKINS_DIR` (`data/skins`), or Dossier Default. A person may have
+`RENDER_ORDERS_EACH` (2) jobs open at once, and a replay may be
+`RENDER_REPLAY_MOST` bytes (8 MB).
 
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If

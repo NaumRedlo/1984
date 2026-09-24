@@ -58,4 +58,56 @@ CATALOG = {
               "не нужно.",
     },
 
+    "farm.members_only": {
+        "en": "Renders are for members of the groups I am in. Join one of them and send the replay again.",
+        "ru": "Рендер доступен участникам групп, где есть я. Вступи в одну из них и пришли реплей снова.",
+    },
+    "farm.too_big": {
+        "en": "That file is too large to be a replay.",
+        "ru": "Этот файл слишком большой для реплея.",
+    },
+    "farm.too_many": {
+        "en": "You already have {n} replays in the queue — wait for one of them to finish.",
+        "ru": "У тебя уже {n} реплея в очереди — дождись, пока один из них дорисуется.",
+    },
+    "farm.unreadable": {
+        "en": "I could not read that replay.",
+        "ru": "Не получилось прочитать этот реплей.",
+    },
+    "farm.standard_only": {
+        "en": "The farm draws osu!standard replays only.",
+        "ru": "Ферма рисует только реплеи osu!standard.",
+    },
+    "farm.waiting": {
+        "en": "🎬 {title}\nIn the queue · {ahead} ahead · workers online: {workers}",
+        "ru": "🎬 {title}\nВ очереди · впереди: {ahead} · воркеров на связи: {workers}",
+    },
+    "farm.waiting_alone": {
+        "en": "🎬 {title}\nIn the queue. No worker is online right now — it will wait up to {minutes} min.",
+        "ru": "🎬 {title}\nВ очереди. Сейчас ни один воркер не на связи — задача подождёт до {minutes} мин.",
+    },
+    "farm.preparing": {
+        "en": "🎬 {title}\n{worker} took it · getting the map ready",
+        "ru": "🎬 {title}\nВзял «{worker}» · готовит карту",
+    },
+    "farm.drawing": {
+        "en": "🎬 {title}\n{worker} is drawing · {share}% · {left} left",
+        "ru": "🎬 {title}\nРисует «{worker}» · {share}% · осталось {left}",
+    },
+    "farm.nobody": {
+        "en": "🎬 {title}\nNo worker took it in time — send the replay again later.",
+        "ru": "🎬 {title}\nНи один воркер не взял задачу вовремя — пришли реплей позже.",
+    },
+    "farm.failed": {
+        "en": "🎬 {title}\nThe render did not work out: {reason}",
+        "ru": "🎬 {title}\nРендер не удался: {reason}",
+    },
+    "farm.undelivered": {
+        "en": "🎬 {title}\nThe video was drawn but I could not send it.",
+        "ru": "🎬 {title}\nВидео нарисовано, но отправить его не получилось.",
+    },
+    "farm.caption": {
+        "en": "{title}\nDrawn by {worker}",
+        "ru": "{title}\nНарисовал «{worker}»",
+    },
 }
