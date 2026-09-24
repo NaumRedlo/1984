@@ -23,10 +23,10 @@ CATALOG = {
     "lb.unit.m": {"en": "m", "ru": "м"},
     "lb.delta.new": {"en": "NEW", "ru": "NEW"},
     "lb.delta.not_played": {
-        "en": "You haven't started playing yet",
-        "ru": "Ты ещё не приступал к игре",
+        "en": "No plays from you this week yet",
+        "ru": "На этой неделе твоих игр пока нет",
     },
-    "lb.delta.gap": {"en": "left {value} to place - {place}", "ru": "до {place}-го места осталось {value}"},
+    "lb.delta.gap": {"en": "{value} to go to place {place}", "ru": "до {place}-го места осталось {value}"},
     "lb.delta.no_gain": {
         "en": "no one has gained anything yet this week",
         "ru": "на этой неделе прироста пока ни у кого",

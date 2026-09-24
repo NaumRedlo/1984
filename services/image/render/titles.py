@@ -133,9 +133,9 @@ _TT_STRINGS = {
         "stats_hdr": "СТАТИСТИКА", "all_titles": "Все титулы",
         "hidden_title": "Скрытый титул", "hidden_desc": "Откроется сам, со временем",
         "unlocked": "Открыт", "progress": "Прогресс", "locked": "Закрыт",
-        "recently_unlocked": "НЕДАВНО ОТКРЫТО", "next_reward": "СЛЕДУЮЩАЯ НАГРАДА",
-        "secret_badge": "СЕКРЕТ",
-        "all_unlocked": "Все открыто!", "progress_to_unlock": "ПРОГРЕСС ДО ОТКРЫТИЯ",
+        "recently_unlocked": "НЕДАВНО ОТКРЫТ", "next_reward": "СЛЕДУЮЩАЯ НАГРАДА",
+        "secret_badge": "СЕКРЕТНЫЙ",
+        "all_unlocked": "Всё открыто!", "progress_to_unlock": "ПРОГРЕСС ДО ОТКРЫТИЯ",
     },
 }
 

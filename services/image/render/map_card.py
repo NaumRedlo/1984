@@ -30,7 +30,7 @@ _GOLD = (255, 202, 40)
 _WHATIF_STRINGS = {
     "en": {"header": "MAP INFORMATION", "pp_by_acc": "PP BY ACCURACY", "mapped_by": "mapped by",
            "difficulty": "MAP DIFFICULTY", "no_data": "NO DATA", "failed": "FAILED"},
-    "ru": {"header": "ИНФОРМАЦИЯ О КАРТЕ", "pp_by_acc": "PP ЗА ТОЧНОСТЬ", "mapped_by": "автор карты",
+    "ru": {"header": "ИНФОРМАЦИЯ О КАРТЕ", "pp_by_acc": "PP ПО ТОЧНОСТИ", "mapped_by": "автор карты",
            "difficulty": "СЛОЖНОСТЬ КАРТЫ", "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ"},
 }
 
