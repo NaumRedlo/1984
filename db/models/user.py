@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Date, Float, Boolean, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Date, Float, Boolean, LargeBinary, Text, UniqueConstraint
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -64,6 +64,8 @@ class User(Base):
     cover_url = Column(String(512), nullable=True)
     avatar_data = Column(LargeBinary, nullable=True)
     cover_data = Column(LargeBinary, nullable=True)
+    app_profile = Column(Text, nullable=True)
+    app_profile_at = Column(DateTime, nullable=True)
 
     hps_points = Column(Integer, default=0, nullable=False)
     rank = Column(String(50), default='Candidate', nullable=False)

@@ -220,6 +220,21 @@ async def test_a_member_opens_another_member_s_dossier(served, factory):
     assert (await client.get(f"/render/community/person?chat={CHAT}&id=999", headers=mine)).status == 404
     assert (await client.get(f"/render/community/person?chat=-5&id={lumen}", headers=mine)).status == 403
 
+async def test_a_card_shared_from_the_app_comes_back_with_the_dossier(served, factory):
+    naum, koto, lumen = await _seed(factory)
+    client, mine = served
+    card = {"username": "NaumRedlo", "pp": 6396.01, "rank_history": [52555, 52567]}
+    reply = await client.post("/render/me/profile", json=card, headers=mine)
+    assert reply.status == 200 and (await reply.json())["kept"] == 1
+    them = await (await client.get(f"/render/community/person?chat={CHAT}&id={naum}", headers=mine)).json()
+    assert them["card"]["rank_history"] == [52555, 52567] and them["card_at"]
+    got = await (await client.get("/render/community", headers=mine)).json()
+    assert next(p for p in got["people"] if p["name"] == "NaumRedlo")["app"] is True
+    assert next(p for p in got["people"] if p["name"] == "lumen")["app"] is False
+    assert (await client.post("/render/me/profile", json=[1, 2], headers=mine)).status == 400
+    huge = {"blob": "x" * (community.APP_PROFILE_MOST + 10)}
+    assert (await client.post("/render/me/profile", json=huge, headers=mine)).status == 413
+
 async def test_friends_need_a_linked_osu_account(served, factory):
     client, mine = served
     reply = await client.get("/render/me/friends", headers=mine)

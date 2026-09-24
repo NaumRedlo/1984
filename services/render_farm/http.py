@@ -390,6 +390,31 @@ def make_routes() -> list[web.RouteDef]:
             return web.json_response({"error": "no one"}, status=404)
         return web.json_response(body)
 
+    async def share_card(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        if request.content_length is not None and request.content_length > gathered.APP_PROFILE_MOST:
+            return web.json_response({"error": "too large"}, status=413)
+        try:
+            card = await request.json()
+        except Exception:
+            return web.json_response({"error": "not json"}, status=400)
+        if not isinstance(card, dict):
+            return web.json_response({"error": "not a card"}, status=400)
+
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            try:
+                kept = await gathered.keep_card(session, owner.telegram_id, card)
+            except ValueError:
+                return web.json_response({"error": "too large"}, status=413)
+        return web.json_response({"kept": kept})
+
     async def card(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -507,6 +532,7 @@ def make_routes() -> list[web.RouteDef]:
         web.get("/render/chat/{chat_id}/avatar", chat_avatar),
         web.get("/render/community", community),
         web.get("/render/community/person", someone),
+        web.post("/render/me/profile", share_card),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

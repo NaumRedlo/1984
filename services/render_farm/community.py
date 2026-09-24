@@ -140,6 +140,7 @@ def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: 
         "cover": user.cover_url or "",
         "moved": moved,
         "gained": gained,
+        "app": bool(getattr(user, "app_profile", None)),
         "was": was or [0] * len(DELTA_CATEGORIES),
         "top": top,
         "you": you,
@@ -260,6 +261,30 @@ async def someone(session, user_id: int, chat_id: int, viewer: int, *, now: Opti
         return None
     return await _profile(session, found, you=found.telegram_id == viewer, now=now)
 
+APP_PROFILE_MOST = 400_000
+
+def shared_card(user) -> Optional[dict[str, Any]]:
+    raw = getattr(user, "app_profile", None)
+    if not raw:
+        return None
+    try:
+        card = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return card if isinstance(card, dict) else None
+
+async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Optional[datetime] = None) -> int:
+    raw = json.dumps(card, ensure_ascii=False, separators=(",", ":"))
+    if len(raw) > APP_PROFILE_MOST:
+        raise ValueError("the card is too large")
+    rows = (await session.execute(select(User).where(User.telegram_id == telegram_id, User.osu_user_id.isnot(None)))).scalars().all()
+    moment = naive(now) or utcnow()
+    for row in rows:
+        row.app_profile = raw
+        row.app_profile_at = moment
+    await session.commit()
+    return len(rows)
+
 async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) -> dict[str, Any]:
     held = [
         row for row in (await session.execute(
@@ -312,6 +337,8 @@ async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) 
         day = naive(moment).date().isoformat()
         days[day] = days.get(day, 0) + 1
     body["activity"] = [{"day": day, "n": n} for day, n in sorted(days.items())]
+    body["card"] = shared_card(mine)
+    body["card_at"] = stamp(mine.app_profile_at) if getattr(mine, "app_profile_at", None) else None
     return body
 
 def friends_from(raw: Any) -> list[dict[str, Any]]:
