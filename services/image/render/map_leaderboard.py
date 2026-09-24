@@ -53,6 +53,8 @@ _MLB_STRINGS = {
         "no_result": "No result yet",
         "place": "place {n}",
         "player": "Player",
+        "grade": "Grade",
+        "mods": "Mods",
         "accuracy": "Accuracy",
         "combo": "Combo",
         "pp": "PP",
@@ -77,6 +79,8 @@ _MLB_STRINGS = {
         "no_result": "Результата пока нет",
         "place": "{n} место",
         "player": "Игрок",
+        "grade": "Оценка",
+        "mods": "Моды",
         "accuracy": "Точность",
         "combo": "Комбо",
         "pp": "PP",
@@ -376,6 +380,9 @@ class MapLeaderboardCardMixin:
         self._mlb_centred(draw, (x0 + 10, hy, x0 + 10 + self.RANK_W, hy),
                           "#", self.font_small, MUTED)
         self._draw_text(draw, (cols["name"], hy), S["player"], self.font_small, MUTED)
+        gw = self._text_size(draw, S["grade"], self.font_small)[0]
+        self._draw_text(draw, (cols["grade"] - gw / 2, hy), S["grade"], self.font_small, MUTED)
+        self._draw_text(draw, (cols["mods"], hy), S["mods"], self.font_small, MUTED)
         for key in ("acc", "combo", "pp", "score"):
             label = S["accuracy"] if key == "acc" else S[key]
             w = self._text_size(draw, label, self.font_small)[0]
@@ -390,7 +397,7 @@ class MapLeaderboardCardMixin:
     def _mlb_columns(self, x0, x1):
         return {
             "name": x0 + 10 + self.RANK_W + 52,
-            "grade": x1 - 590,
+            "grade": x1 - 610,
             "mods": x1 - 560,
             "acc": x1 - 342,
             "combo": x1 - 240,

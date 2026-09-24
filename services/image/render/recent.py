@@ -86,15 +86,6 @@ def _strain_y_at(series: List[float], frac: float) -> float:
         + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
     )
 
-def _whole_picture(src: Image.Image, w: int, h: int) -> Image.Image:
-    backdrop = cover_center_crop(src, w, h).convert("RGB").filter(ImageFilter.GaussianBlur(10))
-    backdrop = Image.blend(backdrop, Image.new("RGB", (w, h), (0, 0, 0)), 0.45)
-    scale = min(w / src.width, h / src.height)
-    size = (max(1, round(src.width * scale)), max(1, round(src.height * scale)))
-    whole = src.convert("RGB").resize(size, Image.LANCZOS)
-    backdrop.paste(whole, ((w - size[0]) // 2, (h - size[1]) // 2))
-    return backdrop
-
 async def _map_background(covers: str) -> Optional[Image.Image]:
     return await download_image(f"{covers}/raw.jpg") or await download_image(f"{covers}/cover.jpg")
 
@@ -249,7 +240,7 @@ class RecentCardMixin:
         cov_w = int(cov_h * 1.85)
         cov_x, cov_y = M + pad, hero_y + pad
         if cover:
-            thumb = _whole_picture(cover, cov_w, cov_h)
+            thumb = cover_center_crop(cover, cov_w, cov_h).convert("RGB")
             img.paste(thumb, (cov_x, cov_y), self._rounded_mask((cov_w, cov_h), 12))
         else:
             panel(cov_x, cov_y, cov_w, cov_h, r=12, fill=(40, 40, 58))
@@ -268,8 +259,9 @@ class RecentCardMixin:
         mav_sz = 28
         mrow_y = hero_y + 22
         draw = self._paste_ringed_avatar(img, mapper_avatar, mx + 2, mrow_y, mav_sz)
-        self._draw_text_shadow(draw, (mx + mav_sz + 12, mrow_y - 1), S["mapped_by"], f_lbl, TEXT_SECONDARY)
-        self._draw_text_shadow(draw, (mx + mav_sz + 12, mrow_y + 13), mapper_name[:26], f_small, (210, 210, 222))
+        mav_cy = mrow_y + mav_sz / 2
+        self._text_mid(draw, mx + mav_sz + 12, mav_cy - 7, S["mapped_by"], f_lbl, TEXT_SECONDARY, shadow=True)
+        self._text_mid(draw, mx + mav_sz + 12, mav_cy + 8, mapper_name[:26], f_small, (210, 210, 222), shadow=True)
 
         t_y = hero_y + 60
         disp = title
@@ -284,29 +276,27 @@ class RecentCardMixin:
             art_txt = art_txt[:-1]
         if art_txt != artist:
             art_txt += "…"
-        a_y = t_y + 46
-        self._draw_text_shadow(draw, (mx, a_y), art_txt, f_artist, TEXT_SECONDARY)
-        apx = mx + self._text_size(draw, art_txt, f_artist)[0] + 12
+        a_cy = t_y + 58
+        apx = self._text_mid(draw, mx, a_cy, art_txt, f_artist, TEXT_SECONDARY, shadow=True) + 12
         if version:
             vlabel = version if len(version) <= 18 else version[:17] + "…"
             vpw = self._text_size(draw, vlabel, f_pill)[0] + 18
-            self._aa_rounded_fill(img, (apx, a_y - 1, apx + vpw, a_y + 23), radius=12, fill=(70, 90, 150))
-            self._text_mid(ImageDraw.Draw(img), apx + vpw / 2, a_y + 11, vlabel, f_pill, (235, 240, 255), align="center")
+            self._aa_rounded_fill(img, (apx, int(a_cy - 12), apx + vpw, int(a_cy + 12)), radius=12, fill=(70, 90, 150))
+            self._text_mid(ImageDraw.Draw(img), apx + vpw / 2, a_cy, vlabel, f_pill, (235, 240, 255), align="center")
         draw = ImageDraw.Draw(img)
 
         chip_y = hero_y + hero_h - 48
+        chip_cy = chip_y + 10
         cx = mx
         def chip(icon_name, text):
             nonlocal cx
             ic = load_icon(icon_name, size=16)
             if ic:
-                img.paste(ic, (cx, chip_y + 3), ic)
-                cx += 20
-            d = ImageDraw.Draw(img)
-            self._draw_text_shadow(d, (cx, chip_y), text, f_chip, TEXT_PRIMARY)
-            cx += self._text_size(d, text, f_chip)[0] + 22
+                img.paste(ic, (cx, int(round(chip_cy - ic.height / 2))), ic)
+                cx += 21
+            cx = self._text_mid(ImageDraw.Draw(img), cx, chip_cy, text, f_chip, TEXT_PRIMARY, shadow=True) + 22
 
-        cx = self._draw_sr_pill(img, cx, chip_y, stars, f_chip)
+        cx = self._draw_sr_pill(img, cx, chip_y, stars, f_chip, center_y=chip_cy)
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
         chip("bpm", f"{bpm:g}")
 
@@ -314,8 +304,8 @@ class RecentCardMixin:
             slabel = status.upper()
             sc, sink = status_colours(status)
             spw = self._text_size(draw, slabel, f_pill)[0] + 18
-            self._aa_rounded_fill(img, (cx, chip_y - 3, cx + spw, chip_y + 23), radius=13, fill=sc)
-            self._text_mid(ImageDraw.Draw(img), cx + spw / 2, chip_y + 10, slabel, f_pill, sink, align="center")
+            self._aa_rounded_fill(img, (cx, int(chip_cy - 13), cx + spw, int(chip_cy + 13)), radius=13, fill=sc)
+            self._text_mid(ImageDraw.Draw(img), cx + spw / 2, chip_cy, slabel, f_pill, sink, align="center")
         draw = ImageDraw.Draw(img)
 
         mods = data.get("mods", "")
@@ -352,8 +342,8 @@ class RecentCardMixin:
             acc_x += inner_w * wgt / tot
         xs.append(inner_x + inner_w)
         centers = [(xs[i] + xs[i + 1]) / 2 for i in range(len(weights))]
-        lbl_y = stats_y + 16
-        val_y = stats_y + 42
+        lbl_cy = stats_y + 24
+        val_cy = stats_y + 54
 
         def bar(cx_i, frac, color):
             bw = (xs[cx_i + 1] - xs[cx_i]) - 34
@@ -366,8 +356,8 @@ class RecentCardMixin:
 
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
 
-        self._text_center(draw, centers[0], lbl_y, "PP", f_lbl, TEXT_SECONDARY)
-        self._text_center(draw, centers[0], val_y - 4, f"{pp:.0f}" if pp else "—", f_val, pp_color)
+        self._text_mid(draw, centers[0], lbl_cy, "PP", f_lbl, TEXT_SECONDARY, align="center")
+        self._text_mid(draw, centers[0], val_cy, f"{pp:.0f}" if pp else "—", f_val, pp_color, align="center", shadow=True)
         pp_badges = []
         if is_fc:
             pp_badges.append(("FC", ACCENT_GREEN))
@@ -388,19 +378,23 @@ class RecentCardMixin:
                 bx += bw + 5
         draw = ImageDraw.Draw(img)
 
-        self._text_center(draw, centers[1], lbl_y, S["accuracy"], f_lbl, TEXT_SECONDARY)
-        self._text_center(draw, centers[1], val_y - 4, f"{acc:.2f}%", f_val, TEXT_PRIMARY)
+        self._text_mid(draw, centers[1], lbl_cy, S["accuracy"], f_lbl, TEXT_SECONDARY, align="center")
+        self._text_mid(draw, centers[1], val_cy, f"{acc:.2f}%", f_val, TEXT_PRIMARY, align="center", shadow=True)
         bar(1, acc / 100.0, RECENT_LINE)
 
-        self._text_center(draw, centers[2], lbl_y, S["combo"], f_lbl, TEXT_SECONDARY)
+        self._text_mid(draw, centers[2], lbl_cy, S["combo"], f_lbl, TEXT_SECONDARY, align="center")
         combo_str = f"{combo}x"
         max_str = f"/{map_max_combo}x" if map_max_combo else ""
         combo_w, _ = self._text_size(draw, combo_str, f_val)
         max_w, _ = self._text_size(draw, max_str, f_chip)
         combo_x0 = int(centers[2] - (combo_w + max_w) / 2)
-        self._draw_text_shadow(draw, (combo_x0, val_y - 4), combo_str, f_val, RECENT_LINE)
+        self._text_mid(draw, combo_x0, val_cy, combo_str, f_val, RECENT_LINE, shadow=True)
         if max_str:
-            self._draw_text_shadow(draw, (combo_x0 + combo_w, val_y + 3), max_str, f_chip, TEXT_SECONDARY)
+            v_top, v_bottom = draw.textbbox((0, 0), "H", font=f_val)[1::2]
+            c_top, c_bottom = draw.textbbox((0, 0), "H", font=f_chip)[1::2]
+            baseline = val_cy - (v_top + v_bottom) / 2 + v_bottom
+            self._draw_text_shadow(draw, (combo_x0 + combo_w + 2, int(round(baseline - c_bottom))),
+                                   max_str, f_chip, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
 
         counts = [
@@ -411,8 +405,8 @@ class RecentCardMixin:
         ]
         for i, (lbl, val, col) in enumerate(counts):
             c = centers[3 + i]
-            self._text_center(draw, c, lbl_y, lbl, f_lbl, col)
-            self._text_center(draw, c, val_y, str(val), f_val2, TEXT_PRIMARY)
+            self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
+            self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center", shadow=True)
 
         mid_y = stats_y + stats_h + 16
         mid_h = H - mid_y - 22
@@ -439,13 +433,14 @@ class RecentCardMixin:
         for i, (lbl, icon, val) in enumerate(params):
             ry = drow_y + i * drow_gap
             lx = det_x + 18
+            rcy = ry + 11
             dic = load_icon(icon, size=18)
             if dic:
-                img.paste(dic, (lx, ry + 1), dic)
+                img.paste(dic, (lx, int(round(rcy - dic.height / 2))), dic)
                 draw = ImageDraw.Draw(img)
                 lx += 24
-            self._draw_text(draw, (lx, ry), lbl, f_chip, TEXT_SECONDARY)
-            self._text_right(draw, det_x + det_w - 18, ry, f"{float(val):.1f}", f_chip, TEXT_PRIMARY)
+            self._text_mid(draw, lx, rcy, lbl, f_chip, TEXT_SECONDARY)
+            self._text_mid(draw, det_x + det_w - 18, rcy, f"{float(val):.1f}", f_chip, TEXT_PRIMARY, align="right")
             bw = det_w - 36
             by = ry + 26
             frac = min(float(val) / 10.0, 1.0)
