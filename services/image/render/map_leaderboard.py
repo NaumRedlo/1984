@@ -1,16 +1,20 @@
 import asyncio
+from datetime import datetime, timezone
 from io import BytesIO
-from typing import Dict, List
+from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from config.settings import TIMEZONE
 from services.image.constants import (
-    RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL, RECENT_TRACK,
-    TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS,
+    GRADE_COLORS, MOD_ACRONYMS, MONO_BOLD, RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL,
+    RECENT_TRACK, TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS, status_colours, status_name,
 )
 from services.image.utils import (
-    _none_coro, cover_center_crop, download_image, load_icon,
+    _find_font, _none_coro, cover_center_crop, download_image, load_icon,
 )
+from utils.formatting.text import plural
 
 BG = RECENT_BG
 PANEL = RECENT_PANEL
@@ -40,19 +44,20 @@ TITLE_TINTS = {
 _MLB_STRINGS = {
     "en": {
         "board": "CHAT LEADERBOARD",
+        "mapped_by": "mapped by",
         "leaders": "MAP LEADERS",
         "stats": "MAP STATISTICS",
         "history": "RECORD HISTORY",
         "updated": "Last updated",
         "yours": "YOUR RESULT",
-        "no_result": "no result yet",
+        "no_result": "No result yet",
         "place": "place {n}",
         "player": "Player",
         "accuracy": "Accuracy",
         "combo": "Combo",
         "pp": "PP",
         "score": "Score",
-        "plays": "Times played",
+        "plays": "Plays",
         "players": "Players",
         "average": "Average result",
         "t.best": "Best result",
@@ -62,26 +67,27 @@ _MLB_STRINGS = {
         "t.mods": "Hardest mods",
     },
     "ru": {
-        "board": "ЛИДЕРБОРД УЧАСТНИКОВ",
+        "board": "ЛИДЕРБОРД ЧАТА",
+        "mapped_by": "автор карты",
         "leaders": "ЛИДЕРЫ КАРТЫ",
         "stats": "СТАТИСТИКА КАРТЫ",
         "history": "ИСТОРИЯ РЕКОРДА",
         "updated": "Последнее обновление",
         "yours": "ТВОЙ РЕЗУЛЬТАТ",
-        "no_result": "результата пока нет",
+        "no_result": "Результата пока нет",
         "place": "{n} место",
         "player": "Игрок",
         "accuracy": "Точность",
         "combo": "Комбо",
         "pp": "PP",
-        "score": "Рекорд",
-        "plays": "Сыграно раз",
-        "players": "Участников",
+        "score": "Очки",
+        "plays": "Попыток",
+        "players": "Игроков",
         "average": "Средний результат",
         "t.best": "Лучший результат",
         "t.accuracy": "Лучшая точность",
         "t.combo": "Лучшее комбо",
-        "t.score": "Самый большой рекорд",
+        "t.score": "Больше всего очков",
         "t.mods": "Самые сложные моды",
     },
 }
@@ -93,14 +99,48 @@ def _pp_text(row: dict) -> str:
     value = f"{float(row.get('pp') or 0):.1f}"
     return f"~{value}" if row.get("pp_estimated") else value
 
+_MONTHS = {
+    "en": ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    "ru": ("янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"),
+}
+
+def _local(at: datetime) -> datetime:
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    try:
+        return at.astimezone(ZoneInfo(TIMEZONE))
+    except Exception:
+        return at
+
+def _when(at: Optional[datetime], lang: str, now: Optional[datetime] = None) -> str:
+    if at is None:
+        return ""
+    ru = (lang or "en").lower() == "ru"
+    at = _local(at)
+    now = _local(now or datetime.now(timezone.utc))
+    days = (now.date() - at.date()).days
+    if days <= 0:
+        return "сегодня" if ru else "today"
+    if days == 1:
+        return "вчера" if ru else "yesterday"
+    if days < 7:
+        return f"{days} {plural(days, 'день', 'дня', 'дней')} назад" if ru else f"{days} days ago"
+    month = _MONTHS["ru" if ru else "en"][at.month - 1]
+    day = f"{at.day} {month}" if ru else f"{month} {at.day}"
+    return day if at.year == now.year else f"{day} {at.year}"
+
+def _grade_label(rank: str) -> str:
+    rank = (rank or "").upper()
+    return {"X": "SS", "XH": "SS", "SH": "S"}.get(rank, rank or "F")
+
 class MapLeaderboardCardMixin:
 
     MLB_ROWS_PER_PAGE = 9
 
-    W = 1180
+    W = 1300
     PAD = 22
     GAP = 18
-    LEFT_W = 740
+    LEFT_W = 860
     ROW_H = 54
     RANK_W = 52
     HEAD_H = 150
@@ -123,6 +163,9 @@ class MapLeaderboardCardMixin:
         pages = max(1, -(-len(rows) // per))
         page = min(max(0, int(data.get("page") or 0)), pages - 1)
         wanted = list(rows[page * per:(page + 1) * per]) + list(data.get("history") or [])
+        viewer = data.get("viewer")
+        if isinstance(viewer, dict) and not any(viewer is r for r in wanted):
+            wanted.append(viewer)
 
         cover = None
         if data.get("beatmap_cover_data"):
@@ -142,8 +185,16 @@ class MapLeaderboardCardMixin:
             else:
                 item["avatar"] = got if not isinstance(got, Exception) else None
 
+        mapper = None
+        if data.get("mapper_id"):
+            try:
+                mapper = await download_image(f"https://a.ppy.sh/{int(data['mapper_id'])}")
+            except Exception:
+                mapper = None
+
         payload = dict(data)
         payload["cover"] = cover
+        payload["mapper_avatar"] = mapper
         payload["page"] = page
         return await asyncio.to_thread(self.generate_map_leaderboard_v2, payload)
 
@@ -159,21 +210,21 @@ class MapLeaderboardCardMixin:
         viewer_name = viewer.get("username")
 
         on_page = any(r.get("username") == viewer_name for r in shown) if viewer_name else False
-        yours_h = 0 if (on_page or not viewer_name) else 86
+        yours_h = 0 if (on_page or not viewer_name) else 92
 
         head_h = self.HEAD_H
         board_h = 62 + len(shown) * self.ROW_H + 16
         left_h = head_h + self.GAP + board_h + (self.GAP + yours_h if yours_h else 0)
 
         titles = data.get("titles") or []
-        titles_h = 56 + len(titles) * 74 + 12
+        titles_h = 56 + len(titles) * 78 + 12
 
         stats_h = 56 + 3 * 46 + 12
         updated_h = 64 if data.get("updated") else 0
         right_h = titles_h + self.GAP + stats_h + (self.GAP + updated_h if updated_h else 0)
 
         history = data.get("history") or []
-        history_h = 156 if history else 0
+        history_h = 172 if history else 0
 
         body_h = max(left_h, right_h)
         H = self.PAD + body_h + (self.GAP + history_h if history_h else 0) + 46 + self.PAD
@@ -206,7 +257,7 @@ class MapLeaderboardCardMixin:
         if history_h:
             hy = self.PAD + body_h + self.GAP
             self._mlb_history(img, draw, (left_x, hy, self.W - self.PAD, hy + history_h),
-                              history, S)
+                              history, S, data)
 
         foot = data.get("footer") or ""
         if foot:
@@ -227,9 +278,23 @@ class MapLeaderboardCardMixin:
             draw.rounded_rectangle(box, radius=RADIUS, outline=PANEL_EDGE, width=1)
         else:
             _panel(draw, box)
+        S = self._mlb_strings(data)
 
         tx = x0 + 26
-        limit = (x1 - 26) - tx
+        right = x1 - 26
+        mapper_name = (data.get("mapper_name") or "").strip()
+        if mapper_name:
+            av = 44
+            ax = right - av
+            draw = self._paste_ringed_avatar(img, data.get("mapper_avatar"), ax, y0 + 22, av)
+            name = self._fit(draw, mapper_name, self.font_label, 220)
+            nw = self._text_size(draw, name, self.font_label)[0]
+            lw = self._text_size(draw, S["mapped_by"], self.font_stat_label)[0]
+            self._draw_text(draw, (ax - 14 - lw, y0 + 22), S["mapped_by"], self.font_stat_label, MUTED)
+            self._draw_text(draw, (ax - 14 - nw, y0 + 41), name, self.font_label, TEXT)
+            right = ax - 30 - max(nw, lw)
+
+        limit = right - tx
         self._draw_text(draw, (tx, y0 + 20),
                         self._fit(draw, data.get("artist") or "—", self.font_label, limit),
                         self.font_label, MUTED)
@@ -241,20 +306,44 @@ class MapLeaderboardCardMixin:
         f_sr = self.font_label
         px = self._draw_sr_pill(img, tx, py, float(data.get("star_rating") or 0.0),
                                 f_sr, star_size=13)
-        version = (data.get("version") or "").strip()
-        if version:
+        bb = draw.textbbox((0, 0), "0", font=f_sr)
+        cy = py + (bb[1] + bb[3]) / 2
+        h = self._text_size(draw, "0", f_sr)[1] + 8
+        f_v = self.font_stat_label
 
-            bb = draw.textbbox((0, 0), "0", font=f_sr)
-            cy = py + (bb[1] + bb[3]) / 2
-            h = self._text_size(draw, "0", f_sr)[1] + 8
-            f_v = self.font_stat_label
-            label = self._fit(draw, version, f_v, x1 - 26 - px - 24)
+        def pill(x, label, fill, ink):
             w = self._text_size(draw, label, f_v)[0] + 24
-            self._aa_rounded_fill(img, (px, int(cy - h / 2), px + w, int(cy + h / 2)),
-                                  radius=int(h // 2), fill=VERSION_PILL)
+            self._aa_rounded_fill(img, (x, int(cy - h / 2), x + w, int(cy + h / 2)),
+                                  radius=int(h // 2), fill=fill)
             d = ImageDraw.Draw(img)
             vh = self._text_size(d, label, f_v)[1]
-            self._text_center(d, px + w // 2, int(cy - vh / 2) - 1, label, f_v, VERSION_INK)
+            self._text_center(d, x + w // 2, int(cy - vh / 2) - 1, label, f_v, ink)
+            return x + w + 10
+
+        version = (data.get("version") or "").strip()
+        if version:
+            px = pill(px, self._fit(draw, version, f_v, 240), VERSION_PILL, VERSION_INK)
+
+        def chip(x, icon_name, label):
+            icon = load_icon(icon_name, 16, TEXT)
+            if icon:
+                img.paste(icon, (x, int(cy - 8)), icon)
+                x += 20
+            d = ImageDraw.Draw(img)
+            th = self._text_size(d, label, self.font_label)[1]
+            self._draw_text(d, (x, int(cy - th / 2) - 2), label, self.font_label, TEXT)
+            return x + self._text_size(d, label, self.font_label)[0] + 16
+
+        bpm = float(data.get("bpm") or 0)
+        if bpm:
+            px = chip(px + 4, "bpm", f"{bpm:g}")
+        length = int(data.get("total_length") or 0)
+        if length:
+            px = chip(px, "clock", f"{length // 60}:{length % 60:02d}")
+        status = status_name(data.get("beatmap_status"))
+        if status:
+            fill, ink = status_colours(status)
+            pill(px, status.upper(), fill, ink)
 
     def _mlb_cover(self, img, box, cover):
         x0, y0, x1, y1 = box
@@ -280,10 +369,7 @@ class MapLeaderboardCardMixin:
     def _mlb_board(self, img, draw, box, shown, viewer_name, page, pages, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
-        icon = load_icon("trophy", 22, TOP_COLORS[1])
-        if icon:
-            img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), S["board"], self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 20, y0 + 16), S["board"], self.font_label, TEXT)
         if pages > 1:
             label = f"{page + 1}/{pages}"
             w = self._text_size(draw, label, self.font_small)[0]
@@ -308,6 +394,8 @@ class MapLeaderboardCardMixin:
     def _mlb_columns(self, x0, x1):
         return {
             "name": x0 + 10 + self.RANK_W + 52,
+            "grade": x1 - 585,
+            "mods": x1 - 556,
             "acc": x1 - 360,
             "combo": x1 - 250,
             "pp": x1 - 150,
@@ -335,10 +423,24 @@ class MapLeaderboardCardMixin:
 
         self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, mid, 36)
 
-        name_limit = cols["acc"] - cols["name"] - 90
+        name_limit = cols["grade"] - 18 - cols["name"]
         self._draw_text(draw, (cols["name"], mid - 12),
                         self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
                         self.font_row, TEXT)
+
+        rank = (row.get("rank") or "").upper()
+        if rank:
+            label = _grade_label(rank)
+            font = self._mlb_grade_font()
+            gw, gh = self._text_size(draw, label, font)
+            self._draw_text(draw, (cols["grade"] - gw / 2, mid - gh / 2 - 4), label, font,
+                            GRADE_COLORS.get(rank, GRADE_COLORS["F"]))
+
+        mods = [m for m in self._normalize_mods(row.get("mods") or "") if m in MOD_ACRONYMS and m != "NM"][:4]
+        mx = cols["mods"]
+        for mod in mods:
+            mx = self._draw_mod_badge(img, mx, mid - 11, mod, size=22) + 3
+        draw = ImageDraw.Draw(img)
 
         pp_colour = MINE if is_viewer else RECENT_ACCENT
         for key, text, font, colour in (
@@ -349,6 +451,14 @@ class MapLeaderboardCardMixin:
         ):
             w = self._text_size(draw, text, font)[0]
             self._draw_text(draw, (cols[key] - w, mid - 11), text, font, colour)
+
+    def _mlb_grade_font(self):
+        font = getattr(self, "_mlb_grade_cache", None)
+        if font is None:
+            path = _find_font(MONO_BOLD)
+            font = ImageFont.truetype(path, 20) if path else self.font_label
+            self._mlb_grade_cache = font
+        return font
 
     def _mlb_avatar(self, img, draw, avatar, x, mid, d):
         pad = 10
@@ -369,11 +479,16 @@ class MapLeaderboardCardMixin:
     def _mlb_viewer(self, img, draw, box, viewer, S):
         x0, y0, x1, y1 = box
         draw.rounded_rectangle(box, radius=RADIUS, fill=MINE_BG, outline=MINE_DIM, width=2)
-        self._draw_text(draw, (x0 + 20, y0 + 14), S["yours"], self.font_stat_label, MINE)
+        mid = (y0 + y1) // 2
+        self._mlb_avatar(img, draw, viewer.get("avatar"), x0 + 20, mid, 44)
+        tx = x0 + 80
+        self._draw_text(draw, (tx, y0 + 18), S["yours"], self.font_stat_label, MINE)
         place = viewer.get("position")
-        self._draw_text(draw, (x0 + 20, y0 + 40),
+        self._draw_text(draw, (tx, y0 + 42),
                         S["place"].format(n=place) if place else S["no_result"],
                         self.font_row, TEXT)
+        if not place:
+            return
 
         stats = (
             (S["accuracy"], f"{float(viewer.get('accuracy') or 0):.2f}%", TEXT),
@@ -381,52 +496,58 @@ class MapLeaderboardCardMixin:
             (S["pp"], _pp_text(viewer), MINE),
             (S["score"], f"{int(viewer.get('score') or 0):,}", TEXT),
         )
-        span = (x1 - x0 - 260) // len(stats)
+        left = x0 + 300
+        span = (x1 - 20 - left) // len(stats)
         for i, (label, value, colour) in enumerate(stats):
-            cx = x0 + 250 + span * i + span // 2
+            cx = left + span * i + span // 2
             vw = self._text_size(draw, value, self.font_label)[0]
             lw = self._text_size(draw, label, self.font_stat_label)[0]
-            self._draw_text(draw, (cx - vw / 2, y0 + 26), value, self.font_label, colour)
-            self._draw_text(draw, (cx - lw / 2, y0 + 52), label, self.font_stat_label, MUTED)
+            self._draw_text(draw, (cx - vw / 2, y0 + 28), value, self.font_label, colour)
+            self._draw_text(draw, (cx - lw / 2, y0 + 54), label, self.font_stat_label, MUTED)
 
     def _mlb_titles(self, img, draw, box, titles, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
-        icon = load_icon("stars", 22, TOP_COLORS[1])
-        if icon:
-            img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), S["leaders"], self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 20, y0 + 16), S["leaders"], self.font_label, TEXT)
 
         ty = y0 + 52
         for title in titles:
-            row = (x0 + 12, ty, x1 - 12, ty + 64)
+            row = (x0 + 12, ty, x1 - 12, ty + 68)
             _panel(draw, row, fill=ROW, radius=12)
             kind = title.get("kind")
             tint = TITLE_TINTS.get(kind, RECENT_ACCENT)
-            icon = load_icon(title.get("icon") or "trophy", 24, tint)
+            icon = load_icon(title.get("icon") or "trophy", 34, tint)
             if icon:
-                img.paste(icon, (x0 + 26, ty + 20), icon)
-            value = title.get("value") or ""
-            vw = self._text_size(draw, value, self.font_label)[0]
-            limit = (x1 - 26 - vw) - (x0 + 64) - 12
+                img.paste(icon, (x0 + 26, ty + 17), icon)
+            tx = x0 + 76
+
+            if kind == "mods":
+                mods = [m for m in self._normalize_mods(title.get("value") or "") if m in MOD_ACRONYMS and m != "NM"]
+                size = 26
+                vw = len(mods) * (size + 4) - 4 if mods else 0
+                mx = x1 - 26 - vw
+                for mod in mods:
+                    mx = self._draw_mod_badge(img, mx, ty + 21, mod, size=size) + 4
+                draw = ImageDraw.Draw(img)
+            else:
+                value = title.get("value") or ""
+                vw = self._text_size(draw, value, self.font_label)[0]
+                self._draw_text(draw, (x1 - 26 - vw, ty + 24), value, self.font_label, tint)
+            limit = (x1 - 26 - vw) - tx - 12
 
             label = S.get(f"t.{kind}", "")
-            self._draw_text(draw, (x0 + 64, ty + 12),
+            self._draw_text(draw, (tx, ty + 13),
                             self._fit(draw, label, self.font_stat_label, limit),
                             self.font_stat_label, MUTED)
-            self._draw_text(draw, (x0 + 64, ty + 34),
+            self._draw_text(draw, (tx, ty + 35),
                             self._fit(draw, title.get("who") or "—", self.font_label, limit),
                             self.font_label, TEXT)
-            self._draw_text(draw, (x1 - 26 - vw, ty + 22), value, self.font_label, tint)
-            ty += 74
+            ty += 78
 
     def _mlb_stats(self, img, draw, box, data, S):
         x0, y0, x1, y1 = box
         _panel(draw, box)
-        icon = load_icon("column-chart", 22, RECENT_ACCENT)
-        if icon:
-            img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), S["stats"], self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 20, y0 + 16), S["stats"], self.font_label, TEXT)
 
         lines = (
             (S["plays"], f"{int(data.get('total_plays') or 0):,}"),
@@ -450,40 +571,48 @@ class MapLeaderboardCardMixin:
         self._draw_text(draw, (x0 + 48, y0 + 32), data.get("updated") or "",
                         self.font_stat_label, TEXT)
 
-    def _mlb_history(self, img, draw, box, history, S):
+    def _mlb_history(self, img, draw, box, history, S, data=None):
         x0, y0, x1, y1 = box
+        data = data or {}
         _panel(draw, box)
-        icon = load_icon("clock", 22, RECENT_ACCENT)
-        if icon:
-            img.paste(icon, (x0 + 16, y0 + 15), icon)
-        self._draw_text(draw, (x0 + 46, y0 + 16), S["history"], self.font_label, TEXT)
+        self._draw_text(draw, (x0 + 20, y0 + 16), S["history"], self.font_label, TEXT)
 
+        lang = data.get("lang") or "en"
+        by_score = data.get("metric") == "score"
         count = len(history)
         inner = (x1 - x0) - 32
         gap = 26
         cell_w = min((inner - gap * (count - 1)) // max(count, 1), self.HISTORY_CELL_MAX)
-        hy = y0 + 54
+        cell_h = 92
+        hy = y0 + 58
         for i, entry in enumerate(history):
             cx = x0 + 16 + (cell_w + gap) * i
-            cell = (cx, hy, cx + cell_w, hy + 76)
+            cell = (cx, hy, cx + cell_w, hy + cell_h)
             if i == 0:
                 draw.rounded_rectangle(cell, radius=12, fill=MINE_BG, outline=MINE, width=2)
             else:
                 _panel(draw, cell, fill=ROW, radius=12)
 
-            self._draw_text(draw, (cx + 14, hy + 10), entry.get("date") or "",
-                            self.font_small, MUTED)
-            self._mlb_avatar(img, draw, entry.get("avatar"), cx + 14, hy + 50, 26)
-            limit = cell_w - 60
-            self._draw_text(draw, (cx + 50, hy + 32),
-                            self._fit(draw, entry.get("username") or "—",
-                                      self.font_stat_label, limit),
+            when = _when(entry.get("at"), lang) or entry.get("date") or ""
+            self._draw_text(draw, (cx + 14, hy + 10),
+                            self._fit(draw, when, self.font_stat_label, cell_w - 28),
+                            self.font_stat_label, MINE if i == 0 else MUTED)
+
+            av = 32
+            mid = hy + 58
+            self._mlb_avatar(img, draw, entry.get("avatar"), cx + 14, mid, av)
+            tx = cx + 14 + av + 12
+            limit = cell_w - (tx - cx) - 12
+            self._draw_text(draw, (tx, mid - 21),
+                            self._fit(draw, entry.get("username") or "—", self.font_stat_label, limit),
                             self.font_stat_label, TEXT)
-            self._draw_text(draw, (cx + 50, hy + 52), f"{_pp_text(entry)} PP",
+            value = f"{int(entry.get('score') or 0):,}" if by_score else f"{_pp_text(entry)} PP"
+            self._draw_text(draw, (tx, mid + 1),
+                            self._fit(draw, value, self.font_small, limit),
                             self.font_small, MINE if i == 0 else MUTED)
 
             if i < count - 1:
                 chev = "›"
                 w = self._text_size(draw, chev, self.font_row)[0]
-                self._draw_text(draw, (cx + cell_w + (gap - w) / 2, hy + 28),
+                self._draw_text(draw, (cx + cell_w + (gap - w) / 2, hy + cell_h / 2 - 14),
                                 chev, self.font_row, PANEL_EDGE)

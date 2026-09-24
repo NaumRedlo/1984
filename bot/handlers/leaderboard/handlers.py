@@ -190,7 +190,9 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 if message.from_user else None
             if viewer and viewer.osu_username:
                 viewer_row = next(
-                    (r for r in rows if r.get("username") == viewer.osu_username), None
+                    (r for r in rows if r.get("username") == viewer.osu_username),
+                    {"username": viewer.osu_username, "avatar_url": viewer.avatar_url,
+                     "osu_user_id": viewer.osu_user_id},
                 )
             data["viewer"] = viewer_row
 

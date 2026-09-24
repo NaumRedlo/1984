@@ -628,6 +628,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             "pp_estimated": estimated,
             "score": int(score or 0),
             "date": at.strftime("%d.%m") if at else "",
+            "at": at.replace(tzinfo=timezone.utc) if at is not None and at.tzinfo is None else at,
         })
 
     return list(reversed(history))[:limit]
