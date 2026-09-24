@@ -126,20 +126,10 @@ class App:
             if served:
                 logger.info("pp: the assay service answers, on osu! %s", served.get("osu_version"))
             else:
-                logger.warning("pp: the assay service at %s does not answer — the engine and rosu-pp-py stand in", assay_service.settings.ASSAY_URL)
+                logger.warning("pp: the assay service at %s does not answer — cards will show no pp until it does",
+                               assay_service.settings.ASSAY_URL)
         else:
-            logger.info("pp: ASSAY_URL is unset — pp comes from the engine and rosu-pp-py")
-
-        from utils.osu import assay as osu_assay
-
-        trouble = await osu_assay.working()
-        if trouble:
-            logger.warning(
-                "pp: %s — figures will come from rosu-pp-py and will be wrong",
-                trouble,
-            )
-        else:
-            logger.info("pp: the engine answers")
+            logger.warning("pp: ASSAY_URL is unset — cards will show no pp of their own")
 
         if RENDER_WORKER_TOKEN:
             import hashlib

@@ -24,8 +24,10 @@ internal static class SelfTest
                 Mods = [new ModInput("HD")],
                 Statistics = new() { ["great"] = 60, ["ok"] = 4 },
             }, CancellationToken.None);
-            bool sane = score.Map.StarRating > 0 && score.Pp > 0 && score.PpIfSs >= score.Pp;
-            Console.WriteLine($"assay self-test: osu! {Calculator.OsuVersion}, {score.Map.StarRating:F2}*, {score.Pp:F2}pp (FC {score.PpIfFc:F2}, SS {score.PpIfSs:F2}, acc {score.Accuracy:F4}) — {(sane ? "ok" : "WRONG")}");
+            var strains = await calculator.Strains(new StrainsRequest { BeatmapId = 1, Points = 16 }, CancellationToken.None);
+            bool sane = score.Map.StarRating > 0 && score.Pp > 0 && score.PpIfSs >= score.Pp
+                        && strains.Strains.Count == 16 && strains.Strains.Max() > 0;
+            Console.WriteLine($"assay self-test: osu! {Calculator.OsuVersion}, {score.Map.StarRating:F2}*, {score.Pp:F2}pp (FC {score.PpIfFc:F2}, SS {score.PpIfSs:F2}, acc {score.Accuracy:F4}), {strains.Sections} strain sections — {(sane ? "ok" : "WRONG")}");
             return sane ? 0 : 1;
         }
         catch (Exception exception)

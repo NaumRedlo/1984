@@ -72,6 +72,31 @@ public sealed class ServiceTests(CorpusFixture corpus) : IClassFixture<CorpusFix
     }
 
     [Fact]
+    public async Task Strains_follow_the_map_and_its_speed()
+    {
+        var plain = await corpus.Calculator.Strains(new StrainsRequest { BeatmapId = Map }, CancellationToken.None);
+        var faster = await corpus.Calculator.Strains(new StrainsRequest { BeatmapId = Map, Mods = [new ModInput("DT")], Points = 500 }, CancellationToken.None);
+
+        Assert.Equal(64, plain.Strains.Count);
+        Assert.All(plain.Strains, v => Assert.InRange(v, 0, 1));
+        Assert.True(plain.Strains.Max() > 0.5, "averaging keeps the hardest stretch near the top");
+        Assert.True(plain.Strains.Distinct().Count() > 10, "a real map is not flat");
+        // 400 ms sections of the played time: DT plays the same map in two thirds of it
+        Assert.InRange(faster.Sections, plain.Sections * 2 / 3 - 2, plain.Sections * 2 / 3 + 2);
+        Assert.Equal(Math.Min(500, faster.Sections), faster.Strains.Count);
+        Assert.Equal(1.5, faster.Map.ClockRate, 6);
+        await Assert.ThrowsAsync<BadRequest>(() => corpus.Calculator.Strains(new StrainsRequest { BeatmapId = Map, Points = 0 }, CancellationToken.None));
+    }
+
+    [Fact]
+    public void Strains_are_scaled_and_averaged_down()
+    {
+        Assert.Equal([0.5, 1.0], Strains.Shape([1, 2], 64));
+        Assert.Equal([0.125, 0.75], Strains.Shape([0, 1, 2, 4], 2));
+        Assert.Empty(Strains.Shape([], 64));
+    }
+
+    [Fact]
     public async Task What_if_climbs_with_accuracy_and_lands_where_asked()
     {
         var result = await corpus.Calculator.WhatIf(new WhatIfRequest { BeatmapId = Map, Accuracies = [0.95, 98, 0.99, 1.0] }, CancellationToken.None);

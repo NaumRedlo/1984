@@ -55,6 +55,8 @@ app.MapPost("/v1/beatmap", (MapRequest request, Calculator calculator, Cancellat
     => Answer(() => calculator.Map(request, cancellation), cancellation));
 app.MapPost("/v1/score", (ScoreRequest request, Calculator calculator, CancellationToken cancellation)
     => Answer(() => calculator.Score(request, cancellation), cancellation));
+app.MapPost("/v1/strains", (StrainsRequest request, Calculator calculator, CancellationToken cancellation)
+    => Answer(() => calculator.Strains(request, cancellation), cancellation));
 app.MapPost("/v1/whatif", (WhatIfRequest request, Calculator calculator, CancellationToken cancellation)
     => Answer(() => calculator.WhatIf(request, cancellation), cancellation));
 

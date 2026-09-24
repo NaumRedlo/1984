@@ -1,5 +1,4 @@
 from services.image.core import CardRenderer
-from utils.osu import pp_calculator
 
 def _sample(passed=True, title="Anoyo-iki no Bus ni Notte Saraba."):
     return {
@@ -48,24 +47,3 @@ def test_renders_default_lang_when_missing():
     png = _render(data, [0.5] * 64)
     assert png.startswith(b"\x89PNG")
 
-async def test_calculate_strains_none_when_download_fails(monkeypatch):
-    async def _no_download(_bid):
-        return None
-    monkeypatch.setattr(pp_calculator, "_download_osu_file", _no_download)
-    assert await pp_calculator.calculate_strains(123, "HDDT") is None
-
-def test_strains_sync_normalizes_and_downsamples(monkeypatch):
-
-    class _S:
-        aim = [float(i) for i in range(200)]
-        speed = [0.0] * 200
-    class _FakeDiff:
-        def __init__(self, mods=0): pass
-        def strains(self, _bm): return _S()
-    class _FakeRosu:
-        Beatmap = staticmethod(lambda bytes: object())
-        Difficulty = _FakeDiff
-    monkeypatch.setattr(pp_calculator, "rosu", _FakeRosu)
-    out = pp_calculator._strains_sync(b"x", 0, 64)
-    assert out is not None and len(out) == 64
-    assert 0.0 <= min(out) and max(out) <= 1.0 and max(out) > 0.9

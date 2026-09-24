@@ -17,7 +17,7 @@ def enabled() -> bool:
 
 def mods_of(raw_mods: Iterable[Any] | str | None) -> list[dict]:
     if isinstance(raw_mods, str):
-        text = raw_mods.upper().replace(",", "")
+        text = "".join(ch for ch in raw_mods.upper() if ch.isalnum())
         return [{"acronym": text[i:i + 2]} for i in range(0, len(text) - 1, 2) if text[i:i + 2] != "NM"]
     mods = []
     for mod in raw_mods or ():
@@ -115,3 +115,11 @@ async def whatif(
         "misses": int(misses),
     }
     return await _post("/v1/whatif", body)
+
+async def strains(beatmap_id: int, *, mods, points: int = 64,
+                  checksum: Optional[str] = None) -> Optional[dict]:
+    if not beatmap_id:
+        return None
+    body = {"beatmap_id": int(beatmap_id), "checksum": checksum or None,
+            "mods": mods_of(mods), "points": int(points)}
+    return await _post("/v1/strains", body)

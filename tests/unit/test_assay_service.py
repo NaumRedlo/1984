@@ -26,7 +26,14 @@ async def service(monkeypatch):
                    "statistics": {"great": 900, "ok": 10, "meh": 1}} for a in body["accuracies"]]
         return web.json_response({"points": points, "map": {"max_combo": 1000, "star_rating": 6.5}})
 
+    async def strains(request):
+        body = await request.json()
+        asked.append(("strains", body, None))
+        return web.json_response({"strains": [0.25, 1.0, 0.5][: body["points"]], "sections": 300,
+                                  "map": {"max_combo": 1000, "star_rating": 6.5}})
+
     app = web.Application()
+    app.router.add_post("/v1/strains", strains)
     app.router.add_post("/v1/score", score)
     app.router.add_post("/v1/whatif", whatif)
     server = TestServer(app)
@@ -47,7 +54,7 @@ def test_mods_keep_their_settings_and_drop_nm():
 async def test_a_score_is_counted_by_the_service_with_everything_it_needs(service):
     stats = {"great": 900, "ok": 10, "miss": 2, "slider_tail_hit": 300}
     got = await pp_calculator.calculate_pp(
-        beatmap_id=77, mods_str="HDDT", accuracy=97.0, combo=800, misses=2,
+        beatmap_id=77, accuracy=97.0, combo=800,
         statistics=stats, mods=[{"acronym": "DT", "settings": {"speed_change": 1.2}}],
         checksum="a" * 32, legacy_total_score=None, is_legacy=False,
     )
@@ -61,12 +68,11 @@ async def test_a_score_is_counted_by_the_service_with_everything_it_needs(servic
     assert body["accuracy"] == pytest.approx(0.97)
     assert body["max_combo"] == 800
 
-async def test_without_full_statistics_the_basic_counts_are_sent(service):
-    await pp_calculator.calculate_pp(beatmap_id=77, mods_str="HD", accuracy=99.0,
-                                     count_300=500, count_100=3, count_50=0, misses=1)
+async def test_strains_come_from_the_service(service):
+    assert await pp_calculator.calculate_strains(77, "HDDT", points=2, checksum="c" * 32) == [0.25, 1.0]
     body = service[0][1]
-    assert body["statistics"] == {"great": 500, "ok": 3, "meh": 0, "miss": 1}
-    assert body["mods"] == [{"acronym": "HD"}]
+    assert body == {"beatmap_id": 77, "checksum": "c" * 32, "points": 2,
+                    "mods": [{"acronym": "HD"}, {"acronym": "DT"}]}
 
 async def test_whatif_comes_from_the_service_with_its_brackets(service):
     got = await pp_calculator.calculate_whatif_pp(77, 97.5, "HD", "b" * 32)
@@ -76,22 +82,18 @@ async def test_whatif_comes_from_the_service_with_its_brackets(service):
     assert (got["count_300"], got["count_100"], got["count_50"], got["count_miss"]) == (900, 10, 1, 0)
     assert service[0][1]["accuracies"] == [95.0, 98.0, 99.0, 100.0, 97.5]
 
-async def test_a_service_that_is_down_leaves_the_old_way(monkeypatch):
+async def test_a_service_that_is_down_gives_no_figure_rather_than_a_wrong_one(monkeypatch):
     monkeypatch.setattr(settings, "ASSAY_URL", "http://127.0.0.1:9")
-
-    async def engine(*_a, **_k):
-        return {"pp": 5.0, "pp_if_unbroken": 6.0, "pp_if_perfect": 7.0, "star_rating": 3.0, "max_combo": 10}
-
-    monkeypatch.setattr(pp_calculator.assay, "for_score", engine)
-    got = await pp_calculator.calculate_pp(beatmap_id=77, mods_str="", accuracy=90.0,
-                                           statistics={"great": 1})
+    assert await pp_calculator.calculate_pp(beatmap_id=77, accuracy=90.0, statistics={"great": 1}) is None
+    assert await pp_calculator.calculate_strains(77, "") is None
+    assert await pp_calculator.calculate_whatif_pp(77, 99.0) is None
     await assay_service.close()
-    assert got["source"] == "engine" and got["pp_current"] == 5.0
 
 async def test_nothing_is_asked_when_the_service_is_not_configured(monkeypatch):
     monkeypatch.setattr(settings, "ASSAY_URL", "")
     assert await assay_service.score(77, mods="HD", statistics={"great": 1}) is None
     assert await assay_service.whatif(77, [99.0], mods="") is None
+    assert await assay_service.strains(77, mods="") is None
 
 def test_a_drift_is_reported_past_one_percent(monkeypatch):
     warned = []

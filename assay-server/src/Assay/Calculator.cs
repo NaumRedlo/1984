@@ -105,6 +105,21 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         return new WhatIfResult(points, Describe(prepared));
     }
 
+    public async Task<StrainsResult> Strains(StrainsRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Points is < 1 or > 1000)
+            throw new BadRequest("points must be 1..1000");
+        var prepared = await Prepare(request.BeatmapId, request.Checksum, request.Ruleset, request.Mods, cancellationToken);
+        var key = $"strains|{prepared.Checksum}|{request.Ruleset}|{ModKey(prepared.Mods)}";
+        var sections = await cache.GetOrCreateAsync(key, entry =>
+        {
+            entry.Size = 1;
+            entry.SlidingExpiration = TimeSpan.FromHours(6);
+            return Task.Run(() => Assay.Strains.Sections(prepared.Ruleset, prepared.Working, prepared.Mods), cancellationToken);
+        });
+        return new StrainsResult(Assay.Strains.Shape(sections!, request.Points), sections!.Count, Describe(prepared));
+    }
+
     private async Task<Prepared> Prepare(long beatmapId, string? checksum, int rulesetId, List<ModInput> modInputs, CancellationToken cancellationToken)
     {
         if (rulesetId < 0 || rulesetId >= rulesets.Length)

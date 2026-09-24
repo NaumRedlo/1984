@@ -710,7 +710,6 @@ async def build_recent_card_data(
             mods_list.append(str(m))
     mods_joined = "".join(mods_list) if mods_list else ""
 
-    is_classic = bool(raw_score.get("legacy_score_id")) or "CL" in mods_list
 
     stats = raw_score.get("statistics", {})
     misses = stats.get("miss") or stats.get("count_miss") or 0
@@ -741,23 +740,12 @@ async def build_recent_card_data(
     try:
         pp_result = await calculate_pp(
             beatmap_id=beatmap_id,
-            mods_str=mods_joined,
+            mods=raw_mods or mods_joined,
+            statistics=stats or {"great": count_300, "ok": count_100, "meh": count_50, "miss": misses},
             accuracy=acc,
             combo=combo,
-            misses=misses,
-            count_300=count_300,
-            count_100=count_100,
-            count_50=count_50,
-            total_objects=total_objects,
-
-            classic=is_classic,
-            legacy_total_score=raw_score.get("legacy_total_score") or None,
-
-            slider_ends=stats.get("slider_tail_hit"),
-            large_tick_misses=stats.get("large_tick_miss") or 0,
-            statistics=stats or None,
-            mods=raw_mods,
             checksum=beatmap.get("checksum"),
+            legacy_total_score=raw_score.get("legacy_total_score") or None,
             is_legacy=bool(raw_score.get("legacy_score_id")),
         )
         if pp_result:

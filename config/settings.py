@@ -41,7 +41,6 @@ OSU_OAUTH_SCOPES = "public identify friends.read"
 OAUTH_SERVER_PORT = int(os.getenv("OAUTH_SERVER_PORT", "8080"))
 OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 
-DOSSIER_BIN = os.getenv("DOSSIER_BIN") or os.path.expanduser("~/.dossier/engine/dossier")
 
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None

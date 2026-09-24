@@ -48,32 +48,18 @@ whatever the client chose to send.
 
 ### pp and star ratings
 
-With `ASSAY_URL` set, pp and star ratings come from [assay-server](assay-server/README.md),
-which runs osu!'s own packages beside the bot: a recent play, what-if, star
-ratings with mods (their settings included, so DT ×1.2 is ×1.2), and plays
-osu! gave no pp — loved, unranked — whose estimate the map leaderboard shows
-with a `~`. A ranked play whose pp differs from osu!'s by more than 1% is logged
-as `pp drift`. Keeping it current is a Dependabot pull request for the
+pp, star ratings with mods and the difficulty graphs on the cards all come from
+[assay-server](assay-server/README.md), which runs osu!'s own packages beside the
+bot (`ASSAY_URL` in `.env`): a recent play, what-if, star ratings with mods
+(their settings included, so DT ×1.2 is ×1.2), the strain graph, and plays osu!
+gave no pp — loved, unranked — whose estimate the map leaderboard shows with a
+`~`. A ranked play whose pp differs from osu!'s by more than 1% is logged as
+`pp drift`. Keeping it current is a Dependabot pull request for the
 `ppy.osu.Game*` packages.
 
-Without the service — or when it does not answer — star ratings come from the
-osu! API and pp from the engine below, then rosu-pp-py.
-
-### The engine, for pp
-
-The engine binary is the second choice for pp (`utils/osu/assay.py`,
-falling back to rosu-pp-py). Which release it runs is the commented `dossier @`
-line in `requirements.txt`; `scripts/engine.py` downloads that release, checks
-it against the published hash and moves a symlink:
-
-```bash
-./venv/bin/python scripts/engine.py
-```
-
-`.env` names the link once: `DOSSIER_BIN=/root/.dossier/engine/dossier`. Run it
-as `ExecStartPre=-…/scripts/engine.py` in the systemd unit so the bot and the
-engine cannot drift; the leading `-` keeps a GitHub outage from stopping the
-bot. Previous versions stay under `~/.dossier/engines` (`--list`, `--force`).
+There is no second source: without the service a card shows osu!'s own pp and
+star rating and leaves out what only the service can tell (if FC, if SS, the
+graph, what-if). The bot says at start-up whether the service answers.
 
 ---
 
@@ -146,7 +132,7 @@ updates to the pinned packages and the actions once a week.
 | | |
 |---|---|
 | **Bot** | Python 3.12, aiogram 3.29, SQLAlchemy 2.0 (async) over SQLite, Pillow |
-| **pp** | the Dossier engine binary, rosu-pp-py as the fallback |
+| **pp** | [assay-server](assay-server/README.md): osu!'s own `ppy.osu.Game*` packages in .NET |
 | **API** | osu! API v2 |
 | **Host** | Ubuntu Server 24.04 LTS |
 

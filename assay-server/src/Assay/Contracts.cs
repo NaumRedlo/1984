@@ -44,6 +44,20 @@ public sealed record WhatIfRequest
     public int Misses { get; init; }
 }
 
+public sealed record StrainsRequest
+{
+    public long BeatmapId { get; init; }
+    public string? Checksum { get; init; }
+    public int Ruleset { get; init; }
+
+    [JsonConverter(typeof(ModListConverter))]
+    public List<ModInput> Mods { get; init; } = [];
+
+    public int Points { get; init; } = 64;
+}
+
+public sealed record StrainsResult(List<double> Strains, int Sections, MapResult Map);
+
 public sealed record MapResult(
     long BeatmapId,
     string Checksum,
