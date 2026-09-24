@@ -63,16 +63,16 @@ def _runs(text: str, primary, fallback, cyrillic_fallback):
             runs.append((f, ch))
     return runs
 
-# Commissioner is drawn tight: its space is 0.19em and small sizes crowd. These match a little
-# letter-spacing and a normal word space, as CSS letter-spacing/word-spacing would.
-_LOOSE_FAMILIES = {"Commissioner": (0.025, 0.3)}
+# Fonts drawn the careful way below: (letter-spacing, word space) in em, None keeping the font's
+# own space. Nunito needs neither, only the even gaps.
+_LOOSE_FAMILIES = {"Nunito": (0.0, None)}
 
 def _looseness(font) -> Optional[tuple[float, float]]:
     path = _path_of(font) or ""
     size = getattr(font, "size", 0) or 0
     for family, (track, space) in _LOOSE_FAMILIES.items():
         if family in os.path.basename(path):
-            return track * size, space * size
+            return track * size, (space * size if space is not None else None)
     return None
 
 _SCALE = 4
@@ -95,7 +95,7 @@ def _advances(run: str, font) -> list[float]:
     for i, ch in enumerate(run):
         marks.append(x)
         here = big.getlength(run[:i + 1]) / _SCALE
-        step = space if ch == " " else here - prev
+        step = space if ch == " " and space is not None else here - prev
         prev = here
         x += step + track
     marks.append(x - track)

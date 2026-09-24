@@ -114,9 +114,9 @@ VALUE_RIGHT_X = CARD_WIDTH - PADDING_X
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
 FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
 
-SANS_BOLD = os.path.join(FONT_DIR, "Commissioner-Bold.ttf")
-SANS_SEMI = os.path.join(FONT_DIR, "Commissioner-SemiBold.ttf")
-SANS_REG = os.path.join(FONT_DIR, "Commissioner-Regular.ttf")
+SANS_BOLD = os.path.join(FONT_DIR, "Nunito-ExtraBold.ttf")
+SANS_SEMI = os.path.join(FONT_DIR, "Nunito-Bold.ttf")
+SANS_REG = os.path.join(FONT_DIR, "Nunito-Regular.ttf")
 
 MONO_XBOLD = os.path.join(FONT_DIR, "JetBrainsMono-ExtraBold.ttf")
 MONO_BOLD = os.path.join(FONT_DIR, "JetBrainsMono-Bold.ttf")
