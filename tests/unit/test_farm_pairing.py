@@ -268,9 +268,13 @@ def allowed(monkeypatch):
     async def english(_user_id):
         return "en"
 
+    async def strangers(_bot, _telegram_id):
+        return False
+
     from bot.handlers.start import handlers
 
     monkeypatch.setattr(handlers, "get_language", english)
+    monkeypatch.setattr(handlers.members, "shares_a_group", strangers)
     return handlers
 
 def _command(args):
@@ -345,3 +349,16 @@ def test_the_pair_link_is_caught_before_the_plain_start():
 
     names = [h.callback.__name__ for h in handlers.router.message.handlers]
     assert names.index("start_pairing") < names.index("send_welcome_command")
+
+
+async def test_a_member_of_a_group_may_pair_and_a_stranger_may_not(monkeypatch):
+    from bot.handlers.start import handlers
+
+    async def shares(bot, telegram_id):
+        return telegram_id == 7
+
+    monkeypatch.setattr(handlers, "can_use_render", lambda telegram_id: telegram_id == 9)
+    monkeypatch.setattr(handlers.members, "shares_a_group", shares)
+    assert await handlers._may_pair(None, 7)
+    assert await handlers._may_pair(None, 9)
+    assert not await handlers._may_pair(None, 8)

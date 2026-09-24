@@ -9,7 +9,7 @@ from aiogram.types import (
 )
 
 from bot.filters import TextTriggerFilter, TriggerArgs
-from services.render_farm import invites, pairing
+from services.render_farm import invites, members, pairing
 from utils.formatting.text import escape_html
 from utils.i18n import t
 from utils.language import get_language
@@ -39,6 +39,9 @@ def _about(machine: pairing.Machine, lang: str) -> str:
         parts.append(t("dsr.pair.build", lang, build=escape_html(machine.build)))
     return ", ".join(parts)
 
+async def _may_pair(bot, telegram_id: int) -> bool:
+    return can_use_render(telegram_id) or await members.shares_a_group(bot, telegram_id)
+
 def _pair_keyboard(code: str, lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=t("dsr.pair.yes", lang), callback_data=f"pair:yes:{code}"),
@@ -49,8 +52,8 @@ def _pair_keyboard(code: str, lang: str) -> InlineKeyboardMarkup:
 async def start_pairing(message: Message, command: CommandObject):
     who = message.from_user
     lang = await _lang_of(who)
-    if not who or not can_use_render(who.id):
-        await message.answer(t("dsr.pair.not_open", lang))
+    if not who or not await _may_pair(getattr(message, "bot", None), who.id):
+        await message.answer(t("dsr.pair.not_open", lang), parse_mode="HTML")
         return
     if message.chat.type != "private":
         await message.answer(t("dsr.pair.in_private", lang))
@@ -74,8 +77,8 @@ async def start_pairing(message: Message, command: CommandObject):
 async def answer_pairing(callback: CallbackQuery):
     who = callback.from_user
     lang = await _lang_of(who)
-    if not who or not can_use_render(who.id):
-        await callback.answer(t("dsr.pair.not_open", lang), show_alert=True)
+    if not who or not await _may_pair(getattr(callback, "bot", None), who.id):
+        await callback.answer(t("dsr.pair.not_open_short", lang), show_alert=True)
         return
 
     _, verdict, code = callback.data.split(":", 2)

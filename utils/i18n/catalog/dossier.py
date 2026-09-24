@@ -1,8 +1,15 @@
 CATALOG = {
     "dsr.pair.not_open": {
-        "en": "Rendering is not open to you, so there is nothing to pair a "
-              "machine to.",
-        "ru": "Рендер тебе не открыт, так что и машину привязывать не к чему.",
+        "en": "Dossier pairs with people registered in a group I am in. Register "
+              "there with <code>register Nickname</code>, then open the link "
+              "from the application again.",
+        "ru": "Dossier привязывается к тем, кто зарегистрирован в группе, где я "
+              "есть. Зарегистрируйся там командой <code>register Ник</code> и "
+              "снова открой ссылку из приложения.",
+    },
+    "dsr.pair.not_open_short": {
+        "en": "Register in a group I am in first, then pair again.",
+        "ru": "Сначала зарегистрируйся в группе, где я есть, и привяжи снова.",
     },
     "dsr.pair.in_private": {
         "en": "Pair a machine in a private chat with me, not in a group — the "
