@@ -91,14 +91,14 @@ async def _send_oauth_link(callback: types.CallbackQuery, relink: bool, lang: st
         async with get_db_session() as session:
             await session.execute(delete(OAuthToken).where(OAuthToken.telegram_id == tg_id))
             await session.commit()
-    url = generate_oauth_url(tg_id)
+    url = await generate_oauth_url(tg_id)
     title = t("sts.acc.relink_title" if relink else "sts.acc.link_title", lang)
     sent = await callback.message.answer(
         t("sts.acc.oauth_prompt", lang, title=title, url=url),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    track_link_message(tg_id, sent.chat.id, sent.message_id)
+    await track_link_message(tg_id, sent.chat.id, sent.message_id)
     await callback.answer(t("sts.acc.link_sent", lang))
 
 @router.callback_query(F.data == "st:acc:link")

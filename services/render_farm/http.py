@@ -10,6 +10,7 @@ from aiohttp import web
 from config.settings import RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
 from services.render_farm import community as gathered, invites, pairing
 from utils.logger import get_logger
+from utils.ttl_cache import TTLCache
 
 logger = get_logger("services.render_farm.http")
 
@@ -64,7 +65,7 @@ def _authorised(request: web.Request) -> bool:
     return invites.known(offered)
 
 CARD_KEEP = 300.0
-_card_cache: dict[tuple[int, Optional[int]], tuple[float, dict]] = {}
+_card_cache = TTLCache(maxsize=500, ttl=CARD_KEEP)
 
 def _plain(value):
     if isinstance(value, dict):
@@ -87,7 +88,7 @@ async def _card_of(user, session, handle: Optional[str], viewer: int) -> dict:
 
 FRIENDS_URL = "https://osu.ppy.sh/api/v2/friends"
 FRIENDS_KEEP = 90.0
-_friends_cache: dict[int, tuple[float, list]] = {}
+_friends_cache = TTLCache(maxsize=500, ttl=FRIENDS_KEEP)
 
 async def _scopes(telegram_id: int) -> Optional[str]:
     from sqlalchemy import select
@@ -378,12 +379,10 @@ def make_routes() -> list[web.RouteDef]:
             return web.json_response({"error": "osu! is not reachable"}, status=503)
         said = request.query.get("chat", "")
         chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
-        import time
-
         key = (owner.telegram_id, chat_id)
         kept = _card_cache.get(key)
-        if kept and time.monotonic() - kept[0] < CARD_KEEP:
-            return web.json_response(kept[1])
+        if kept is not None:
+            return web.json_response(kept)
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
@@ -402,7 +401,7 @@ def make_routes() -> list[web.RouteDef]:
             except Exception as exc:
                 logger.warning("the card of %s could not be gathered: %s", owner.telegram_id, exc)
                 return web.json_response({"error": "no card"}, status=502)
-        _card_cache[key] = (time.monotonic(), body)
+        _card_cache[key] = body
         return web.json_response(body)
 
     async def friends(request: web.Request) -> web.Response:
@@ -412,11 +411,9 @@ def make_routes() -> list[web.RouteDef]:
         owner = invites.owner(_token(request))
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        import time
-
         kept = _friends_cache.get(owner.telegram_id)
-        if kept and time.monotonic() - kept[0] < FRIENDS_KEEP:
-            return web.json_response({"friends": kept[1]})
+        if kept is not None:
+            return web.json_response({"friends": kept})
         scopes = await _scopes(owner.telegram_id)
         if scopes is None:
             return web.json_response({"need": "link"}, status=409)
@@ -431,7 +428,7 @@ def make_routes() -> list[web.RouteDef]:
         if raw is None:
             return web.json_response({"error": "osu! did not answer"}, status=502)
         listed = gathered.friends_from(raw)
-        _friends_cache[owner.telegram_id] = (time.monotonic(), listed)
+        _friends_cache[owner.telegram_id] = listed
         return web.json_response({"friends": listed})
 
     async def send(request: web.Request) -> web.Response:

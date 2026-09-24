@@ -11,13 +11,14 @@ from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.timeutils import utcnow
+from utils.ttl_cache import TTLCache
 from utils.titles import TITLE_REGISTRY
 from utils.title_progress import detect_comeback, touch_activity_day, unlock_title
 
 logger = get_logger("middleware.last_seen")
 
 _COOLDOWN_SECONDS = 300
-_last_updated: Dict[tuple[int, int], float] = {}
+_last_updated = TTLCache(maxsize=20000, ttl=_COOLDOWN_SECONDS)
 
 def _event_chat(event) -> object | None:
     if isinstance(event, Message):
@@ -56,7 +57,7 @@ class LastSeenMiddleware(BaseMiddleware):
         if user_id and chat_id is not None:
             now_mono = time.monotonic()
             key = (user_id, chat_id)
-            if now_mono - _last_updated.get(key, 0) > _COOLDOWN_SECONDS:
+            if key not in _last_updated:
                 _last_updated[key] = now_mono
                 comeback_td = None
                 try:

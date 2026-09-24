@@ -222,14 +222,14 @@ async def link_oauth(message: types.Message):
             pass
         return
 
-    url = generate_oauth_url(tg_id)
+    url = await generate_oauth_url(tg_id)
 
     sent = await message.answer(
         t("link.prompt", lang, url=url),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    track_link_message(tg_id, sent.chat.id, sent.message_id)
+    await track_link_message(tg_id, sent.chat.id, sent.message_id)
 
 @router.message(TextTriggerFilter("relink"))
 async def relink_oauth(message: types.Message):
@@ -252,13 +252,13 @@ async def relink_oauth(message: types.Message):
             user.oauth_token_expiry = None
         await session.commit()
 
-    url = generate_oauth_url(tg_id)
+    url = await generate_oauth_url(tg_id)
     sent = await message.answer(
         t("relink.prompt", lang, url=url),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    track_link_message(tg_id, sent.chat.id, sent.message_id)
+    await track_link_message(tg_id, sent.chat.id, sent.message_id)
 
 async def perform_unlink(session, user: User, tg_id: int, lang: str = "en") -> tuple[bool, str | None]:
     if not user or not user.osu_user_id:

@@ -6,7 +6,7 @@ from typing import Optional
 import aiohttp
 from aiohttp import web
 from aiogram import Bot
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from config.settings import (
     OSU_CLIENT_ID,
@@ -18,6 +18,7 @@ from config.settings import (
 from db.database import get_db_session
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
+from db.models.oauth_pending import OAuthPending
 from services.render_farm import http as render_farm_http
 from utils.aio import spawn
 from utils.crypto import encrypt_token
@@ -29,24 +30,37 @@ from utils.logger import get_logger
 logger = get_logger("oauth.server")
 
 _STATE_TTL = timedelta(minutes=15)
-_pending_states: dict[str, tuple[int, datetime]] = {}
-_pending_messages: dict[int, tuple[int, int]] = {}
 _bot: Optional[Bot] = None
 
-def _sweep_expired_states(now: datetime) -> None:
-    expired = [s for s, (_, issued) in _pending_states.items() if now - issued > _STATE_TTL]
-    for s in expired:
-        del _pending_states[s]
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+async def _sweep_expired_states(session, now: datetime) -> None:
+    await session.execute(delete(OAuthPending).where(OAuthPending.issued_at < now - _STATE_TTL))
+
+async def _take_state(state: str) -> Optional[OAuthPending]:
+    now = datetime.now(timezone.utc)
+    async with get_db_session() as session:
+        await _sweep_expired_states(session, now)
+        entry = await session.get(OAuthPending, state)
+        if entry is not None:
+            await session.delete(entry)
+        await session.commit()
+    if entry is None or now - _aware(entry.issued_at) > _STATE_TTL:
+        return None
+    return entry
 
 def set_bot(bot: Bot) -> None:
     global _bot
     _bot = bot
 
-def generate_oauth_url(telegram_id: int) -> str:
+async def generate_oauth_url(telegram_id: int) -> str:
     now = datetime.now(timezone.utc)
-    _sweep_expired_states(now)
     state = secrets.token_urlsafe(32)
-    _pending_states[state] = (telegram_id, now)
+    async with get_db_session() as session:
+        await _sweep_expired_states(session, now)
+        session.add(OAuthPending(state=state, telegram_id=telegram_id, issued_at=now))
+        await session.commit()
     return (
         f"https://osu.ppy.sh/oauth/authorize"
         f"?client_id={OSU_CLIENT_ID}"
@@ -56,8 +70,14 @@ def generate_oauth_url(telegram_id: int) -> str:
         f"&state={state}"
     )
 
-def track_link_message(telegram_id: int, chat_id: int, message_id: int) -> None:
-    _pending_messages[telegram_id] = (chat_id, message_id)
+async def track_link_message(telegram_id: int, chat_id: int, message_id: int) -> None:
+    async with get_db_session() as session:
+        await session.execute(
+            update(OAuthPending)
+            .where(OAuthPending.telegram_id == telegram_id, OAuthPending.message_id.is_(None))
+            .values(chat_id=chat_id, message_id=message_id)
+        )
+        await session.commit()
 
 async def _exchange_code(code: str) -> Optional[dict]:
     async with aiohttp.ClientSession() as session:
@@ -83,12 +103,12 @@ async def _get_oauth_user(access_token: str) -> Optional[dict]:
                 return None
             return await resp.json()
 
-async def _notify_telegram(telegram_id: int, osu_username: str) -> None:
+async def _notify_telegram(telegram_id: int, osu_username: str,
+                           link_msg: Optional[tuple[int, int]] = None) -> None:
     if not _bot:
         logger.error("_notify_telegram: bot not set")
         return
     try:
-        link_msg = _pending_messages.pop(telegram_id, None)
         logger.info(f"_notify_telegram: tg={telegram_id}, link_msg={link_msg}")
         if link_msg:
             chat_id, msg_id = link_msg
@@ -132,15 +152,15 @@ async def handle_callback(request: web.Request) -> web.Response:
             status=400,
         )
 
-    _sweep_expired_states(datetime.now(timezone.utc))
-    entry = _pending_states.pop(state, None)
+    entry = await _take_state(state)
     if entry is None:
         return web.Response(
             text=t("oauth.link_expired"),
             content_type="text/html",
             status=400,
         )
-    telegram_id, _ = entry
+    telegram_id = entry.telegram_id
+    link_msg = (entry.chat_id, entry.message_id) if entry.message_id else None
     lang = (await get_language(telegram_id)).lower()
 
     token_data = await _exchange_code(code)
@@ -218,7 +238,7 @@ async def handle_callback(request: web.Request) -> web.Response:
         await session.commit()
 
     logger.info(f"OAuth linked: tg={telegram_id} -> osu={osu_username} (ID {osu_id})")
-    spawn(_notify_telegram(telegram_id, osu_username), name=f"oauth_notify_{telegram_id}")
+    spawn(_notify_telegram(telegram_id, osu_username, link_msg), name=f"oauth_notify_{telegram_id}")
 
     return web.Response(
         text=t("oauth.success_page", lang, username=escape_html(osu_username)),

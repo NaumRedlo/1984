@@ -1,5 +1,4 @@
-from datetime import timedelta
-from typing import Dict, Optional
+from typing import Optional
 
 from aiogram import Router, types
 from aiogram.types import (
@@ -24,26 +23,18 @@ from services.refresh import refresh_user, needs_top_plays_refresh
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from bot.utils.safe_edit import safe_edit_media
-from utils.timeutils import utcnow
+from utils.ttl_cache import TTLCache
 
 router = Router(name="top_plays")
 logger = get_logger("handlers.top_plays")
 
-_NAV_CACHE: Dict[int, dict] = {}
-_TTL = timedelta(minutes=15)
+_NAV_CACHE = TTLCache(maxsize=1000, ttl=15 * 60)
 
 def _store_nav(uid: int, payload: dict) -> None:
-    payload["expires_at"] = utcnow() + _TTL
     _NAV_CACHE[uid] = payload
 
 def _get_nav(uid: int) -> Optional[dict]:
-    rec = _NAV_CACHE.get(uid)
-    if not rec:
-        return None
-    if utcnow() > rec["expires_at"]:
-        del _NAV_CACHE[uid]
-        return None
-    return rec
+    return _NAV_CACHE.get(uid)
 
 def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
