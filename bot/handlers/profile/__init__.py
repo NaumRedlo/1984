@@ -5,6 +5,9 @@ from bot.handlers.profile.recent import router as recent_router
 from bot.handlers.profile.compare import router as compare_router
 from bot.handlers.profile.settings_menu import router as settings_router
 from bot.handlers.profile.top_plays import router as top_plays_router
+from bot.handlers.profile.top_play import router as top_play_router
+from bot.handlers.profile.update import router as update_router
+from bot.handlers.profile.find import router as find_router
 
 router = Router(name="profile_combined")
 router.include_router(profile_router)
@@ -12,5 +15,8 @@ router.include_router(recent_router)
 router.include_router(compare_router)
 router.include_router(settings_router)
 router.include_router(top_plays_router)
+router.include_router(top_play_router)
+router.include_router(update_router)
+router.include_router(find_router)
 
 __all__ = ["router"]

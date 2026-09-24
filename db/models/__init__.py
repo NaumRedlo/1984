@@ -8,5 +8,7 @@ from db.models.user_language import UserLanguage
 from db.models.leaderboard_snapshot import LeaderboardSnapshot
 from db.models.render_worker_token import RenderWorkerToken
 from db.models.oauth_pending import OAuthPending
+from db.models.track_snapshot import TrackSnapshot
+from db.models.user_mode_stats import UserModeStats
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats"]

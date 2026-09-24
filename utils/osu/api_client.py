@@ -266,11 +266,13 @@ class OsuApiClient:
             logger.error(f"Error downloading replay for score {score_id}: {e}")
             return None
 
-    async def get_user_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    async def get_user_data(self, user: Union[int, str], mode: Optional[str] = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if isinstance(user, str):
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
-        data = await self._make_request("GET", f"users/{user}/{mode}", params={"key": key_type}, bearer_token=oauth_token)
+        # with no mode, osu! answers with the player's main one (and says which in playmode)
+        path = f"users/{user}/{mode}" if mode else f"users/{user}"
+        data = await self._make_request("GET", path, params={"key": key_type}, bearer_token=oauth_token)
         if not data or "id" not in data:
             return None
 
@@ -278,9 +280,11 @@ class OsuApiClient:
         return {
             "id": data.get("id"),
             "username": data.get("username"),
+            "playmode": data.get("playmode"),
             "country_code": data.get("country", {}).get("code", "XX"),
             "pp": stats.get("pp", 0),
             "global_rank": stats.get("global_rank"),
+            "country_rank": stats.get("country_rank"),
             "accuracy": stats.get("hit_accuracy", 0.0),
             "play_count": stats.get("play_count", 0),
             "play_time": stats.get("play_time", 0),
@@ -698,11 +702,14 @@ class OsuApiClient:
         logger.debug(f"Synced map attempts for {user_model.osu_username}: {synced} rows")
         return synced
 
-    async def get_user_best_scores(self, user_id: int, limit: int = 5, mode: str = "osu", oauth_token: Optional[str] = None) -> List[Dict]:
+    async def get_user_best_scores(self, user_id: int, limit: int = 5, mode: Optional[str] = "osu", oauth_token: Optional[str] = None) -> List[Dict]:
+        params = {"limit": limit}
+        if mode:
+            params["mode"] = mode
         data = await self._make_request(
             "GET",
             f"users/{user_id}/scores/best",
-            params={"mode": mode, "limit": limit},
+            params=params,
             bearer_token=oauth_token,
         )
         return data if isinstance(data, list) else []

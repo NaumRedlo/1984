@@ -124,7 +124,7 @@ _STATUS_INT = {4: "loved", 3: "qualified", 2: "approved", 1: "ranked",
 
 _RECENT_STRINGS = {
     "en": {
-        "header": "RECENT SCORE", "header_shared": "SCORE",
+        "header": "RECENT SCORE", "header_shared": "SCORE", "header_top": "TOP PLAY #{n}",
         "mapped_by": "mapped by", "accuracy": "ACCURACY",
         "combo": "COMBO", "miss": "MISS",
         "section_perf": "MAP DIFFICULTY", "section_details": "DETAILS",
@@ -134,7 +134,7 @@ _RECENT_STRINGS = {
         "droplets": "DROPLETS", "max": "MAX", "KEYS": "KEYS",
     },
     "ru": {
-        "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ",
+        "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ", "header_top": "ЛУЧШИЙ РЕЗУЛЬТАТ #{n}",
         "mapped_by": "автор карты", "accuracy": "ТОЧНОСТЬ",
         "combo": "КОМБО", "miss": "ПРОМАХИ",
         "section_perf": "СЛОЖНОСТЬ КАРТЫ", "section_details": "ДЕТАЛИ",
@@ -239,7 +239,8 @@ class RecentCardMixin:
 
         top = 18
 
-        head_txt = S["header_shared"] if data.get("card_mode") == "shared" else S["header"]
+        head_txt = {"shared": S["header_shared"],
+                    "top": S["header_top"].format(n=data.get("top_place") or 1)}.get(data.get("card_mode"), S["header"])
         _hicon = load_icon("rsicon", size=24)
         htw = self._text_size(draw, head_txt, f_head)[0]
         icon_w = 32 if _hicon else 0

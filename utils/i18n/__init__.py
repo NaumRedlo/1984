@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Dict
 
 from utils.i18n.catalog import (
-    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier,
+    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier, players,
 )
 
 DEFAULT_LANG = "en"
 SUPPORTED_LANGS = ("en", "ru")
 
 _CATALOG_MODULES = (
-    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier,
+    common, account, settings, leaderboard, titles, profile, whatif, misc, dossier, players,
 )
 
 _CATALOG: Dict[str, Dict[str, str]] = {}
