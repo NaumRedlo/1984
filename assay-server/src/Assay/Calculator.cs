@@ -209,7 +209,10 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
     private static Dictionary<HitResult, int> FullCombo(Dictionary<HitResult, int> played, Dictionary<HitResult, int> maximum, bool legacy)
     {
         var statistics = new Dictionary<HitResult, int>(played);
-        statistics[HitResult.Great] = statistics.GetValueOrDefault(HitResult.Great) + statistics.GetValueOrDefault(HitResult.Miss);
+        int objects = maximum.Where(pair => pair.Key.IsBasic()).Sum(pair => pair.Value);
+        int ok = statistics.GetValueOrDefault(HitResult.Ok);
+        int meh = statistics.GetValueOrDefault(HitResult.Meh);
+        statistics[HitResult.Great] = Math.Max(0, objects - ok - meh);
         statistics[HitResult.Miss] = 0;
         if (!legacy)
         {

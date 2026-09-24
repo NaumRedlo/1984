@@ -86,6 +86,24 @@ public sealed class ServiceTests(CorpusFixture corpus) : IClassFixture<CorpusFix
     }
 
     [Fact]
+    public async Task A_failed_play_is_finished_with_greats_for_if_fc()
+    {
+        var failed = await corpus.Calculator.Score(new ScoreRequest
+        {
+            BeatmapId = Map,
+            Statistics = new() { ["great"] = 131, ["ok"] = 41, ["meh"] = 4, ["miss"] = 2 },
+            MaxCombo = 125,
+        }, CancellationToken.None);
+        var finished = await corpus.Calculator.Score(new ScoreRequest
+        {
+            BeatmapId = Map,
+            Statistics = new() { ["great"] = 1704 - 45, ["ok"] = 41, ["meh"] = 4 },
+        }, CancellationToken.None);
+        Assert.Equal(finished.Pp, failed.PpIfFc!.Value, 6);
+        Assert.True(failed.PpIfFc > failed.Pp * 3);
+    }
+
+    [Fact]
     public void Simulated_hits_always_add_up()
     {
         var maximum = new Dictionary<HitResult, int> { [HitResult.Great] = 1000, [HitResult.SliderTailHit] = 300 };
