@@ -600,7 +600,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
     result = await session.execute(
         select(
             User.osu_username, User.avatar_url, User.avatar_data,
-            UserMapAttempt.pp, UserMapAttempt.score, played.label("at"),
+            UserMapAttempt.pp, UserMapAttempt.pp_estimated, UserMapAttempt.score, played.label("at"),
         )
         .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
         .where(
@@ -613,7 +613,9 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
 
     history: list[dict[str, Any]] = []
     best = 0.0
-    for username, avatar_url, avatar_data, pp, score, at in result.all():
+    for username, avatar_url, avatar_data, pp, pp_estimated, score, at in result.all():
+        estimated = not pp and pp_estimated is not None
+        pp = pp_estimated if estimated else pp
         value = float(score or 0) if rank_by_score else float(pp or 0)
         if value <= best:
             continue
@@ -623,6 +625,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             "avatar_url": avatar_url,
             "avatar_data": avatar_data,
             "pp": float(pp or 0),
+            "pp_estimated": estimated,
             "score": int(score or 0),
             "date": at.strftime("%d.%m") if at else "",
         })

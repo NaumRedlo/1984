@@ -479,7 +479,7 @@ class MapLeaderboardCardMixin:
                             self._fit(draw, entry.get("username") or "—",
                                       self.font_stat_label, limit),
                             self.font_stat_label, TEXT)
-            self._draw_text(draw, (cx + 50, hy + 52), f"{float(entry.get('pp') or 0):.1f} PP",
+            self._draw_text(draw, (cx + 50, hy + 52), f"{_pp_text(entry)} PP",
                             self.font_small, MINE if i == 0 else MUTED)
 
             if i < count - 1:
