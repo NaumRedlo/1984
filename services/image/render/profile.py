@@ -185,7 +185,9 @@ class ProfileCardMixin:
             "ps_val": mk(m, 19, self.font_row),
             "poster_pp": mk(m, 16, self.font_row),
             "poster_acc": mk(r, 13, self.font_small),
-            "poster_grade": mk(m, 42, self.font_grade),
+            "poster_grade": mk(m, 40, self.font_grade),
+            "poster_grade_ss": mk(m, 30, self.font_grade),
+            "poster_pp_sm": mk(m, 14, self.font_row),
             "axis": mk(r, 14, self.font_small),
             "pill": mk(b, 18, self.font_label),
             "footer": mk(r, 17, self.font_small),
@@ -318,42 +320,26 @@ class ProfileCardMixin:
 
         nx = ax + d + 28
         name = str(data.get("username", "???"))
-        self._draw_text_shadow(draw, (nx, 50), name, fonts["name"], COL_WHITE)
-        nw, _ = self._text_size(draw, name, fonts["name"])
-        if data.get("is_supporter"):
-            self._pf_supporter_badge(img, nx + nw + 12, 80)
-            draw = ImageDraw.Draw(img)
-
-        sy = 110
         handle = data.get("handle")
-        if handle:
-            self._draw_text(draw, (nx, sy), handle, fonts["handle"], (188, 150, 152))
-            sy += 40
         title = data.get("title")
-        if title:
-            self._pf_title_text(img, nx, sy, title, data.get("title_color") or COL_RED,
-                                 fonts["atitle"])
-            sy += 44
+        lines = [("name", 56)] + ([("handle", 42)] if handle else []) + ([("title", 46)] if title else [])
+        lines.append(("country", 0))
+        span = sum(step for _, step in lines)
+        cy = ay + d / 2 - span / 2
+        for kind, step in lines:
+            if kind == "name":
+                nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE, shadow=True)
+                if data.get("is_supporter"):
+                    self._pf_supporter_badge(img, nr + 14, int(round(cy)))
+            elif kind == "handle":
+                self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
+            elif kind == "title":
+                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or COL_RED,
+                               shadow=True)
+            else:
+                self._pf_country_line(img, data, nx, cy, fonts, S)
             draw = ImageDraw.Draw(img)
-
-        flag = load_flag(str(data.get("country", "") or ""), height=30)
-        has_subtitle = bool(title) or bool(handle)
-        fy = sy + 2 if has_subtitle else 128
-        cur = nx
-        if flag:
-            self._aa_rounded_outline(img, (nx, fy, nx + flag.width, fy + flag.height),
-                                     radius=4, outline=(82, 58, 60), width=1)
-            img.paste(flag, (nx, fy), flag)
-            cur = nx + flag.width + 14
-            draw = ImageDraw.Draw(img)
-        raw_cc = str(data.get("country", "") or "").strip()
-        cname = data.get("country_name") or (
-            raw_cc.upper() if raw_cc and raw_cc not in ("—", "__", "--") else ""
-        )
-        if not cname or cname in ("—", "__", "--"):
-            cname = S["unknown_country"]
-        _, ch = self._text_size(draw, cname, fonts["country"])
-        self._draw_text_shadow(draw, (cur, fy + (30 - ch) // 2), cname, fonts["country"], COL_WHITE)
+            cy += step
 
         rank_x = 872
         gr = data.get("global_rank", 0) or 0
@@ -362,6 +348,23 @@ class ProfileCardMixin:
         self._draw_text_shadow(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
         self._draw_text_shadow(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
         self._draw_text_shadow(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
+
+    def _pf_country_line(self, img, data, x, cy, fonts, S):
+        flag = load_flag(str(data.get("country", "") or ""), height=30)
+        cur = x
+        if flag:
+            fy = int(round(cy - flag.height / 2))
+            self._aa_rounded_outline(img, (x, fy, x + flag.width, fy + flag.height),
+                                     radius=4, outline=(82, 58, 60), width=1)
+            img.paste(flag, (x, fy), flag)
+            cur = x + flag.width + 14
+        raw_cc = str(data.get("country", "") or "").strip()
+        cname = data.get("country_name") or (
+            raw_cc.upper() if raw_cc and raw_cc not in ("—", "__", "--") else ""
+        )
+        if not cname or cname in ("—", "__", "--"):
+            cname = S["unknown_country"]
+        self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE, shadow=True)
 
     def _pf_supporter_badge(self, img, x, cy):
         ph, pw = 40, 64
@@ -377,12 +380,6 @@ class ProfileCardMixin:
             white = Image.new("RGBA", heart.size, (255, 255, 255, 255))
             white.putalpha(heart.split()[3])
             img.paste(white, (x + (pw - heart.width) // 2, y0 + (ph - heart.height) // 2), white)
-
-    def _pf_title_text(self, img, x, y, title, color, font):
-        if not title:
-            return
-        draw = ImageDraw.Draw(img)
-        self._draw_text_shadow(draw, (x, y), title, font, color)
 
     def _pf_stats_strip(self, img, data, fonts):
         S = _pf_lang(data)
@@ -409,23 +406,24 @@ class ProfileCardMixin:
         lvw, lvh = self._text_size(draw, lvl_str, fonts["stat_val"])
         self._draw_text(draw, (lx, y_val), lvl_str, fonts["stat_val"], COL_CORAL)
 
-        bar_x0, bar_x1 = lx + lvw + 18, 968
+        pct = f"{int(prog)}%"
+        pct_w = self._text_size(draw, pct, fonts["count"])[0]
+        bar_x0, bar_x1 = lx + lvw + 18, 968 - pct_w - 12
         bar_h = 10
 
         try:
             _, gy0, _, gy1 = fonts["stat_val"].getbbox(lvl_str)
         except Exception:
             gy0, gy1 = 0, lvh
-        bar_y = y_val + (gy0 + gy1) // 2 - bar_h // 2
+        bar_cy = y_val + (gy0 + gy1) / 2
+        bar_y = int(round(bar_cy - bar_h / 2))
         self._aa_rounded_fill(img, (bar_x0, bar_y, bar_x1, bar_y + bar_h), radius=5, fill=COL_TRACK)
         inner = int((bar_x1 - bar_x0) * max(0, min(100, prog)) / 100)
         if inner > 6:
             self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, (200, 52, 52), (240, 124, 96), radius=5)
         draw = ImageDraw.Draw(img)
 
-        pct = f"{int(prog)}%"
-        pct_w, pct_h = self._text_size(draw, pct, fonts["count"])
-        self._draw_text(draw, (bar_x1 - pct_w, bar_y - pct_h - 2), pct, fonts["count"], COL_CORAL)
+        self._text_mid(draw, 968, bar_cy, pct, fonts["count"], COL_CORAL, align="right")
 
         jx = 1020
         self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
@@ -507,7 +505,7 @@ class ProfileCardMixin:
         self._pf_section_title(draw, cx0, div_y + 14, S["top_plays"], fonts)
 
         scores = (data.get("top_scores", []) or [])[:5]
-        post_y = div_y + 42
+        post_y = div_y + 50
         post_h = PANEL_Y1 - 24 - post_y
         gap = 11
         pw = int((width - 4 * gap) / 5)
@@ -546,19 +544,25 @@ class ProfileCardMixin:
         acc = sc.get("accuracy", 0) or 0
 
         gcol = _grade_color(rank)
-        gw, gh = self._text_size(draw, grade, fonts["poster_grade"])
-        gy = y + h - 14 - gh
-        self._draw_text_shadow(draw, (x + 9, gy), grade, fonts["poster_grade"], gcol)
+        label = "SS" if grade == "X" else grade
+        gfont = fonts["poster_grade_ss"] if len(label) > 1 else fonts["poster_grade"]
+        g_top, g_bot = draw.textbbox((0, 0), "H", font=gfont)[1::2]
+        g_cy = y + h - 12 - (g_bot - g_top) / 2
+        g_right = self._text_mid(draw, x + 10, g_cy, label, gfont, gcol, shadow=True)
 
-        free_x0, free_x1 = x + 9 + gw + 6, x + w - 10
-        free_cx = (free_x0 + free_x1) // 2
         pp_txt = f"{int(pp)}pp"
+        acc_txt = f"{acc:.2f}%"
+        right = x + w - 10
+        room = right - g_right - 8
+        pp_font = fonts["poster_pp"]
+        if self._text_size(draw, pp_txt, pp_font)[0] > room:
+            pp_font = fonts["poster_pp_sm"]
         if grade == "X":
-            pp_y = self._tt_cy(pp_txt, fonts["poster_pp"], gy + gh // 2) + 8
-            self._text_center(draw, free_cx, pp_y, pp_txt, fonts["poster_pp"], COL_WHITE, shadow=True)
+            self._text_mid(draw, right, g_cy, pp_txt, pp_font, COL_WHITE, align="right", shadow=True)
         else:
-            self._text_center(draw, free_cx, y + h - 40, pp_txt, fonts["poster_pp"], COL_WHITE, shadow=True)
-            self._text_center(draw, free_cx, y + h - 21, f"{acc:.2f}%", fonts["poster_acc"], (205, 203, 214), shadow=True)
+            self._text_mid(draw, right, g_cy - 9, pp_txt, pp_font, COL_WHITE, align="right", shadow=True)
+            self._text_mid(draw, right, g_cy + 10, acc_txt, fonts["poster_acc"], (205, 203, 214),
+                           align="right", shadow=True)
 
     def _pf_right_panel(self, img, data, fonts):
         S = _pf_lang(data)
@@ -686,39 +690,23 @@ class ProfileCardMixin:
         img.paste(strip, (x, y), mask)
 
     def _pf_grade_bar(self, img, x, y, w, h, segments):
-        total = sum(max(0, c) for c, _ in segments)
         mask = self._rounded_mask((w, h), h // 2)
         strip = Image.new("RGB", (w, h), COL_TRACK)
         nz = [(c, col) for c, col in segments if c > 0]
-        if total > 0 and nz:
-
-            BLEND = 9.0
-            starts, widths = [], []
-            cur = 0.0
-            for c, _ in nz:
-                seg_w = w * c / total
-                starts.append(cur)
-                widths.append(seg_w)
-                cur += seg_w
-            edges = []
-            for i in range(len(nz) - 1):
-                pos = starts[i] + widths[i]
-                radius = min(BLEND, widths[i] / 2.0, widths[i + 1] / 2.0)
-                edges.append((pos, nz[i][1], nz[i + 1][1], radius))
-
-            def _band_color(px):
-                for i in range(len(nz)):
-                    if i == len(nz) - 1 or px < starts[i] + widths[i]:
-                        return nz[i][1]
-                return nz[-1][1]
-
+        if nz:
+            gap, least = 3, h
+            room = w - gap * (len(nz) - 1)
+            total = sum(c for c, _ in nz)
+            widths = [room * c / total for c, _ in nz]
+            small = [i for i, sw in enumerate(widths) if sw < least]
+            if small and len(small) < len(nz):
+                big_total = sum(c for i, (c, _) in enumerate(nz) if i not in small)
+                rest = room - least * len(small)
+                widths = [least if i in small else rest * c / big_total for i, (c, _) in enumerate(nz)]
             sd = ImageDraw.Draw(strip)
-            for px in range(w):
-                color = _band_color(px)
-                for pos, lc, rc, radius in edges:
-                    if radius > 0 and pos - radius <= px <= pos + radius:
-                        t = (px - (pos - radius)) / (2.0 * radius)
-                        color = tuple(int(lc[k] + (rc[k] - lc[k]) * t) for k in range(3))
-                        break
-                sd.line([(px, 0), (px, h)], fill=color)
+            cur = 0.0
+            for (c, col), sw in zip(nz, widths):
+                x0, x1 = int(round(cur)), int(round(cur + sw))
+                sd.rectangle((x0, 0, x1 - 1, h), fill=col)
+                cur += sw + gap
         img.paste(strip, (x, y), mask)

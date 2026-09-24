@@ -142,13 +142,13 @@ def test_x_grade_hides_accuracy_but_keeps_pp():
     from services.image.core import CardRenderer as CR
     renderer = CR()
     center_calls = []
-    original = renderer._text_center
+    original = renderer._text_mid
 
-    def spy(draw, cx, y, text, font, fill, **kwargs):
+    def spy(draw, x, cy, text, font, fill, **kwargs):
         center_calls.append(text)
-        return original(draw, cx, y, text, font, fill, **kwargs)
+        return original(draw, x, cy, text, font, fill, **kwargs)
 
-    renderer._text_center = spy
+    renderer._text_mid = spy
     scores = [
         {"rank": "X", "pp": 412, "accuracy": 100.0},
         {"rank": "S", "pp": 350, "accuracy": 98.2},
