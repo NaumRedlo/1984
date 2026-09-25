@@ -285,3 +285,24 @@ def test_a_card_is_written_in_plain_json():
 
     said = http._plain({"when": moment(2026, 9, 23, 12, 0), "colour": (1, 2, 3), "nested": [{"n": None}]})
     assert said == {"when": "2026-09-23T12:00:00", "colour": [1, 2, 3], "nested": [{"n": None}]}
+
+
+async def test_a_title_is_worn_and_taken_off_from_the_app(served, factory):
+    naum, _, _ = await _seed(factory)
+    client, mine = served
+    off = await client.post("/render/me/title", headers=mine, json={"chat": CHAT, "code": None})
+    assert off.status == 200 and (await off.json())["title"] is None
+    got = await (await client.get("/render/community", headers=mine)).json()
+    assert got["me"]["title"] is None
+    on = await client.post("/render/me/title", headers=mine, json={"chat": CHAT, "code": "wysi"})
+    assert on.status == 200
+    got = await (await client.get("/render/community", headers=mine)).json()
+    assert got["me"]["title"] == "wysi"
+
+async def test_only_an_unlocked_real_title_can_be_worn(served, factory):
+    await _seed(factory)
+    client, mine = served
+    for code in ("not_a_title", "idealist", "nonsense"):
+        reply = await client.post("/render/me/title", headers=mine, json={"chat": CHAT, "code": code})
+        assert reply.status == 403, code
+    assert (await client.post("/render/me/title", headers=mine, json={"chat": -5, "code": "wysi"})).status == 403

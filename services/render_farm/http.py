@@ -455,6 +455,15 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             )
             return [row[0] for row in found.all()]
 
+    async def _group_for(telegram_id: int, said: str) -> tuple[Optional[int], bool]:
+        chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
+        if chat_id is None or chat_id > 0:
+            for group in await _groups_of(telegram_id):
+                if await _member(group, telegram_id):
+                    return group, True
+            return None, True
+        return chat_id, await _member(chat_id, telegram_id)
+
     async def community(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -462,16 +471,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         owner = invites.owner(_token(request))
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        said = request.query.get("chat", "")
-        chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
-        if chat_id is None or chat_id > 0:
-            for group in await _groups_of(owner.telegram_id):
-                if await _member(group, owner.telegram_id):
-                    chat_id = group
-                    break
-            else:
-                chat_id = None
-        elif not await _member(chat_id, owner.telegram_id):
+        chat_id, allowed = await _group_for(owner.telegram_id, request.query.get("chat", ""))
+        if not allowed:
             return web.json_response({"error": "not your chat"}, status=403)
 
         from db.database import AsyncSessionFactory
@@ -575,6 +576,31 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         _card_cache[key] = body
         return web.json_response(body)
 
+    async def wear_title(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = await _json_object(request)
+        code = said.get("code")
+        code = str(code) if code else None
+        chat_id, allowed = await _group_for(owner.telegram_id, str(said.get("chat") or ""))
+        if not allowed:
+            return web.json_response({"error": "not your chat"}, status=403)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            verdict = await gathered.wear(session, owner.telegram_id, chat_id, code)
+        if verdict == gathered.NOT_REGISTERED:
+            return web.json_response({"error": "not registered"}, status=404)
+        if verdict == gathered.NOT_UNLOCKED:
+            return web.json_response({"error": "not unlocked"}, status=403)
+        for key in ((owner.telegram_id, chat_id), (owner.telegram_id, None)):
+            _card_cache.pop(key)
+        return web.json_response({"title": code})
+
     async def friends(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -657,6 +683,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/community", community),
         web.get("/render/community/person", someone),
         web.post("/render/me/profile", share_card),
+        web.post("/render/me/title", wear_title),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

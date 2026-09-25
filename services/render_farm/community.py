@@ -247,6 +247,24 @@ async def chosen(session, viewer: int, chat_id: Optional[int] = None):
     picked = next((u for u in rows if u.chat_id == chat_id), None) if chat_id is not None else None
     return picked or max(rows, key=lambda u: naive(u.last_api_update or u.updated_at) or datetime.min)
 
+WORN = "worn"
+NOT_REGISTERED = "not registered"
+NOT_UNLOCKED = "not unlocked"
+
+async def wear(session, viewer: int, chat_id: Optional[int], code: Optional[str]) -> str:
+    mine = await chosen(session, viewer, chat_id)
+    if mine is None:
+        return NOT_REGISTERED
+    if code is not None:
+        unlocked = set((await session.execute(
+            select(UserTitleProgress.title_code).where(UserTitleProgress.user_id == mine.id, UserTitleProgress.unlocked.is_(True))
+        )).scalars().all())
+        if code not in unlocked or code not in TITLE_REGISTRY:
+            return NOT_UNLOCKED
+    mine.active_title_code = code
+    await session.commit()
+    return WORN
+
 async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     mine = await chosen(session, viewer, chat_id)
     if mine is None:
