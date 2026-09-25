@@ -33,6 +33,7 @@ from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
 from bot.middlewares.tenant_middleware import TenantMiddleware
+from tasks.live_tracker import LiveTracker, set_current as set_live_tracker
 from tasks.profile_updater import periodic_profile_updates
 
 from db.database import engine, Base, close_engine
@@ -51,6 +52,7 @@ class App:
         self.osu_api_client: Optional[OsuApiClient] = None
         self.shutdown_event = asyncio.Event()
         self.profile_updater_task: Optional[asyncio.Task] = None
+        self.live_tracker_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -167,6 +169,11 @@ class App:
             name="profile_updater"
         )
 
+        logger.info("Starting the live tracker...")
+        tracker = LiveTracker(self.osu_api_client)
+        set_live_tracker(tracker)
+        self.live_tracker_task = asyncio.create_task(tracker.run(self.shutdown_event), name="live_tracker")
+
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -186,6 +193,12 @@ class App:
             self.profile_updater_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.profile_updater_task
+
+        if self.live_tracker_task:
+            self.live_tracker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.live_tracker_task
+        set_live_tracker(None)
 
         if self.oauth_server:
             await self.oauth_server.stop()

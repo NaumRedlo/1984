@@ -576,6 +576,23 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         _card_cache[key] = body
         return web.json_response(body)
 
+    async def played(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        from db.database import AsyncSessionFactory
+        from tasks import live_tracker
+
+        async with AsyncSessionFactory() as session:
+            user = await gathered.chosen(session, owner.telegram_id)
+        if user is None or not user.osu_user_id:
+            return web.json_response({"error": "not registered"}, status=404)
+        heard = live_tracker.nudge(int(user.osu_user_id))
+        return web.json_response({"heard": heard}, status=202)
+
     async def wear_title(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -684,6 +701,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/community/person", someone),
         web.post("/render/me/profile", share_card),
         web.post("/render/me/title", wear_title),
+        web.post("/render/me/played", played),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

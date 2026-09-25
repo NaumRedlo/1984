@@ -306,3 +306,18 @@ async def test_only_an_unlocked_real_title_can_be_worn(served, factory):
         reply = await client.post("/render/me/title", headers=mine, json={"chat": CHAT, "code": code})
         assert reply.status == 403, code
     assert (await client.post("/render/me/title", headers=mine, json={"chat": -5, "code": "wysi"})).status == 403
+
+
+async def test_the_app_says_its_person_just_played(served, factory):
+    from tasks import live_tracker
+
+    await _seed(factory)
+    client, mine = served
+    tracker = live_tracker.LiveTracker(None)
+    live_tracker.set_current(tracker)
+    try:
+        reply = await client.post("/render/me/played", headers=mine)
+        assert reply.status == 202 and (await reply.json())["heard"] is True
+        assert 70 in tracker.nudged
+    finally:
+        live_tracker.set_current(None)
