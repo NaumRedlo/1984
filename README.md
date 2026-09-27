@@ -57,7 +57,16 @@ job back (`/give-back`); `/render/farm` lists who is online. A job is leased for
 three tries, or when nobody takes it within `RENDER_GIVE_UP` seconds (900), the
 person is told. Every video is 1920×1080 at 60 FPS with normalised loudness; the
 skin is the person's choice in `sts` → *Render skin*, from the `.osk` files in
-`RENDER_SKINS_DIR` (`data/skins`), or Dossier Default. A person may have
+`RENDER_SKINS_DIR` (`data/skins`), or Dossier Default. A registered group member
+can upload an `.osk` or ZIP in the bot chat; a validated upload is selected
+automatically and appears only in that person's skin menu. Uploaded archives
+are immutable and addressed by content hash under `data/skins/uploads/<telegram-id>`;
+queued jobs retain their original archive when the person uploads a new skin.
+`RENDER_SKIN_MOST` defaults to 64 MiB per archive (maximum 256 MiB),
+`RENDER_SKIN_STORAGE_MOST` to 512 MiB per person. Archives expand to at most
+512 MiB and 8192 entries and must contain a single skin; invalid archives
+do not replace the selected skin. If storage is full, an administrator can
+remove unused uploads after the render queue is empty. A person may have
 `RENDER_ORDERS_EACH` (2) jobs open at once, and a replay may be
 `RENDER_REPLAY_MOST` bytes (8 MB).
 

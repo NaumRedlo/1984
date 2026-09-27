@@ -9,12 +9,18 @@ CATALOG = {
     "sts.kb.language": {"en": "Language", "ru": "Язык"},
     "sts.kb.skin": {"en": "Render skin", "ru": "Скин для рендера"},
     "sts.skin.home": {
-        "en": "🎨 <b>Render skin</b>\n\nVideos drawn for you on the farm use: <b>{skin}</b>\nAlways 1080p at 60 FPS with normalised loudness.",
-        "ru": "🎨 <b>Скин для рендера</b>\n\nВидео, которые для тебя рисует ферма, будут в скине: <b>{skin}</b>\nВсегда 1080p, 60 кадров, громкость нормализована.",
+        "en": "🎨 <b>Render skin</b>\n\nSend an .osk or ZIP skin file to this chat to use your own skin.\n\nVideos drawn for you on the farm use: <b>{skin}</b>\nAlways 1080p at 60 FPS with normalised loudness.",
+        "ru": "🎨 <b>Скин для рендера</b>\n\nПришли в этот чат файл скина .osk или ZIP, чтобы использовать свой скин.\n\nВидео, которые для тебя рисует ферма, будут в скине: <b>{skin}</b>\nВсегда 1080p, 60 кадров, громкость нормализована.",
     },
     "sts.skin.default": {"en": "Dossier Default", "ru": "Dossier Default"},
     "sts.skin.none_here": {"en": "No other skins are on the server yet.", "ru": "Других скинов на сервере пока нет."},
     "sts.skin.saved": {"en": "Saved", "ru": "Сохранено"},
+
+    "sts.skin.uploaded": {'en': 'Skin <b>{skin}</b> is selected. Send an .osr replay to render with it. You can change the skin in sts → Render skin.', 'ru': 'Скин <b>{skin}</b> выбран. Пришли реплей .osr, чтобы отрендерить с ним видео. Изменить скин можно в sts → Скин для рендера.'},
+    "sts.skin.invalid": {'en': 'Could not read one skin from this archive. Send an .osk or ZIP containing one skin folder.', 'ru': 'Не удалось прочитать скин из архива. Пришли .osk или ZIP с одной папкой скина.'},
+    "sts.skin.upload_failed": {'en': 'The skin could not be downloaded or saved. Try sending the file again.', 'ru': 'Не удалось скачать или сохранить скин. Попробуй прислать файл ещё раз.'},
+    "sts.skin.storage_full": {'en': 'Your skin storage is full. Contact the bot administrator.', 'ru': 'Хранилище твоих скинов заполнено. Обратись к администратору бота.'},
+    "sts.skin.too_big": {'en': 'The skin archive must be no larger than {mb} MB.', 'ru': 'Архив скина должен быть не больше {mb} МБ.'},
 
     "sts.kb.close": {"en": "Close", "ru": "Закрыть"},
     "sts.kb.back": {"en": "‹ Back", "ru": "‹ Назад"},

@@ -34,6 +34,8 @@ RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",
 RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
 
 RENDER_SKINS_DIR = os.getenv("RENDER_SKINS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "skins"))
+RENDER_SKIN_MOST = int(os.getenv("RENDER_SKIN_MOST", str(64 * 1024 * 1024)))
+RENDER_SKIN_STORAGE_MOST = int(os.getenv("RENDER_SKIN_STORAGE_MOST", str(512 * 1024 * 1024)))
 RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "900"))
 RENDER_REPLAY_MOST = int(os.getenv("RENDER_REPLAY_MOST", str(8 * 1024 * 1024)))
 RENDER_ORDERS_EACH = int(os.getenv("RENDER_ORDERS_EACH", "2"))
