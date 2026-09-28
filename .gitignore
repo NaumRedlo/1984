@@ -35,3 +35,7 @@ tmp_card_previews/
 # went with the source; the build output it was hiding did not, and `git add -A`
 # will happily stage ninety thousand object files.
 /dossier/
+AGENTS.md
+docs/work-plan-*.md
+*.personal.md
+*.private.md
