@@ -56,6 +56,20 @@ def test_uploaded_skin_is_private_validated_and_content_addressed(storage):
     assert skins.described("../upload", 123) is None
 
 
+@pytest.mark.asyncio
+async def test_selection_without_a_registered_user_reaches_the_next_worker_job(storage):
+    data = archive("Player/")
+    key = store(storage, 123, data)
+    await skins.choose(123, key)
+    assert await skins.chosen_name(123) == key
+    selected = await skins.chosen_for(123)
+    job = RenderQueue().offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=selected)
+    assert job.handed()["skin"]["hash"] == hashlib.sha256(data).hexdigest()
+    await skins.choose(123, None)
+    assert await skins.chosen_name(123) is None
+    assert await skins.chosen_for(123) is None
+
+
 def test_new_upload_does_not_replace_the_archive_of_a_queued_job(storage):
     first, second = archive(value=b"first"), archive(value=b"second")
     before = store(storage, 7, first)

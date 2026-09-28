@@ -54,6 +54,15 @@ def described(name: Optional[str], telegram_id: Optional[int] = None) -> Optiona
     return {"name": name, "hash": digest, "size": os.path.getsize(path), "path": path}
 
 async def chosen_name(telegram_id: int) -> Optional[str]:
+    try:
+        with open(_choice_path(telegram_id), encoding="utf-8") as source:
+            saved = json.load(source)
+        if isinstance(saved, dict) and "name" in saved:
+            name = saved["name"]
+            return name if isinstance(name, str) and name in available(telegram_id) else None
+    except (OSError, ValueError, TypeError):
+        pass
+
     from sqlalchemy import select
 
     from db.database import AsyncSessionFactory
@@ -70,15 +79,23 @@ async def chosen_for(telegram_id: int) -> Optional[dict[str, Any]]:
     return await asyncio.to_thread(described, await chosen_name(telegram_id), telegram_id)
 
 async def choose(telegram_id: int, name: Optional[str]) -> None:
-    from sqlalchemy import update
-
-    from db.database import AsyncSessionFactory
-    from db.models import User
+    import tempfile
 
     value = name[:64] if name else None
-    async with AsyncSessionFactory() as session:
-        await session.execute(update(User).where(User.telegram_id == telegram_id).values(render_skin=value))
-        await session.commit()
+    if value and value not in available(telegram_id):
+        raise SkinError("invalid")
+    root = _personal_folder(telegram_id)
+    os.makedirs(root, exist_ok=True)
+    fd, part = tempfile.mkstemp(prefix=".selected-", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as destination:
+            json.dump({"name": value}, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.replace(part, _choice_path(telegram_id))
+    finally:
+        if os.path.exists(part):
+            os.unlink(part)
     logger.info("%s renders with %s", telegram_id, value or "the default skin")
 
 class SkinError(ValueError):
@@ -93,6 +110,9 @@ def _personal_folder(telegram_id: int) -> str:
     if not isinstance(telegram_id, int) or telegram_id <= 0:
         raise SkinError("invalid")
     return os.path.join(folder(), "uploads", str(telegram_id))
+
+def _choice_path(telegram_id: int) -> str:
+    return os.path.join(_personal_folder(telegram_id), "selected.json")
 
 def _path_for(name: str, telegram_id: Optional[int]) -> Optional[str]:
     if not name or os.path.basename(name) != name or "\\" in name:
@@ -176,7 +196,6 @@ def store_upload(telegram_id: int, path: str, filename: str) -> str:
     root = _personal_folder(telegram_id)
     os.makedirs(root, exist_ok=True)
     target = os.path.join(root, f"{name}.osk")
-    # Content-addressed files remain immutable for already queued render jobs.
     if os.path.isfile(target):
         return name
     used = sum(os.path.getsize(os.path.join(root, entry)) for entry in os.listdir(root) if entry.endswith(".osk"))
