@@ -61,8 +61,6 @@ async def _estimate_pp(raw: dict, beatmap: dict, beatmap_id: int, mods, stats: d
         return None
     return round(float(served["pp"]), 2)
 
-# osu! sends a score's map set without its ranked date (BeatmapsetCompact), so the date is
-# looked up once per map through /beatmaps, which carries the full set.
 DATED_STATUSES = ("ranked", "approved", "loved")
 _RANKED_DATES: Dict[int, Optional[datetime]] = {}
 _RANKED_DATES_KEPT = 20000
@@ -270,7 +268,6 @@ class OsuApiClient:
         if isinstance(user, str):
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
-        # with no mode, osu! answers with the player's main one (and says which in playmode)
         path = f"users/{user}/{mode}" if mode else f"users/{user}"
         data = await self._make_request("GET", path, params={"key": key_type}, bearer_token=oauth_token)
         if not data or "id" not in data:
@@ -576,6 +573,7 @@ class OsuApiClient:
                     pp_changed_at=None if is_baseline_sync else sync_time,
                 )
                 session.add(new_score)
+                existing[score_id] = new_score
 
         stale_ids = set(existing.keys()) - incoming_ids
         if stale_ids:
@@ -776,8 +774,8 @@ class OsuApiClient:
         return filled
 
     async def _fill_ranked_dates_quietly(self, session, user_id: int) -> None:
+        await session.flush()
         try:
-            await session.flush()
             await self.fill_ranked_dates(session, user_id)
         except Exception as exc:
             logger.warning(f"ranked dates for user_id={user_id} not filled: {exc}")

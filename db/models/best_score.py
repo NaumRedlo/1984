@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, DateTime, ForeignKey, Index, UniqueConstraint
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -7,7 +7,7 @@ class UserBestScore(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
-    score_id = Column(BigInteger, unique=True, nullable=False)
+    score_id = Column(BigInteger, nullable=False)
     beatmap_id = Column(Integer, nullable=False)
     beatmapset_id = Column(Integer, nullable=True)
     score = Column(BigInteger, nullable=True)
@@ -40,6 +40,7 @@ class UserBestScore(Base):
     pp_changed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
+        UniqueConstraint('user_id', 'score_id', name='uq_user_best_scores_user_score'),
         Index('ix_user_best_scores_user_pp', 'user_id', 'pp'),
     )
 
