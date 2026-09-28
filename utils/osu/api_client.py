@@ -693,7 +693,9 @@ class OsuApiClient:
                 for key, value in attrs.items():
                     setattr(attempt, key, value)
             else:
-                session.add(UserMapAttempt(user_id=user_model.id, score_id=score_id, **attrs))
+                attempt = UserMapAttempt(user_id=user_model.id, score_id=score_id, **attrs)
+                session.add(attempt)
+                existing[score_id] = attempt
             synced += 1
 
         await self._fill_ranked_dates_quietly(session, user_model.id)

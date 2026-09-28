@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, Integer, BigInteger, Float, String, Boolean, DateTime, ForeignKey, Index, UniqueConstraint
 
 from db.database import Base
 
@@ -9,7 +9,7 @@ class UserMapAttempt(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    score_id = Column(BigInteger, unique=True, nullable=False)
+    score_id = Column(BigInteger, nullable=False)
     beatmap_id = Column(Integer, nullable=False, index=True)
     beatmapset_id = Column(Integer, nullable=True)
     score = Column(BigInteger, nullable=True)
@@ -43,6 +43,7 @@ class UserMapAttempt(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
+        UniqueConstraint("user_id", "score_id", name="uq_user_map_attempts_user_score"),
         Index("ix_user_map_attempts_beatmap_user_pp", "beatmap_id", "user_id", "pp"),
     )
 
