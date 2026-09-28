@@ -1,6 +1,5 @@
 from typing import Optional
 
-# osu!'s rulesets by id, with the name the API uses for each and the one players know it by.
 RULESETS = {0: "osu", 1: "taiko", 2: "fruits", 3: "mania"}
 TITLES = {0: "osu!", 1: "osu!taiko", 2: "osu!catch", 3: "osu!mania"}
 

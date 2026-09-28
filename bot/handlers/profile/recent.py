@@ -184,7 +184,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id
                 try:
-                    # leaderboards and titles are osu!standard's: other modes are shown, not counted
 
                     synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
                     plays = [_play_from_score(rs) for rs in recent_scores]

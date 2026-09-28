@@ -5,8 +5,6 @@ from utils.osu import assay_service
 
 logger = get_logger("utils.pp_calculator")
 
-# Every figure here comes from the assay service, which counts with osu!'s own packages.
-# Without it (ASSAY_URL unset or the service down) there is no figure rather than a wrong one.
 
 async def calculate_strains(beatmap_id: int, mods=None, points: int = 64,
                             checksum: Optional[str] = None, ruleset: int = 0) -> Optional[list]:
@@ -40,7 +38,6 @@ async def calculate_pp(
     )
     if not served or served.get("pp") is None:
         return None
-    # if FC / if SS are only simulated for osu!standard; elsewhere they are left out
     if_fc, if_ss = served.get("pp_if_fc"), served.get("pp_if_ss")
     return {
         "pp_current": round(served["pp"], 2),

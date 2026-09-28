@@ -204,7 +204,7 @@ async def test_find_names_only_this_chats_members_who_linked_the_account(factory
                         tenant_chat_id=-1)
     assert message.said == ['<b>NewName</b> in this chat: <a href="tg://user?id=10">Alice &lt;3</a>']
 
-    for chat in (-3, -4):  # nobody linked it there; the one who did has left
+    for chat in (-3, -4):
         message = _Message(bot)
         await find.cmd_find(message, TriggerArgs("find", "x", "find x"), osu_api_client=object(), tenant_chat_id=chat)
         assert "Nobody in this chat" in message.said[0]

@@ -51,7 +51,6 @@ async def cmd_top_play(message: types.Message, trigger_args: TriggerArgs, osu_ap
         return
     wait = await message.answer(t("tp.loading", lang, n=place, name=escape_html(target.name)), parse_mode="HTML")
     try:
-        # with no mode named, osu! answers with the player's main one
         scores = await osu_api_client.get_user_best_scores(
             target.osu_id, limit=place, oauth_token=await token_for(target),
             mode=rulesets.RULESETS[ruleset] if ruleset is not None else None)

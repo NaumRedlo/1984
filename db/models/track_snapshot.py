@@ -22,4 +22,4 @@ class TrackSnapshot(Base):
     country_rank = Column(Integer, nullable=True)
     accuracy = Column(Float, nullable=True)
     play_count = Column(Integer, nullable=True)
-    top = Column(Text, nullable=True)  # JSON: [[score_id, pp], ...] in the order of the top
+    top = Column(Text, nullable=True)

@@ -16,7 +16,7 @@ class Standing:
     country_rank: Optional[int]
     accuracy: Optional[float]
     play_count: Optional[int]
-    top: list = field(default_factory=list)  # [(score_id, pp)] best first
+    top: list = field(default_factory=list)
 
     @classmethod
     def of(cls, user_data: dict, best: list) -> "Standing":
@@ -35,11 +35,11 @@ class Changes:
     first: bool
     since: Optional[datetime]
     pp: float = 0.0
-    global_rank: int = 0  # positive: climbed
+    global_rank: int = 0
     country_rank: int = 0
     accuracy: float = 0.0
     play_count: int = 0
-    new_scores: list = field(default_factory=list)  # [(position 1-based, raw score)]
+    new_scores: list = field(default_factory=list)
 
     @property
     def nothing(self) -> bool:

@@ -69,7 +69,6 @@ class UpdateCardMixin:
         fonts = self._tp_fonts()
         x0, x1 = CARD_M + 28, W - CARD_M - 28
 
-        # header
         cy = CARD_M + head_h // 2 + 6
         draw = ImageDraw.Draw(img)
         arrow = load_icon("arrowup", 20, colour=COL_RED)
@@ -84,7 +83,6 @@ class UpdateCardMixin:
         img.paste(icon, (x0, int(cy - 11)), icon)
         self._text_mid(ImageDraw.Draw(img), x0 + 30, cy, rulesets.TITLES[ruleset], fonts["row_meta"], COL_MUTED)
 
-        # the player
         sy0 = CARD_M + head_h + 14
         self._pf_panel(img, (x0, sy0, x1, sy0 + strip_h), radius=14)
         d = 52
@@ -108,7 +106,6 @@ class UpdateCardMixin:
         when = S["since"].format(when=_local(since)) if isinstance(since, datetime) else S["first_since"]
         self._text_mid(draw, ax + d + 16, mid + 17, when, fonts["handle"], (188, 150, 152))
 
-        # the numbers
         ty0 = sy0 + strip_h + 14
         self._pf_panel(img, (x0, ty0, x1, ty0 + stats_h), radius=14)
         first = bool(data.get("first"))
@@ -135,7 +132,6 @@ class UpdateCardMixin:
                 colour = COL_GREEN if change > 0 else _NEG if change < 0 else COL_MUTED
             self._text_mid(draw, cx, ty0 + 80, text, fonts["row_meta"], colour, align="center")
 
-        # the new plays
         ny = ty0 + stats_h + 14
         draw = ImageDraw.Draw(img)
         head = S["new"] + (f" · {data.get('new_count')}" if data.get("new_count") else "")

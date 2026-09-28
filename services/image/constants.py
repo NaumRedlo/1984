@@ -118,7 +118,6 @@ SANS_BOLD = os.path.join(FONT_DIR, "Nunito-ExtraBold.ttf")
 SANS_SEMI = os.path.join(FONT_DIR, "Nunito-Bold.ttf")
 SANS_REG = os.path.join(FONT_DIR, "Nunito-Regular.ttf")
 
-# figures: Nunito's digits are all one width, so columns of numbers still line up
 NUM_BOLD = os.path.join(FONT_DIR, "Nunito-ExtraBold.ttf")
 
 MPLUS_BOLD = os.path.join(FONT_DIR, "MPLUSRounded1c-Bold.ttf")

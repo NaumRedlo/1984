@@ -36,7 +36,6 @@ async def cmd_find(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
 
-    # osu! knows renamed players by their old names too; the chat only knows the name they linked
     osu_id, shown = None, query
     if osu_api_client:
         try:

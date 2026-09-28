@@ -63,8 +63,6 @@ def _runs(text: str, primary, fallback, cyrillic_fallback):
             runs.append((f, ch))
     return runs
 
-# Fonts drawn the careful way below: (letter-spacing, word space) in em, None keeping the font's
-# own space. Nunito needs neither, only the even gaps.
 _LOOSE_FAMILIES = {"Nunito": (0.0, None)}
 
 def _looseness(font) -> Optional[tuple[float, float]]:

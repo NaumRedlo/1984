@@ -245,7 +245,7 @@ class RecentCardMixin:
         htw = self._text_size(draw, head_txt, f_head)[0]
         icon_w = 32 if _hicon else 0
         hx = (W - (icon_w + htw)) // 2
-        head_cy = top + 14  # the icon, the title, the date and the mode badge share this middle
+        head_cy = top + 14
         if _hicon:
             img.paste(_hicon, (hx, int(round(head_cy - _hicon.height / 2))), _hicon)
             draw = ImageDraw.Draw(img)
@@ -773,7 +773,6 @@ def _details(ruleset: int, beatmap: dict, mods: list, adjusted: dict, key_count)
     od = float(beatmap.get("accuracy", 0) or 0)
     hp = float(beatmap.get("drain", 0) or 0)
     if ruleset == 1:
-        # the rate does not change what taiko shows as OD; HR and EZ do
         still = apply_mods(0, 0, od, hp, 0, 0, "".join(m for m in mods if m not in _RATE_MODS))
         return [("OD", "od", still["od"], 1), ("HP", "hp", still["hp"], 1)]
     if ruleset == 2:
@@ -881,7 +880,6 @@ async def build_recent_card_data(
     elif pp_result:
         modded_stars = pp_result["star_rating"]
     else:
-        # a converted map's own rating is its osu! one; ask for the mode it was played in
         served = await assay_service.beatmap(beatmap_id, mods=raw_mods or mods_joined,
                                              checksum=beatmap.get("checksum"), ruleset=ruleset)
         modded_stars = served["star_rating"] if served else stars

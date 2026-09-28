@@ -43,7 +43,6 @@ def _play(score_id, beatmap_id, *, passed=True, status="ranked"):
         "rank": "A" if passed else "F", "total_score": 500000, "mods": [],
         "statistics": {"great": 290, "ok": 10},
         "beatmap": {"id": beatmap_id, "difficulty_rating": 4.0, "status": status},
-        # osu! sends the compact set, which has no ranked_date
         "beatmapset": {"id": beatmap_id},
         "ended_at": "2026-09-01T12:00:00Z",
     }
