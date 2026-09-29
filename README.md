@@ -70,6 +70,13 @@ remove unused uploads after the render queue is empty. A person may have
 `RENDER_ORDERS_EACH` (2) jobs open at once, and a replay may be
 `RENDER_REPLAY_MOST` bytes (8 MB).
 
+A paired Dossier app whose owner has opted in may donate the replays it finds
+on the device to the engine's corpus through `POST /render/me/replay`. Each
+replay is checked for an osu! replay header, kept once under its MD5 in
+`DONATED_REPLAYS_DIR` (`data/donated-replays`) with a line in `index.tsv`
+naming who sent it, and refused once the folder holds
+`DONATED_REPLAYS_STORAGE_MOST` bytes (2 GiB).
+
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
 there is more than one proxy in front of it (a CDN, then Caddy), set

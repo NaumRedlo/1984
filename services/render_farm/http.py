@@ -7,8 +7,8 @@ from typing import Optional
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, invites, pairing
+from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
+from services.render_farm import community as gathered, donated, invites, pairing
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -645,6 +645,34 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         _friends_cache[owner.telegram_id] = listed
         return web.json_response({"friends": listed})
 
+    async def donate_replay(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        try:
+            path, _ = await _spool(request, RENDER_REPLAY_MOST, "donated-replay-")
+        except ValueError:
+            return web.json_response({"error": "too large", "most": RENDER_REPLAY_MOST}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        try:
+            with open(path, "rb") as got:
+                data = got.read()
+        finally:
+            os.unlink(path)
+        if not donated.looks_like_replay(data):
+            return web.json_response({"error": "not a replay"}, status=400)
+        try:
+            known = donated.keep(data, owner.telegram_id)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        if known is None:
+            return web.json_response({"error": "full"}, status=507)
+        return web.json_response({"ok": True, "known": known})
+
     async def send(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -705,6 +733,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),
+        web.post("/render/me/replay", donate_replay),
         web.post("/render/claim", claim),
         web.get("/render/job/{job_id}/replay", job_replay),
         web.get("/render/job/{job_id}/skin", job_skin),
