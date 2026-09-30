@@ -8,7 +8,7 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, donated, invites, pairing
+from services.render_farm import community as gathered, donated, invites, pairing, players
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -455,9 +455,18 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             )
             return [row[0] for row in found.all()]
 
+    async def _pinned(telegram_id: int) -> Optional[int]:
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            return await players.pinned_chat(session, telegram_id)
+
     async def _group_for(telegram_id: int, said: str) -> tuple[Optional[int], bool]:
         chat_id: Optional[int] = int(said) if said.lstrip("-").isdigit() else None
         if chat_id is None or chat_id > 0:
+            pinned = await _pinned(telegram_id)
+            if pinned is not None and await _member(pinned, telegram_id):
+                return pinned, True
             for group in await _groups_of(telegram_id):
                 if await _member(group, telegram_id):
                     return group, True
@@ -645,6 +654,72 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         _friends_cache[owner.telegram_id] = listed
         return web.json_response({"friends": listed})
 
+    async def every_player(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await players.everyone(session, owner.telegram_id, query=request.query.get("q", ""))
+        return web.json_response(body)
+
+    async def one_player(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = request.match_info.get("player_id", "")
+        if not said.isdigit():
+            return web.json_response({"error": "no one"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await players.one(session, int(said), owner.telegram_id)
+        if body is None:
+            return web.json_response({"error": "no one"}, status=404)
+        return web.json_response(body)
+
+    async def pin_read(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await players.pin_of(session, owner.telegram_id)
+        return web.json_response(body)
+
+    async def pin_write(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = str((await _json_object(request)).get("chat") or "")
+        if not said.lstrip("-").isdigit() or int(said) >= 0:
+            return web.json_response({"error": "no chat"}, status=400)
+        chat_id = int(said)
+        if not await _member(chat_id, owner.telegram_id):
+            return web.json_response({"error": "not your chat"}, status=403)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            verdict, body = await players.pin(session, owner.telegram_id, chat_id)
+        status = {players.PINNED: 200, players.TOO_SOON: 409, players.NOT_REGISTERED: 404, players.NOT_THERE: 403}[verdict]
+        if verdict != players.PINNED:
+            body = {**body, "error": verdict}
+        return web.json_response(body, status=status)
+
     async def donate_replay(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -734,6 +809,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/me/card", card),
         web.post("/render/send", send),
         web.post("/render/me/replay", donate_replay),
+        web.get("/render/players", every_player),
+        web.get("/render/players/{player_id}", one_player),
+        web.get("/render/me/pin", pin_read),
+        web.post("/render/me/pin", pin_write),
         web.post("/render/claim", claim),
         web.get("/render/job/{job_id}/replay", job_replay),
         web.get("/render/job/{job_id}/skin", job_skin),

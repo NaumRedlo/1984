@@ -118,6 +118,7 @@ def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: 
     return {
         "id": user.id,
         "osu_id": user.osu_user_id,
+        "player": getattr(user, "player_id", None),
         "name": user.osu_username,
         "country": (user.country or "").upper(),
         "pp": int(user.player_pp or 0),
