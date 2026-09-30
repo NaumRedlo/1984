@@ -10,5 +10,8 @@ from db.models.render_worker_token import RenderWorkerToken
 from db.models.oauth_pending import OAuthPending
 from db.models.track_snapshot import TrackSnapshot
 from db.models.user_mode_stats import UserModeStats
+from db.models.player import Player
+from db.models.chat_member import ChatMember
+import db.player_sync
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember"]

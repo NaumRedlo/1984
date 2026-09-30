@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Date, Float, Boolean, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, BigInteger, DateTime, Date, Float, Boolean, LargeBinary, Text, UniqueConstraint, ForeignKey
+from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from db.database import Base
 
@@ -12,6 +13,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     chat_id = Column(BigInteger, nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=True, index=True)
+    player = relationship("Player", lazy="noload")
     telegram_id = Column(BigInteger, nullable=False, index=True)
     osu_username = Column(String(255), nullable=False)
     osu_user_id = Column(Integer, nullable=True, index=True)
