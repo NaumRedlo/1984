@@ -77,6 +77,22 @@ replay is checked for an osu! replay header, kept once under its MD5 in
 naming who sent it, and refused once the folder holds
 `DONATED_REPLAYS_STORAGE_MOST` bytes (2 GiB).
 
+A video sent through `POST /render/send` is remembered by its Telegram
+`file_id`; the server keeps no video files. Its owner can pass it on to other
+players (`POST /render/videos/{id}/share`) who have Dossier paired and take
+videos: from people of a shared chat (the default), from everyone, or from
+nobody (`POST /render/me/accept`). `GET /render/videos/receivers` lists who would
+take one. The receiver's inbox (`GET /render/me/inbox`) names the sender, the
+play, the length and the size; `/render/inbox/{id}/video` streams the file from
+Telegram and removes the copy the local Bot API server made as soon as it has
+been passed on, `/thumb` serves Telegram's thumbnail, `/telegram` forwards the
+video to the receiver's chat with the bot, `/replay` returns the replay the
+sender attached (`PUT /render/videos/{id}/replay`, kept once under its MD5 in
+`SHARED_REPLAYS_DIR`, `data/shared-replays`, up to
+`SHARED_REPLAYS_STORAGE_MOST` bytes, 1 GiB) so the receiver's Dossier can draw
+the same video itself. One person may send 60 videos a day, 20 receivers at a
+time, and an inbox holds 100.
+
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
 there is more than one proxy in front of it (a CDN, then Caddy), set

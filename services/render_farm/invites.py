@@ -49,6 +49,9 @@ def known(token: str) -> bool:
 def owner(token: str) -> Optional[Owner]:
     return _owners.get(digest(token))
 
+def linked() -> set[int]:
+    return {owner.telegram_id for owner in _owners.values()}
+
 def loaded() -> int:
     return len(_good)
 

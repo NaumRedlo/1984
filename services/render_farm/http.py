@@ -1,3 +1,5 @@
+import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -7,8 +9,8 @@ from typing import Optional
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, donated, invites, pairing, players
+from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
+from services.render_farm import community as gathered, donated, invites, pairing, players, videos
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -120,6 +122,44 @@ async def _osu_friends(token: str) -> Optional[list]:
     except Exception as exc:
         logger.warning("cannot ask osu! for friends: %s", exc)
         return None
+
+FETCH_PATIENCE = 900
+THUMB_KEEP = 3600.0
+_thumb_cache = TTLCache(maxsize=200, ttl=THUMB_KEEP)
+_fetching: dict[str, asyncio.Lock] = {}
+_reading: dict[str, int] = {}
+
+def _local(path: str) -> bool:
+    return bool(path) and os.path.isabs(path) and os.path.isfile(path)
+
+async def _fetched(bot: Bot, file_id: str, key: str):
+    lock = _fetching.setdefault(key, asyncio.Lock())
+    async with lock:
+        file = await bot.get_file(file_id, request_timeout=FETCH_PATIENCE)
+        path = file.file_path or ""
+        if not _local(path):
+            return file, None
+        handle = open(path, "rb")
+        _reading[path] = _reading.get(path, 0) + 1
+        return file, handle
+
+async def _released(key: str, path: str, handle) -> None:
+    async with _fetching.setdefault(key, asyncio.Lock()):
+        handle.close()
+        left = _reading.get(path, 1) - 1
+        if left > 0:
+            _reading[path] = left
+            return
+        _reading.pop(path, None)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+async def _small(bot: Bot, file_id: str) -> bytes:
+    file = await bot.get_file(file_id)
+    buffer = await bot.download_file(file.file_path)
+    return buffer.read() if hasattr(buffer, "read") else bytes(buffer)
 
 def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
@@ -813,7 +853,237 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             except OSError:
                 pass
         logger.info("a video of %d bytes went to %s", written, where)
+        body = {"ok": True, "message_id": sent.message_id}
+        kind, media = videos.media_of(sent)
+        if media is not None:
+            from db.database import AsyncSessionFactory
+
+            try:
+                async with AsyncSessionFactory() as session:
+                    body["video"] = await videos.keep(session, owner.telegram_id, kind, media, meta)
+            except Exception as exc:
+                logger.warning("the video sent to %s was not remembered: %s", where, exc)
+        return web.json_response(body)
+
+    async def asking(request: web.Request):
+        bad = await guard(request)
+        if bad:
+            return None, bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return None, web.json_response({"error": "no one"}, status=404)
+        return owner, None
+
+    def numbered(request: web.Request, name: str) -> Optional[int]:
+        said = request.match_info.get(name, "")
+        return int(said) if said.isdigit() else None
+
+    async def video_receivers(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            people = await videos.receivers(session, owner.telegram_id, invites.linked())
+        if people is None:
+            return web.json_response({"error": "not registered"}, status=404)
+        return web.json_response({"people": people})
+
+    async def video_replay(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        video_id = numbered(request, "video")
+        if video_id is None:
+            return web.json_response({"error": "no video"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            if await videos.owned(session, owner.telegram_id, video_id) is None:
+                return web.json_response({"error": "no video"}, status=404)
+        try:
+            path, _ = await _spool(request, RENDER_REPLAY_MOST, "shared-replay-")
+        except ValueError:
+            return web.json_response({"error": "too large", "most": RENDER_REPLAY_MOST}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        try:
+            with open(path, "rb") as got:
+                data = got.read()
+        finally:
+            os.unlink(path)
+        if not donated.looks_like_replay(data):
+            return web.json_response({"error": "not a replay"}, status=400)
+        try:
+            known = donated.keep(data, owner.telegram_id, folder=SHARED_REPLAYS_DIR, most=SHARED_REPLAYS_STORAGE_MOST)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        if known is None:
+            return web.json_response({"error": "full"}, status=507)
+        async with AsyncSessionFactory() as session:
+            await videos.attach_replay(session, owner.telegram_id, video_id, hashlib.md5(data).hexdigest())
+        return web.json_response({"ok": True})
+
+    async def video_share(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        video_id = numbered(request, "video")
+        to = (await _json_object(request)).get("to")
+        if video_id is None or not isinstance(to, list):
+            return web.json_response({"error": "bad request"}, status=400)
+        chosen = [item for item in to if isinstance(item, int) and not isinstance(item, bool)]
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await videos.share(session, owner.telegram_id, video_id, chosen, invites.linked())
+        if body is None:
+            return web.json_response({"error": "no video"}, status=404)
+        return web.json_response(body)
+
+    async def inbox(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            return web.json_response(await videos.inbox(session, owner.telegram_id))
+
+    async def inbox_accept(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        said = (await _json_object(request)).get("from")
+        if said not in videos.ACCEPTS:
+            return web.json_response({"error": "bad request"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            kept = await videos.accept(session, owner.telegram_id, said)
+        if kept is None:
+            return web.json_response({"error": "not registered"}, status=404)
+        return web.json_response({"accept": kept})
+
+    async def taken(request: web.Request):
+        owner, bad = await asking(request)
+        if bad:
+            return None, bad
+        delivery_id = numbered(request, "delivery")
+        if delivery_id is None:
+            return None, web.json_response({"error": "no video"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            found = await videos.received(session, owner.telegram_id, delivery_id)
+        if found is None:
+            return None, web.json_response({"error": "no video"}, status=404)
+        return (owner, *found), None
+
+    async def inbox_thumb(request: web.Request) -> web.Response:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        _, _, video, _ = found
+        if not video.thumb_id or _bot is None:
+            return web.json_response({"error": "no picture"}, status=404)
+        data = _thumb_cache.get(video.id)
+        if data is None:
+            try:
+                data = await _small(_bot, video.thumb_id)
+            except Exception as exc:
+                logger.info("no picture for video %s: %s", video.id, exc)
+                return web.json_response({"error": "no picture"}, status=404)
+            _thumb_cache[video.id] = data
+        return web.Response(body=data, content_type="image/jpeg")
+
+    async def inbox_video(request: web.Request) -> web.StreamResponse:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        _, _, video, _ = found
+        if _bot is None:
+            return web.json_response({"error": "bot asleep"}, status=503)
+        key = video.file_unique_id or video.file_id
+        try:
+            file, handle = await _fetched(_bot, video.file_id, key)
+        except Exception as exc:
+            logger.warning("telegram did not give video %s: %s", video.id, exc)
+            return web.json_response({"error": "telegram did not answer"}, status=502)
+        path = file.file_path or ""
+        size = os.fstat(handle.fileno()).st_size if handle is not None else (file.file_size or video.size or 0)
+        reply = web.StreamResponse(headers={"Content-Type": "video/mp4"})
+        if size:
+            reply.content_length = int(size)
+        try:
+            await reply.prepare(request)
+            if handle is not None:
+                while True:
+                    chunk = await asyncio.to_thread(handle.read, _CHUNK)
+                    if not chunk:
+                        break
+                    await reply.write(chunk)
+            else:
+                url = _bot.session.api.file_url(_bot.token, path)
+                async for chunk in _bot.session.stream_content(url, timeout=FETCH_PATIENCE, chunk_size=_CHUNK):
+                    await reply.write(chunk)
+            await reply.write_eof()
+        except (ConnectionError, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            logger.warning("video %s stopped half way: %s", video.id, exc)
+        finally:
+            if handle is not None:
+                await asyncio.shield(_released(key, path, handle))
+        return reply
+
+    async def inbox_replay(request: web.Request) -> web.StreamResponse:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        _, _, video, _ = found
+        path = os.path.join(SHARED_REPLAYS_DIR, f"{video.replay_hash}.osr") if video.replay_hash else ""
+        if not path or not os.path.isfile(path):
+            return web.json_response({"error": "no replay"}, status=404)
+        return web.FileResponse(path)
+
+    async def inbox_telegram(request: web.Request) -> web.Response:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        owner, _, video, sender = found
+        if _bot is None:
+            return web.json_response({"error": "bot asleep"}, status=503)
+        send_as = {"animation": _bot.send_animation, "document": _bot.send_document}.get(video.kind or "", _bot.send_video)
+        try:
+            sent = await send_as(owner.telegram_id, video.file_id, caption=videos.caption(video, sender) or None)
+        except Exception as exc:
+            logger.warning("passing video %s to %s failed: %s", video.id, owner.telegram_id, exc)
+            return web.json_response({"error": str(exc)}, status=502)
         return web.json_response({"ok": True, "message_id": sent.message_id})
+
+    async def inbox_seen(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        delivery_id = numbered(request, "delivery")
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            done = delivery_id is not None and await videos.seen(session, owner.telegram_id, delivery_id)
+        return web.json_response({"ok": done}, status=200 if done else 404)
+
+    async def inbox_drop(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        delivery_id = numbered(request, "delivery")
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            done = delivery_id is not None and await videos.drop(session, owner.telegram_id, delivery_id)
+        return web.json_response({"ok": done}, status=200 if done else 404)
 
     return [
         web.post("/render/pair", pair),
@@ -832,6 +1102,17 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),
+        web.get("/render/videos/receivers", video_receivers),
+        web.put("/render/videos/{video}/replay", video_replay),
+        web.post("/render/videos/{video}/share", video_share),
+        web.get("/render/me/inbox", inbox),
+        web.post("/render/me/accept", inbox_accept),
+        web.get("/render/inbox/{delivery}/thumb", inbox_thumb),
+        web.get("/render/inbox/{delivery}/video", inbox_video),
+        web.get("/render/inbox/{delivery}/replay", inbox_replay),
+        web.post("/render/inbox/{delivery}/telegram", inbox_telegram),
+        web.post("/render/inbox/{delivery}/seen", inbox_seen),
+        web.delete("/render/inbox/{delivery}", inbox_drop),
         web.post("/render/me/replay", donate_replay),
         web.get("/render/players", every_player),
         web.get("/render/players/{player_id}", one_player),

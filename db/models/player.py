@@ -50,5 +50,7 @@ class Player(Base):
     pinned_chat_id = Column(BigInteger, nullable=True)
     pinned_at = Column(DateTime, nullable=True)
 
+    accept_videos = Column(String(16), nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

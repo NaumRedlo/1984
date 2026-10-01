@@ -40,6 +40,8 @@ RENDER_GIVE_UP = float(os.getenv("RENDER_GIVE_UP", "900"))
 RENDER_REPLAY_MOST = int(os.getenv("RENDER_REPLAY_MOST", str(8 * 1024 * 1024)))
 DONATED_REPLAYS_DIR = os.getenv("DONATED_REPLAYS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "donated-replays"))
 DONATED_REPLAYS_STORAGE_MOST = int(os.getenv("DONATED_REPLAYS_STORAGE_MOST", str(2 * 1024 * 1024 * 1024)))
+SHARED_REPLAYS_DIR = os.getenv("SHARED_REPLAYS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "shared-replays"))
+SHARED_REPLAYS_STORAGE_MOST = int(os.getenv("SHARED_REPLAYS_STORAGE_MOST", str(1024 * 1024 * 1024)))
 RENDER_ORDERS_EACH = int(os.getenv("RENDER_ORDERS_EACH", "2"))
 
 _raw_proxy_hops = os.getenv("TRUSTED_PROXY_HOPS", "1").strip()
