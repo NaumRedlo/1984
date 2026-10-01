@@ -31,6 +31,8 @@ class Pairing(NamedTuple):
     expires_at: float
     linked_to: Optional[int] = None
     linked_name: str = ""
+    linked_player: Optional[int] = None
+    wants_telegram_for: Optional[int] = None
 
 class Collected(NamedTuple):
     status: str
@@ -38,6 +40,7 @@ class Collected(NamedTuple):
     who: str = ""
 
 _pending: dict[str, Pairing] = {}
+_osu_states: dict[str, tuple[str, float]] = {}
 _starts: dict[str, list[float]] = {}
 _misses: dict[str, list[float]] = {}
 
@@ -70,16 +73,43 @@ def describe(code: str) -> Optional[Pairing]:
     _sweep()
     return _pending.get(invites.tidy(code))
 
-def approve(code: str, telegram_id: int, name: str = "") -> Optional[Pairing]:
+def approve(code: str, telegram_id: int, name: str = "", player_id: Optional[int] = None) -> Optional[Pairing]:
     _sweep()
     code = invites.tidy(code)
     found = _pending.get(code)
-    if found is None or found.linked_to is not None:
+    if found is None or found.linked_to is not None or found.wants_telegram_for is not None:
         return None
-    linked = found._replace(linked_to=telegram_id, linked_name=name)
+    linked = found._replace(linked_to=telegram_id, linked_name=name, linked_player=player_id)
     _pending[code] = linked
-    logger.info("pairing of %r approved by %s", found.machine.name, telegram_id)
+    logger.info("pairing of %r approved by %s", found.machine.name, telegram_id or f"player {player_id}")
     return linked
+
+def osu_state(code: str) -> Optional[str]:
+    _sweep()
+    code = invites.tidy(code)
+    found = _pending.get(code)
+    if found is None or found.linked_to is not None or found.wants_telegram_for is not None:
+        return None
+    state = "app." + secrets.token_urlsafe(32)
+    _osu_states[state] = (code, found.expires_at)
+    return state
+
+def take_osu_state(state: str) -> Optional[str]:
+    _sweep()
+    found = _osu_states.pop(state, None)
+    return found[0] if found is not None else None
+
+def ask_telegram(player_id: int, name: str, address: str) -> Optional[str]:
+    _sweep()
+    if not _within(_starts, address, MOST_STARTS, STARTS_WINDOW) or len(_pending) >= MOST_PENDING:
+        return None
+    code = "".join(secrets.choice(invites.ALPHABET) for _ in range(invites.CODE_LENGTH))
+    _pending[code] = Pairing(Machine(name), time.monotonic() + GOOD_FOR, wants_telegram_for=player_id)
+    return code
+
+def answered(code: str) -> Optional[Pairing]:
+    _sweep()
+    return _pending.pop(invites.tidy(code), None)
 
 def decline(code: str) -> bool:
     _sweep()
@@ -97,10 +127,12 @@ async def collect(code: str, address: str) -> Collected:
             logger.warning("too many unknown pairing codes from %s — refusing for now", address)
             return Collected(THROTTLED)
         return Collected(GONE)
+    if found.wants_telegram_for is not None:
+        return Collected(GONE)
     if found.linked_to is None:
         return Collected(WAITING)
     del _pending[code]
-    invite = invites.Invite(found.linked_to, found.linked_name, found.expires_at)
+    invite = invites.Invite(found.linked_to, found.linked_name, found.expires_at, found.linked_player)
     token = await invites.issue(invite, found.machine.name)
     return Collected(LINKED, token, found.linked_name)
 
@@ -113,6 +145,9 @@ def _sweep(*, now: Optional[float] = None) -> None:
     for code, pairing in list(_pending.items()):
         if pairing.expires_at <= now:
             del _pending[code]
+    for state, (_, expires_at) in list(_osu_states.items()):
+        if expires_at <= now:
+            del _osu_states[state]
     for book, window in ((_starts, STARTS_WINDOW), (_misses, MISSES_WINDOW)):
         for key, times in list(book.items()):
             if not times or now - times[-1] >= window:

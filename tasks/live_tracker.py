@@ -47,9 +47,17 @@ class LiveTracker:
     async def known(self) -> list[int]:
         from db.database import AsyncSessionFactory
 
+        from db.models.player import Player
+        from services.render_farm import invites
+
         async with AsyncSessionFactory() as session:
             found = await session.execute(select(User.osu_user_id).where(User.osu_user_id.isnot(None), User.chat_id < 0).distinct())
-            return [row[0] for row in found.all()]
+            known = [row[0] for row in found.all()]
+            signed = invites.linked_players()
+            if signed:
+                alone = await session.execute(select(Player.osu_user_id).where(Player.id.in_(signed)))
+                known += [row[0] for row in alone.all() if row[0] not in known]
+            return known
 
     async def catch(self, osu_user_id: int) -> int:
         from bot.handlers.profile.recent import _play_from_score
@@ -63,6 +71,10 @@ class LiveTracker:
         synced = 0
         async with AsyncSessionFactory() as session:
             users = (await session.execute(select(User).where(User.osu_user_id == osu_user_id))).scalars().all()
+            if not users:
+                from db.models.player import Player
+
+                users = (await session.execute(select(Player).where(Player.osu_user_id == osu_user_id))).scalars().all()
             plays = [_play_from_score(score) for score in scores]
             done: set[int] = set()
             for user in users:

@@ -61,6 +61,9 @@ async def generate_oauth_url(telegram_id: int) -> str:
         await _sweep_expired_states(session, now)
         session.add(OAuthPending(state=state, telegram_id=telegram_id, issued_at=now))
         await session.commit()
+    return authorize_url(state)
+
+def authorize_url(state: str) -> str:
     return (
         f"https://osu.ppy.sh/oauth/authorize"
         f"?client_id={OSU_CLIENT_ID}"
@@ -133,6 +136,75 @@ async def _notify_telegram(telegram_id: int, osu_username: str,
     except Exception as e:
         logger.error(f"Telegram notification failed: {e}", exc_info=True)
 
+APP_STATE = "app."
+
+def _page_language(request: web.Request) -> str:
+    return "ru" if request.headers.get("Accept-Language", "").lower().startswith("ru") else "en"
+
+async def _keep_player_token(session, player, token_data: dict) -> None:
+    now = datetime.now(timezone.utc)
+    access = encrypt_token(token_data["access_token"])
+    refresh = encrypt_token(token_data["refresh_token"]) if token_data.get("refresh_token") else None
+    expiry = now + timedelta(seconds=token_data.get("expires_in", 86400))
+    mine = OAuthToken.telegram_id == player.telegram_id if player.telegram_id else OAuthToken.player_id == player.id
+    existing = (await session.execute(select(OAuthToken).where(mine))).scalar_one_or_none()
+    if existing is not None:
+        existing.access_token_enc = access
+        existing.refresh_token_enc = refresh
+        existing.token_expiry = expiry
+        existing.scopes = OSU_OAUTH_SCOPES
+        existing.updated_at = now
+        return
+    session.add(OAuthToken(
+        telegram_id=player.telegram_id,
+        player_id=None if player.telegram_id else player.id,
+        access_token_enc=access,
+        refresh_token_enc=refresh,
+        token_expiry=expiry,
+        scopes=OSU_OAUTH_SCOPES,
+    ))
+
+async def _first_refresh(player_id: int) -> None:
+    from db.models.player import Player
+    from services.refresh import refresh_user
+
+    api = render_farm_http._osu
+    if api is None:
+        return
+    async with get_db_session() as session:
+        player = await session.get(Player, player_id)
+        rows = (await session.execute(select(User.id).where(User.player_id == player_id).limit(1))).first()
+        if player is None or rows is not None:
+            return
+        if await refresh_user(player, session, api, mode="full"):
+            await session.commit()
+
+async def _sign_in_app(request: web.Request, code: str, state: str) -> web.Response:
+    from services.render_farm import pairing, players
+
+    lang = _page_language(request)
+    pairing_code = pairing.take_osu_state(state)
+    if pairing_code is None:
+        return web.Response(text=t("oauth.app_expired", lang), content_type="text/html", status=400)
+    token_data = await _exchange_code(code)
+    if not token_data:
+        return web.Response(text=t("oauth.token_error", lang), content_type="text/html", status=500)
+    osu_user = await _get_oauth_user(token_data["access_token"])
+    if not osu_user:
+        return web.Response(text=t("oauth.user_fetch_failed", lang), content_type="text/html", status=500)
+    async with get_db_session() as session:
+        player = await players.signed_in(session, osu_user)
+        if player is None:
+            return web.Response(text=t("oauth.user_fetch_failed", lang), content_type="text/html", status=500)
+        await _keep_player_token(session, player, token_data)
+        await session.commit()
+        player_id, telegram_id, name = player.id, player.telegram_id, player.osu_username
+    if pairing.approve(pairing_code, telegram_id or 0, name, player_id=player_id) is None:
+        return web.Response(text=t("oauth.app_expired", lang), content_type="text/html", status=400)
+    logger.info(f"Dossier signed in through osu!: {name} (player {player_id})")
+    spawn(_first_refresh(player_id), name=f"app_first_refresh_{player_id}")
+    return web.Response(text=t("oauth.app_signed_in", lang, username=escape_html(name)), content_type="text/html")
+
 async def handle_callback(request: web.Request) -> web.Response:
     code = request.query.get("code")
     state = request.query.get("state")
@@ -151,6 +223,9 @@ async def handle_callback(request: web.Request) -> web.Response:
             content_type="text/html",
             status=400,
         )
+
+    if state.startswith(APP_STATE):
+        return await _sign_in_app(request, code, state)
 
     entry = await _take_state(state)
     if entry is None:

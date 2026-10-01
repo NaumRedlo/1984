@@ -94,16 +94,21 @@ FRIENDS_URL = "https://osu.ppy.sh/api/v2/friends"
 FRIENDS_KEEP = 90.0
 _friends_cache = TTLCache(maxsize=500, ttl=FRIENDS_KEEP)
 
-async def _scopes(telegram_id: int) -> Optional[str]:
-    from sqlalchemy import select
+async def _scopes(owner: invites.Owner) -> Optional[str]:
+    from sqlalchemy import or_, select
 
     from db.database import AsyncSessionFactory
     from db.models.oauth_token import OAuthToken
 
+    mine = []
+    if owner.telegram_id:
+        mine.append(OAuthToken.telegram_id == owner.telegram_id)
+    if owner.player_id is not None:
+        mine.append(OAuthToken.player_id == owner.player_id)
+    if not mine:
+        return None
     async with AsyncSessionFactory() as session:
-        row = (await session.execute(
-            select(OAuthToken.scopes).where(OAuthToken.telegram_id == telegram_id)
-        )).first()
+        row = (await session.execute(select(OAuthToken.scopes).where(or_(*mine)))).first()
     if row is None:
         return None
     return row[0] or ""
@@ -160,6 +165,24 @@ async def _small(bot: Bot, file_id: str) -> bytes:
     file = await bot.get_file(file_id)
     buffer = await bot.download_file(file.file_path)
     return buffer.read() if hasattr(buffer, "read") else bytes(buffer)
+
+async def _who(request: web.Request) -> Optional[invites.Owner]:
+    base = invites.owner(_token(request))
+    if base is None or base.player_id is None:
+        return base
+    from db.database import AsyncSessionFactory
+    from db.models.player import Player
+
+    async with AsyncSessionFactory() as session:
+        player = await session.get(Player, base.player_id)
+    if player is None:
+        return None
+    return invites.Owner(int(player.telegram_id or 0), player.osu_username or base.name, player.id)
+
+def _osu_sign_in() -> bool:
+    from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
+
+    return bool(OSU_CLIENT_ID and OSU_CLIENT_SECRET)
 
 def _worker(request: web.Request) -> str:
     return request.headers.get("X-Render-Worker", "").strip()
@@ -356,7 +379,32 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             "code": invites.pretty(code),
             "link": pairing.link(code),
             "expires_in": int(pairing.GOOD_FOR),
+            "osu": _osu_sign_in(),
         })
+
+    async def pair_osu(request: web.Request) -> web.Response:
+        if not _osu_sign_in():
+            return web.json_response({"error": "no osu! sign-in"}, status=404)
+        state = pairing.osu_state(request.match_info["code"])
+        if state is None:
+            return web.json_response({"error": "gone"}, status=404)
+        from services.oauth.server import authorize_url
+
+        raise web.HTTPFound(authorize_url(state))
+
+    async def link_telegram(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None or owner.player_id is None:
+            return web.json_response({"error": "no one"}, status=404)
+        if owner.telegram_id:
+            return web.json_response({"error": "linked"}, status=409)
+        code = pairing.ask_telegram(owner.player_id, owner.name, _address(request))
+        if code is None:
+            return web.json_response({"error": "too many"}, status=429)
+        return web.json_response({"code": invites.pretty(code), "link": pairing.link(code), "expires_in": int(pairing.GOOD_FOR)})
 
     async def pair_status(request: web.Request) -> web.Response:
         got = await pairing.collect(request.match_info["code"], _address(request))
@@ -374,11 +422,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        body = {"telegram_id": owner.telegram_id, "name": owner.name, "username": "", "avatar": False}
-        if _bot is not None:
+        body = {"telegram_id": owner.telegram_id, "name": owner.name, "username": "", "avatar": False,
+                "telegram": bool(owner.telegram_id), "player": owner.player_id}
+        if _bot is not None and owner.telegram_id:
             try:
                 chat = await _bot.get_chat(owner.telegram_id)
                 body["username"] = chat.username or ""
@@ -392,8 +441,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
-        if owner is None or _bot is None:
+        owner = await _who(request)
+        if owner is None or _bot is None or not owner.telegram_id:
             return web.json_response({"error": "no one"}, status=404)
         try:
             chat = await _bot.get_chat(owner.telegram_id)
@@ -411,9 +460,11 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
+        if not owner.telegram_id:
+            return web.json_response([])
         rows = [{"id": owner.telegram_id, "title": owner.name or "", "private": True, "photo": True}]
         seen = {owner.telegram_id}
         try:
@@ -462,7 +513,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None or _bot is None:
             return web.json_response({"error": "no one"}, status=404)
         try:
@@ -517,7 +568,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         chat_id, allowed = await _group_for(owner.telegram_id, request.query.get("chat", ""))
@@ -531,6 +582,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 "chat": None, "week": 0, "people": [], "live": [], "happened": [], "titles": gathered.titles_catalogue(), "at": None,
             }
             body["me"] = await gathered.own(session, owner.telegram_id, chat_id)
+            if body["me"] is None and owner.player_id is not None:
+                body["me"] = await players.one(session, owner.player_id, owner.telegram_id, me=owner.player_id)
         body["group"] = ""
         body["photo"] = False
         if chat_id is not None and _bot is not None:
@@ -546,7 +599,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         said = request.match_info["beatmap"]
@@ -569,7 +622,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         chat_said, user_said = request.query.get("chat", ""), request.query.get("id", "")
@@ -591,7 +644,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         if request.content_length is not None and request.content_length > gathered.APP_PROFILE_MOST:
@@ -607,7 +660,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
 
         async with AsyncSessionFactory() as session:
             try:
-                kept = await gathered.keep_card(session, owner.telegram_id, card)
+                kept = await gathered.keep_card(session, owner.telegram_id, card, player_id=owner.player_id)
             except ValueError:
                 return web.json_response({"error": "too large"}, status=413)
         return web.json_response({"kept": kept})
@@ -616,7 +669,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         if _osu is None:
@@ -652,7 +705,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         from db.database import AsyncSessionFactory
@@ -660,6 +713,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
 
         async with AsyncSessionFactory() as session:
             user = await gathered.chosen(session, owner.telegram_id)
+            if user is None and owner.player_id is not None:
+                user = await videos.player_of(session, owner)
         if user is None or not user.osu_user_id:
             return web.json_response({"error": "not registered"}, status=404)
         heard = live_tracker.nudge(int(user.osu_user_id))
@@ -669,7 +724,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         said = await _json_object(request)
@@ -681,7 +736,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            verdict = await gathered.wear(session, owner.telegram_id, chat_id, code)
+            verdict = await gathered.wear(session, owner.telegram_id, chat_id, code, player_id=owner.player_id)
         if verdict == gathered.NOT_REGISTERED:
             return web.json_response({"error": "not registered"}, status=404)
         if verdict == gathered.NOT_UNLOCKED:
@@ -694,47 +749,49 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        kept = _friends_cache.get(owner.telegram_id)
+        friends_key = owner.telegram_id or ("player", owner.player_id)
+        kept = _friends_cache.get(friends_key)
         if kept is not None:
             return web.json_response({"friends": kept})
-        scopes = await _scopes(owner.telegram_id)
+        scopes = await _scopes(owner)
         if scopes is None:
             return web.json_response({"need": "link"}, status=409)
         if "friends.read" not in scopes.split():
             return web.json_response({"need": "friends"}, status=409)
-        from services.oauth.token_manager import get_valid_token
+        from services.oauth.token_manager import token_of
 
-        token = await get_valid_token(owner.telegram_id)
+        token = await token_of(owner)
         if not token:
             return web.json_response({"need": "link"}, status=409)
         raw = await _osu_friends(token)
         if raw is None:
             return web.json_response({"error": "osu! did not answer"}, status=502)
         listed = gathered.friends_from(raw)
-        _friends_cache[owner.telegram_id] = listed
+        _friends_cache[friends_key] = listed
         return web.json_response({"friends": listed})
 
     async def every_player(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await players.everyone(session, owner.telegram_id, query=request.query.get("q", ""))
+            body = await players.everyone(session, owner.telegram_id, query=request.query.get("q", ""),
+                                          signed=invites.linked_players(), me=owner.player_id)
         return web.json_response(body)
 
     async def one_player(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         said = request.match_info.get("player_id", "")
@@ -743,7 +800,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await players.one(session, int(said), owner.telegram_id)
+            body = await players.one(session, int(said), owner.telegram_id, signed=invites.linked_players(), me=owner.player_id)
         if body is None:
             return web.json_response({"error": "no one"}, status=404)
         return web.json_response(body)
@@ -752,20 +809,20 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await players.pin_of(session, owner.telegram_id)
+            body = await players.pin_of(session, owner)
         return web.json_response(body)
 
     async def pin_write(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         said = str((await _json_object(request)).get("chat") or "")
@@ -777,7 +834,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            verdict, body = await players.pin(session, owner.telegram_id, chat_id)
+            verdict, body = await players.pin(session, owner, chat_id)
         status = {players.PINNED: 200, players.TOO_SOON: 409, players.NOT_REGISTERED: 404, players.NOT_THERE: 403}[verdict]
         if verdict != players.PINNED:
             body = {**body, "error": verdict}
@@ -787,7 +844,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         try:
@@ -815,11 +872,13 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
         if _bot is None:
             return web.json_response({"error": "bot asleep"}, status=503)
+        if not owner.telegram_id:
+            return web.json_response({"error": "no telegram"}, status=409)
         try:
             path, written = await _spool(request, _max_send_bytes(), "render-send-")
         except ValueError:
@@ -869,7 +928,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return None, bad
-        owner = invites.owner(_token(request))
+        owner = await _who(request)
         if owner is None:
             return None, web.json_response({"error": "no one"}, status=404)
         return owner, None
@@ -885,7 +944,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            people = await videos.receivers(session, owner.telegram_id, invites.linked())
+            people = await videos.receivers(session, owner, invites.linked(), invites.linked_players())
         if people is None:
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response({"people": people})
@@ -937,7 +996,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await videos.share(session, owner.telegram_id, video_id, chosen, invites.linked())
+            body = await videos.share(session, owner.telegram_id, video_id, chosen, invites.linked(), invites.linked_players())
         if body is None:
             return web.json_response({"error": "no video"}, status=404)
         return web.json_response(body)
@@ -949,7 +1008,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            return web.json_response(await videos.inbox(session, owner.telegram_id))
+            return web.json_response(await videos.inbox(session, owner))
 
     async def inbox_accept(request: web.Request) -> web.Response:
         owner, bad = await asking(request)
@@ -961,7 +1020,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            kept = await videos.accept(session, owner.telegram_id, said)
+            kept = await videos.accept(session, owner, said)
         if kept is None:
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response({"accept": kept})
@@ -976,7 +1035,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            found = await videos.received(session, owner.telegram_id, delivery_id)
+            found = await videos.received(session, owner, delivery_id)
         if found is None:
             return None, web.json_response({"error": "no video"}, status=404)
         return (owner, *found), None
@@ -1055,6 +1114,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         owner, _, video, sender = found
         if _bot is None:
             return web.json_response({"error": "bot asleep"}, status=503)
+        if not owner.telegram_id:
+            return web.json_response({"error": "no telegram"}, status=409)
         send_as = {"animation": _bot.send_animation, "document": _bot.send_document}.get(video.kind or "", _bot.send_video)
         try:
             sent = await send_as(owner.telegram_id, video.file_id, caption=videos.caption(video, sender) or None)
@@ -1071,7 +1132,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            done = delivery_id is not None and await videos.seen(session, owner.telegram_id, delivery_id)
+            done = delivery_id is not None and await videos.seen(session, owner, delivery_id)
         return web.json_response({"ok": done}, status=200 if done else 404)
 
     async def inbox_drop(request: web.Request) -> web.Response:
@@ -1082,7 +1143,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            done = delivery_id is not None and await videos.drop(session, owner.telegram_id, delivery_id)
+            done = delivery_id is not None and await videos.drop(session, owner, delivery_id)
         return web.json_response({"ok": done}, status=200 if done else 404)
 
     async def replays_state(request: web.Request) -> web.Response:
@@ -1092,7 +1153,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await replays.state(session, owner.telegram_id)
+            body = await replays.state(session, owner)
         if body is None:
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response(body)
@@ -1107,7 +1168,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await replays.switch(session, owner.telegram_id, on)
+            body = await replays.switch(session, owner, on)
         if body is None:
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response(body)
@@ -1131,7 +1192,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
 
         try:
             async with AsyncSessionFactory() as session:
-                verdict = await replays.keep(session, owner.telegram_id, data, _meta(request), osu=_osu)
+                verdict = await replays.keep(session, owner, data, _meta(request), osu=_osu)
         except OSError as exc:
             return web.json_response({"error": str(exc)}, status=500)
         status = {
@@ -1150,7 +1211,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await replays.listed(session, owner.telegram_id, scope)
+            body = await replays.listed(session, owner, scope)
         if body is None:
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response(body)
@@ -1165,7 +1226,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            allowed = await replays.readable(session, owner.telegram_id, said)
+            allowed = await replays.readable(session, owner, said)
         path = replays.path_of(said)
         if not allowed or not os.path.isfile(path):
             return web.json_response({"error": "no replay"}, status=404)
@@ -1174,6 +1235,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
     return [
         web.post("/render/pair", pair),
         web.get("/render/pair/{code}", pair_status),
+        web.get("/render/pair/{code}/osu", pair_osu),
+        web.post("/render/me/telegram", link_telegram),
         web.get("/render/hello", hello),
         web.get("/render/me", me),
         web.get("/render/me/avatar", me_avatar),

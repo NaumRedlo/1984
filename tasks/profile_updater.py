@@ -59,6 +59,37 @@ class ProfileUpdater:
             due = [row[0] for row in result.fetchall() if needs_stats_sweep(row[1])]
         return due[:self.SWEEP_BATCH_LIMIT]
 
+    async def get_stale_player_ids(self) -> list[int]:
+        from db.models.player import Player
+        from services.render_farm import invites
+
+        signed = invites.linked_players()
+        if not signed:
+            return []
+        async with AsyncSessionFactory() as session:
+            with_rows = {row[0] for row in (await session.execute(
+                select(User.player_id).where(User.player_id.isnot(None)).distinct()
+            )).all()}
+            found = await session.execute(select(Player.id, Player.last_full_update).where(Player.id.in_(signed)))
+            return [row[0] for row in found.all() if row[0] not in with_rows and needs_background_refresh(row[1])]
+
+    async def _update_single_player_task(self, player_id: int):
+        from db.models.player import Player
+
+        async with self.semaphore:
+            async with AsyncSessionFactory() as session:
+                try:
+                    player = await session.get(Player, player_id)
+                    if not player:
+                        return "gone"
+                    if await refresh_user(player, session, self.api_client, mode="background_full"):
+                        await session.commit()
+                        return "updated"
+                    return "failed"
+                except Exception as e:
+                    logger.error(f"Error in background task for player_id {player_id}: {e}")
+                    return "failed"
+
     async def _sweep_single_user_task(self, user_id: int):
         async with self.semaphore:
             async with AsyncSessionFactory() as session:
@@ -104,6 +135,15 @@ class ProfileUpdater:
                     tasks = [self._update_single_user_task(uid) for uid in stale_ids]
                     results = await asyncio.gather(*tasks, return_exceptions=True)
                     _log_round("Background update", results, started)
+
+                player_ids = await self.get_stale_player_ids()
+                if player_ids:
+                    started = time.monotonic()
+                    results = await asyncio.gather(
+                        *(self._update_single_player_task(pid) for pid in player_ids),
+                        return_exceptions=True,
+                    )
+                    _log_round("App players update", results, started)
 
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=self.TICK_SECONDS)

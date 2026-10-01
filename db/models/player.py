@@ -89,6 +89,9 @@ class Player(Base):
     app_profile_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
 
+    last_api_update = Column(DateTime, nullable=True)
+    last_full_update = Column(DateTime, nullable=True)
+
     pinned_chat_id = Column(BigInteger, nullable=True)
     pinned_at = Column(DateTime, nullable=True)
 
@@ -96,3 +99,9 @@ class Player(Base):
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    chat_id = None
+
+    @property
+    def player_id(self):
+        return self.id

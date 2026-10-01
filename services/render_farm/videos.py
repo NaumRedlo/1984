@@ -71,7 +71,13 @@ def media_of(sent: Any) -> tuple[Optional[str], Any]:
             return kind, media
     return None, None
 
-async def player_of(session, telegram_id: int) -> Optional[Player]:
+async def player_of(session, who) -> Optional[Player]:
+    player_id = getattr(who, "player_id", None)
+    if player_id is not None:
+        return await session.get(Player, player_id)
+    telegram_id = getattr(who, "telegram_id", who)
+    if not telegram_id:
+        return None
     return (await session.execute(select(Player).where(Player.telegram_id == telegram_id))).scalar_one_or_none()
 
 async def keep(session, owner: int, kind: str, media: Any, meta: dict) -> int:
@@ -126,28 +132,32 @@ def _face(player: Player) -> dict[str, Any]:
         "avatar": player.avatar_url or f"https://a.ppy.sh/{player.osu_user_id}",
     }
 
-async def receivers(session, telegram_id: int, linked: Iterable[int]) -> Optional[list[dict[str, Any]]]:
-    me = await player_of(session, telegram_id)
+def has_app(player: Player, linked: Iterable[int], signed: Iterable[int] = ()) -> bool:
+    return (player.telegram_id is not None and player.telegram_id in linked) or player.id in signed
+
+async def receivers(session, who, linked: Iterable[int], signed: Iterable[int] = ()) -> Optional[list[dict[str, Any]]]:
+    me = await player_of(session, who)
     if me is None:
         return None
-    here = set(linked)
+    here, known = set(linked), set(signed)
     near = await mates(session, me.id)
     found = []
-    for player in (await session.execute(select(Player).where(Player.id != me.id, Player.telegram_id.isnot(None)))).scalars().all():
+    for player in (await session.execute(select(Player).where(Player.id != me.id))).scalars().all():
         shared = player.id in near
-        if player.telegram_id not in here or not lets(accept_of(player), shared):
+        if not has_app(player, here, known) or not lets(accept_of(player), shared):
             continue
         found.append({**_face(player), "shared": shared})
     found.sort(key=lambda face: (not face["shared"], face["name"].lower()))
     return found
 
-async def share(session, telegram_id: int, video_id: int, to: list[int], linked: Iterable[int], *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+async def share(session, telegram_id: int, video_id: int, to: list[int], linked: Iterable[int], signed: Iterable[int] = (), *,
+                now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     moment = naive(now) or utcnow()
     me = await player_of(session, telegram_id)
     video = await owned(session, telegram_id, video_id)
     if me is None or video is None:
         return None
-    here = set(linked)
+    here, known = set(linked), set(signed)
     near = await mates(session, me.id)
     today = (await session.execute(
         select(func.count(VideoDelivery.id)).where(VideoDelivery.sender_id == me.id, VideoDelivery.sent_at >= moment - timedelta(days=1))
@@ -161,7 +171,7 @@ async def share(session, telegram_id: int, video_id: int, to: list[int], linked:
             why = NO_ONE
         elif player.id == me.id:
             why = YOURSELF
-        elif player.telegram_id not in here or not lets(accept_of(player), player.id in near):
+        elif not has_app(player, here, known) or not lets(accept_of(player), player.id in near):
             why = CLOSED
         if why is None:
             already = (await session.execute(
@@ -214,8 +224,8 @@ def _row(delivery: VideoDelivery, video: SharedVideo, sender: Optional[Player]) 
         "seen": delivery.seen_at is not None,
     }
 
-async def inbox(session, telegram_id: int, *, now: Optional[datetime] = None) -> dict[str, Any]:
-    me = await player_of(session, telegram_id)
+async def inbox(session, who, *, now: Optional[datetime] = None) -> dict[str, Any]:
+    me = await player_of(session, who)
     rows: list[dict[str, Any]] = []
     if me is not None:
         found = (await session.execute(
@@ -237,16 +247,16 @@ async def inbox(session, telegram_id: int, *, now: Optional[datetime] = None) ->
         "at": stamp(naive(now) or utcnow()),
     }
 
-async def accept(session, telegram_id: int, value: str) -> Optional[str]:
-    me = await player_of(session, telegram_id)
+async def accept(session, who, value: str) -> Optional[str]:
+    me = await player_of(session, who)
     if me is None or value not in ACCEPTS:
         return None
     me.accept_videos = value
     await session.commit()
     return value
 
-async def received(session, telegram_id: int, delivery_id: int) -> Optional[tuple[VideoDelivery, SharedVideo, Optional[Player]]]:
-    me = await player_of(session, telegram_id)
+async def received(session, who, delivery_id: int) -> Optional[tuple[VideoDelivery, SharedVideo, Optional[Player]]]:
+    me = await player_of(session, who)
     delivery = await session.get(VideoDelivery, delivery_id)
     if me is None or delivery is None or delivery.recipient_id != me.id:
         return None
@@ -255,8 +265,8 @@ async def received(session, telegram_id: int, delivery_id: int) -> Optional[tupl
         return None
     return delivery, video, await session.get(Player, delivery.sender_id)
 
-async def seen(session, telegram_id: int, delivery_id: int, *, now: Optional[datetime] = None) -> bool:
-    found = await received(session, telegram_id, delivery_id)
+async def seen(session, who, delivery_id: int, *, now: Optional[datetime] = None) -> bool:
+    found = await received(session, who, delivery_id)
     if found is None:
         return False
     if found[0].seen_at is None:
@@ -264,8 +274,8 @@ async def seen(session, telegram_id: int, delivery_id: int, *, now: Optional[dat
         await session.commit()
     return True
 
-async def drop(session, telegram_id: int, delivery_id: int) -> bool:
-    found = await received(session, telegram_id, delivery_id)
+async def drop(session, who, delivery_id: int) -> bool:
+    found = await received(session, who, delivery_id)
     if found is None:
         return False
     await session.execute(delete(VideoDelivery).where(VideoDelivery.id == delivery_id))

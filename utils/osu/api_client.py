@@ -390,12 +390,14 @@ class OsuApiClient:
         new_avatar_url = stats.get("avatar_url")
         new_cover_url = stats.get("cover_url")
 
-        if new_avatar_url and (new_avatar_url != user_model.avatar_url or not user_model.avatar_data):
+        keeps_pictures = hasattr(type(user_model), "avatar_data")
+
+        if keeps_pictures and new_avatar_url and (new_avatar_url != user_model.avatar_url or not user_model.avatar_data):
             avatar_data = await self._download_image_bytes(new_avatar_url)
             if avatar_data is not None:
                 user_model.avatar_data = avatar_data
 
-        if new_cover_url and (new_cover_url != user_model.cover_url or not user_model.cover_data):
+        if keeps_pictures and new_cover_url and (new_cover_url != user_model.cover_url or not user_model.cover_data):
             cover_data = await self._download_image_bytes(new_cover_url)
             if cover_data is not None:
                 user_model.cover_data = cover_data

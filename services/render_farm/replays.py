@@ -53,15 +53,15 @@ async def _forget_files(session, hashes: list[str], folder: Optional[str]) -> No
             except OSError:
                 pass
 
-async def state(session, telegram_id: int) -> Optional[dict[str, Any]]:
-    player = await videos.player_of(session, telegram_id)
+async def state(session, who) -> Optional[dict[str, Any]]:
+    player = await videos.player_of(session, who)
     if player is None:
         return None
     count = (await session.execute(select(func.count(SharedReplay.id)).where(SharedReplay.player_id == player.id))).scalar() or 0
     return {"on": bool(player.share_replays), "name": player.osu_username, "count": int(count), "most": PLAYER_REPLAYS_EACH}
 
-async def switch(session, telegram_id: int, on: bool, *, folder: Optional[str] = None) -> Optional[dict[str, Any]]:
-    player = await videos.player_of(session, telegram_id)
+async def switch(session, who, on: bool, *, folder: Optional[str] = None) -> Optional[dict[str, Any]]:
+    player = await videos.player_of(session, who)
     if player is None:
         return None
     player.share_replays = on
@@ -71,14 +71,14 @@ async def switch(session, telegram_id: int, on: bool, *, folder: Optional[str] =
         await session.flush()
         await _forget_files(session, hashes, folder)
     await session.commit()
-    return await state(session, telegram_id)
+    return await state(session, who)
 
-async def keep(session, telegram_id: int, data: bytes, named: Optional[dict] = None, *, osu=None, folder: Optional[str] = None,
+async def keep(session, who, data: bytes, named: Optional[dict] = None, *, osu=None, folder: Optional[str] = None,
                most: Optional[int] = None, each: Optional[int] = None, now: Optional[datetime] = None) -> str:
     folder = folder or PLAYER_REPLAYS_DIR
     most = PLAYER_REPLAYS_STORAGE_MOST if most is None else most
     each = PLAYER_REPLAYS_EACH if each is None else each
-    player = await videos.player_of(session, telegram_id)
+    player = await videos.player_of(session, who)
     if player is None:
         return NOT_REGISTERED
     if not player.share_replays:
@@ -142,8 +142,8 @@ async def keep(session, telegram_id: int, data: bytes, named: Optional[dict] = N
     await session.commit()
     return KNOWN if replay_hash in gone else KEPT
 
-async def listed(session, telegram_id: int, scope: str = CHAT, *, limit: int = LISTED) -> Optional[dict[str, Any]]:
-    me = await videos.player_of(session, telegram_id)
+async def listed(session, who, scope: str = CHAT, *, limit: int = LISTED) -> Optional[dict[str, Any]]:
+    me = await videos.player_of(session, who)
     if me is None:
         return None
     wanted = select(SharedReplay, Player).join(Player, Player.id == SharedReplay.player_id).where(Player.share_replays.is_(True), Player.id != me.id)
@@ -173,8 +173,8 @@ async def listed(session, telegram_id: int, scope: str = CHAT, *, limit: int = L
         })
     return {"replays": rows, "at": stamp(utcnow())}
 
-async def readable(session, telegram_id: int, replay_hash: str) -> bool:
-    me = await videos.player_of(session, telegram_id)
+async def readable(session, who, replay_hash: str) -> bool:
+    me = await videos.player_of(session, who)
     if me is None:
         return False
     found = (await session.execute(

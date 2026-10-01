@@ -42,27 +42,38 @@ def _about(machine: pairing.Machine, lang: str) -> str:
 async def _may_pair(bot, telegram_id: int) -> bool:
     return can_use_render(telegram_id) or await members.shares_a_group(bot, telegram_id)
 
-def _pair_keyboard(code: str, lang: str) -> InlineKeyboardMarkup:
+def _pair_keyboard(code: str, lang: str, yes: str = "dsr.pair.yes") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=t("dsr.pair.yes", lang), callback_data=f"pair:yes:{code}"),
+        InlineKeyboardButton(text=t(yes, lang), callback_data=f"pair:yes:{code}"),
         InlineKeyboardButton(text=t("dsr.pair.no", lang), callback_data=f"pair:no:{code}"),
     ]])
+
+def _links_telegram(found) -> bool:
+    return found is not None and found.wants_telegram_for is not None
 
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith(PAIR_PREFIX)))
 async def start_pairing(message: Message, command: CommandObject):
     who = message.from_user
     lang = await _lang_of(who)
-    if not who or not await _may_pair(getattr(message, "bot", None), who.id):
+    code = invites.tidy((command.args or "")[len(PAIR_PREFIX):])
+    found = pairing.describe(code)
+    linking = _links_telegram(found)
+    if not who or (not linking and not await _may_pair(getattr(message, "bot", None), who.id)):
         await message.answer(t("dsr.pair.not_open", lang), parse_mode="HTML")
         return
     if message.chat.type != "private":
         await message.answer(t("dsr.pair.in_private", lang))
         return
 
-    code = invites.tidy((command.args or "")[len(PAIR_PREFIX):])
-    found = pairing.describe(code)
     if found is None:
         await message.answer(t("dsr.pair.gone", lang))
+        return
+    if linking:
+        await message.answer(
+            t("dsr.link.card", lang, name=escape_html(found.machine.name), code=invites.pretty(code)),
+            parse_mode="HTML",
+            reply_markup=_pair_keyboard(code, lang, "dsr.link.yes"),
+        )
         return
 
     await message.answer(
@@ -77,12 +88,25 @@ async def start_pairing(message: Message, command: CommandObject):
 async def answer_pairing(callback: CallbackQuery):
     who = callback.from_user
     lang = await _lang_of(who)
-    if not who or not await _may_pair(getattr(callback, "bot", None), who.id):
+    _, verdict, code = callback.data.split(":", 2)
+    linking = _links_telegram(pairing.describe(code))
+    if not who or (not linking and not await _may_pair(getattr(callback, "bot", None), who.id)):
         await callback.answer(t("dsr.pair.not_open_short", lang), show_alert=True)
         return
 
-    _, verdict, code = callback.data.split(":", 2)
-    if verdict == "yes":
+    if linking:
+        asked = pairing.answered(code)
+        if verdict != "yes" or asked is None:
+            said = t("dsr.pair.declined", lang)
+        else:
+            from db.database import get_db_session
+            from services.render_farm import players
+
+            async with get_db_session() as session:
+                outcome = await players.link_telegram(session, asked.wants_telegram_for, who.id)
+            said = (t("dsr.link.done", lang, name=escape_html(asked.machine.name))
+                    if outcome == players.LINKED else t("dsr.link.taken", lang))
+    elif verdict == "yes":
         linked = pairing.approve(code, who.id, who.full_name or "")
         said = (t("dsr.pair.linked", lang, name=escape_html(linked.machine.name))
                 if linked else t("dsr.pair.gone", lang))

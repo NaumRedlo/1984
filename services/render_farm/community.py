@@ -275,8 +275,12 @@ WORN = "worn"
 NOT_REGISTERED = "not registered"
 NOT_UNLOCKED = "not unlocked"
 
-async def wear(session, viewer: int, chat_id: Optional[int], code: Optional[str]) -> str:
+async def wear(session, viewer: int, chat_id: Optional[int], code: Optional[str], *, player_id: Optional[int] = None) -> str:
     mine = await chosen(session, viewer, chat_id)
+    if mine is None and player_id is not None:
+        from db.models.player import Player
+
+        mine = await session.get(Player, player_id)
     if mine is None:
         return NOT_REGISTERED
     if code is not None:
@@ -315,11 +319,16 @@ def shared_card(user) -> Optional[dict[str, Any]]:
         return None
     return card if isinstance(card, dict) else None
 
-async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Optional[datetime] = None) -> int:
+async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Optional[datetime] = None, player_id: Optional[int] = None) -> int:
     raw = json.dumps(card, ensure_ascii=False, separators=(",", ":"))
     if len(raw) > APP_PROFILE_MOST:
         raise ValueError("the card is too large")
-    rows = (await session.execute(select(User).where(User.telegram_id == telegram_id, User.osu_user_id.isnot(None)))).scalars().all()
+    rows = (await session.execute(select(User).where(User.telegram_id == telegram_id, User.osu_user_id.isnot(None)))).scalars().all() if telegram_id else []
+    if not rows and player_id is not None:
+        from db.models.player import Player
+
+        alone = await session.get(Player, player_id)
+        rows = [alone] if alone is not None else []
     moment = naive(now) or utcnow()
     for row in rows:
         row.app_profile = raw

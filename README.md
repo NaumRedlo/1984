@@ -29,6 +29,15 @@ What the bot does for the application, and nothing more:
 - **pairs it** — the application asks for a code, the person confirms it in a
   private chat with the bot (`/start pair-XXXX-XXXX`), and the machine gets a
   token of its own;
+- **signs it in without Telegram** — the same code can be answered through
+  osu! instead (`/render/pair/{code}/osu` leads to osu!'s consent page and back
+  to `/oauth/callback`): the bot finds or makes the player of that osu!
+  account, keeps their osu! token, and the machine's token belongs to the
+  player. Such a player has a profile, stands among the players, has an inbox
+  and a journal, is refreshed like everyone else, and has no chats: sending a
+  video asks for Telegram first. Telegram is linked later from the application
+  (`POST /render/me/telegram` gives a code, the bot asks in a private chat and
+  links on yes) or simply by registering the same osu! account in a group;
 - **tells it who it belongs to** — the person, their avatar, their profile
   card, their osu! friends, and the groups they share with the bot;
 - **shows it the group** — people, live plays, what happened this week, the

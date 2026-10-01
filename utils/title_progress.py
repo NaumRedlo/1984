@@ -245,7 +245,7 @@ async def _calc_archaeologist(session, uid) -> int:
 
 async def _calc_archivist(session, u) -> int:
     mine = u.ranked_score or 0
-    if mine <= 0:
+    if mine <= 0 or getattr(u, "chat_id", None) is None:
         return 0
     linked = (User.chat_id == u.chat_id, User.osu_user_id.isnot(None))
     peers = (await session.execute(

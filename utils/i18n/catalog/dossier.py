@@ -59,6 +59,33 @@ CATALOG = {
         "ru": "<b>{name}</b> на ферме. Приложение заметит само — вводить "
               "ничего не нужно.",
     },
+    "dsr.link.card": {
+        "en": "<b>Link this Telegram to your Dossier account?</b>\n\n"
+              "osu! player <b>{name}</b>\n"
+              "Code <code>{code}</code>\n\n"
+              "The application shows the same code. If it does not, press no — "
+              "somebody may have sent you their code.",
+        "ru": "<b>Привязать этот Telegram к твоему аккаунту Dossier?</b>\n\n"
+              "Игрок osu! <b>{name}</b>\n"
+              "Код <code>{code}</code>\n\n"
+              "Приложение показывает такой же код. Если нет — жми «нет»: "
+              "возможно, кто-то прислал тебе свой код.",
+    },
+    "dsr.link.yes": {
+        "en": "Yes, link",
+        "ru": "Да, привязать",
+    },
+    "dsr.link.done": {
+        "en": "<b>{name}</b> is linked to this Telegram. The application will "
+              "notice on its own.",
+        "ru": "<b>{name}</b> привязан к этому Telegram. Приложение заметит само.",
+    },
+    "dsr.link.taken": {
+        "en": "Not linked: this Telegram already plays as another osu! account "
+              "here, or that player is linked to another Telegram.",
+        "ru": "Не привязано: этот Telegram уже играет здесь под другим "
+              "аккаунтом osu!, либо игрок привязан к другому Telegram.",
+    },
     "dsr.pair.declined": {
         "en": "Not added. If you did not start this, nothing else needs doing.",
         "ru": "Не добавлена. Если это начинал не ты — больше ничего делать "

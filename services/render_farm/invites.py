@@ -16,11 +16,13 @@ class Invite(NamedTuple):
     telegram_id: int
     name: str
     expires_at: float
+    player_id: Optional[int] = None
 
 class Owner(NamedTuple):
 
     telegram_id: int
     name: str
+    player_id: Optional[int] = None
 
 _good: set[str] = set()
 _owners: dict[str, Owner] = {}
@@ -50,7 +52,10 @@ def owner(token: str) -> Optional[Owner]:
     return _owners.get(digest(token))
 
 def linked() -> set[int]:
-    return {owner.telegram_id for owner in _owners.values()}
+    return {owner.telegram_id for owner in _owners.values() if owner.telegram_id}
+
+def linked_players() -> set[int]:
+    return {owner.player_id for owner in _owners.values() if owner.player_id is not None}
 
 def loaded() -> int:
     return len(_good)
@@ -65,7 +70,7 @@ async def load() -> int:
         async with AsyncSessionFactory() as session:
             rows = await session.execute(
                 select(RenderWorkerToken.digest, RenderWorkerToken.issued_to,
-                       RenderWorkerToken.issued_name).where(
+                       RenderWorkerToken.issued_name, RenderWorkerToken.player_id).where(
                     RenderWorkerToken.revoked_at.is_(None)
                 )
             )
@@ -73,8 +78,8 @@ async def load() -> int:
             _owners.clear()
             for row in rows.all():
                 _good.add(row[0])
-                if row[1] is not None:
-                    _owners[row[0]] = Owner(int(row[1]), row[2] or "")
+                if row[1] is not None or row[3] is not None:
+                    _owners[row[0]] = Owner(int(row[1] or 0), row[2] or "", row[3])
     except Exception as exc:
         logger.warning("could not read the enrolled machines: %s", exc)
         return 0
@@ -89,11 +94,12 @@ async def issue(invite: Invite, worker: str = "") -> str:
     async with AsyncSessionFactory() as session:
         session.add(RenderWorkerToken(
             digest=digest(token),
-            issued_to=invite.telegram_id,
+            issued_to=invite.telegram_id or None,
+            player_id=invite.player_id,
             issued_name=invite.name or None,
             worker=worker or None,
         ))
         await session.commit()
-    remember(token, Owner(invite.telegram_id, invite.name or ""))
-    logger.info("machine %r enrolled for %s", worker or "?", invite.telegram_id)
+    remember(token, Owner(invite.telegram_id or 0, invite.name or "", invite.player_id))
+    logger.info("machine %r enrolled for %s", worker or "?", invite.telegram_id or f"player {invite.player_id}")
     return token

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, BigInteger, LargeBinary
+from sqlalchemy import Column, ForeignKey, Integer, String, DateTime, BigInteger, LargeBinary
 from db.database import Base
 
 class OAuthToken(Base):
@@ -8,7 +8,8 @@ class OAuthToken(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), unique=True, nullable=True, index=True)
     access_token_enc = Column(LargeBinary, nullable=False)
     refresh_token_enc = Column(LargeBinary, nullable=True)
     token_expiry = Column(DateTime, nullable=True)
@@ -17,4 +18,4 @@ class OAuthToken(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
     def __repr__(self):
-        return f"<OAuthToken(telegram_id={self.telegram_id}, expiry={self.token_expiry})>"
+        return f"<OAuthToken(telegram_id={self.telegram_id}, player_id={self.player_id}, expiry={self.token_expiry})>"

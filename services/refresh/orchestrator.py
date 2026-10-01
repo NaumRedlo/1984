@@ -7,7 +7,7 @@ from services.refresh.policy import RefreshMode
 
 logger = get_logger("services.refresh.orchestrator")
 
-_in_flight: set[int] = set()
+_in_flight: set[tuple] = set()
 _in_flight_lock = asyncio.Lock()
 _players: dict[int, asyncio.Lock] = {}
 
@@ -17,16 +17,19 @@ def _one_at_a_time(user) -> asyncio.Lock:
         return asyncio.Lock()
     return _players.setdefault(player_id, asyncio.Lock())
 
-async def _acquire(user_id: int) -> bool:
+def _key(user) -> tuple:
+    return (type(user).__name__, user.id)
+
+async def _acquire(key: tuple) -> bool:
     async with _in_flight_lock:
-        if user_id in _in_flight:
+        if key in _in_flight:
             return False
-        _in_flight.add(user_id)
+        _in_flight.add(key)
         return True
 
-async def _release(user_id: int) -> None:
+async def _release(key: tuple) -> None:
     async with _in_flight_lock:
-        _in_flight.discard(user_id)
+        _in_flight.discard(key)
 
 async def refresh_user(
     user,
@@ -35,16 +38,16 @@ async def refresh_user(
     mode: RefreshMode = "full",
     oauth_token: Optional[str] = None,
 ) -> bool:
-    if not await _acquire(user.id):
-        logger.debug(f"Skipping refresh for user_id={user.id}: already in-flight")
+    key = _key(user)
+    if not await _acquire(key):
+        logger.debug(f"Skipping refresh for {key}: already in-flight")
         return False
 
     try:
         if oauth_token is None:
-            from services.oauth.token_manager import get_valid_token
+            from services.oauth.token_manager import token_of
             try:
-
-                oauth_token = await get_valid_token(user.telegram_id)
+                oauth_token = await token_of(user)
             except Exception:
                 oauth_token = None
 
@@ -73,7 +76,7 @@ async def refresh_user(
         return False
 
     finally:
-        await _release(user.id)
+        await _release(key)
 
 def is_in_flight(user_id: int) -> bool:
-    return user_id in _in_flight
+    return ("User", user_id) in _in_flight

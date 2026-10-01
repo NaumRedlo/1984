@@ -46,6 +46,7 @@ from db.migrations.add_players import run_players_migration
 from db.migrations.add_video_sharing import run_video_sharing_migration
 from db.migrations.add_shared_replays import run_shared_replays_migration
 from db.migrations.move_progress_to_players import run_player_progress_migration
+from db.migrations.add_app_accounts import run_app_accounts_migration
 
 async def run_all_migrations(engine) -> None:
     await run_migration(engine)
@@ -111,5 +112,6 @@ async def run_all_migrations(engine) -> None:
     await run_video_sharing_migration(engine)
     await run_shared_replays_migration(engine)
     await run_player_progress_migration(engine)
+    await run_app_accounts_migration(engine)
 
 __all__ = ["run_all_migrations"]

@@ -4,7 +4,7 @@ from sqlalchemy import delete, event, inspect, select
 from sqlalchemy.orm import Session
 
 from db.models.chat_member import ChatMember
-from db.models.player import PROGRESS, SHARED, Player
+from db.models.player import OWN, PROGRESS, SHARED, Player
 from db.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ def _detach(session, user) -> None:
         player = session.get(Player, player_id)
         if player is not None:
             player.telegram_id = None
+            for name in (*PERSONAL, *PROGRESS):
+                setattr(player, name, None)
 
 def _waiting(session, **wanted):
     for found in session.new:
@@ -40,12 +42,13 @@ def _waiting(session, **wanted):
     return None
 
 LATER_WINS = ("last_seen_at",)
+PERSONAL = ("active_title_code", "share_replays")
 
 def _bare(moment):
     return moment.replace(tzinfo=None) if getattr(moment, "tzinfo", None) is not None else moment
 
 def _inherit(user, player) -> None:
-    for name in PROGRESS:
+    for name in (*PERSONAL, *PROGRESS):
         held = getattr(player, name)
         if held is None:
             continue
@@ -69,12 +72,13 @@ def _link(session, user) -> None:
     if player is None:
         player = Player(osu_user_id=user.osu_user_id, telegram_id=user.telegram_id, **{name: getattr(user, name) for name in SHARED})
         session.add(player)
-    elif player.telegram_id is None:
-        player.telegram_id = user.telegram_id
-        for name in SHARED:
-            setattr(player, name, getattr(user, name))
     else:
+        if player.telegram_id is None:
+            player.telegram_id = user.telegram_id
         _inherit(user, player)
+        for name in SHARED:
+            if (name in OWN and name not in PERSONAL) or getattr(player, name) is None:
+                setattr(player, name, getattr(user, name))
     user.player = player
     session.add(ChatMember(chat_id=user.chat_id, player=player, user=user))
 

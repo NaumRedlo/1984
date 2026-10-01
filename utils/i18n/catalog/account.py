@@ -133,6 +133,18 @@ CATALOG = {
                "<p>Аккаунт <b>{username}</b> привязан.</p>"
                "<p>Можете вернуться в Telegram.</p>"),
     },
+    "oauth.app_signed_in": {
+        "en": ("<h2>Signed in</h2>"
+               "<p>Account <b>{username}</b> is signed in to Dossier.</p>"
+               "<p>You can return to the application.</p>"),
+        "ru": ("<h2>Вход выполнен</h2>"
+               "<p>Аккаунт <b>{username}</b> вошёл в Dossier.</p>"
+               "<p>Можно вернуться в приложение.</p>"),
+    },
+    "oauth.app_expired": {
+        "en": "<h2>The code expired</h2><p>Start signing in again in Dossier.</p>",
+        "ru": "<h2>Код устарел</h2><p>Начните вход заново в Dossier.</p>",
+    },
     "oauth.notify_linked": {
         "en": "Account <b>{username}</b> successfully linked to the system.",
         "ru": "Аккаунт <b>{username}</b> успешно привязан к системе.",

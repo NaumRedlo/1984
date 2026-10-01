@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy import select
 
@@ -19,6 +19,24 @@ TOO_SOON = "too soon"
 NOT_REGISTERED = "not registered"
 NOT_THERE = "not in that chat"
 
+LINKED = "linked"
+TAKEN = "taken"
+GONE = "gone"
+
+class Rowless:
+    id = 0
+    chat_id = None
+
+    def __init__(self, player: Player) -> None:
+        self._player = player
+
+    @property
+    def player_id(self) -> int:
+        return self._player.id
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._player, name, None)
+
 def _freshest(rows: list) -> Any:
     return max(rows, key=lambda row: (naive(row.last_api_update) or datetime.min, row.id))
 
@@ -31,7 +49,8 @@ async def _rows_by_player(session, player_ids: Optional[list[int]] = None) -> di
         grouped.setdefault(row.player_id, []).append(row)
     return grouped
 
-async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None) -> dict[str, Any]:
+async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None, signed: Iterable[int] = (),
+                   me: Optional[int] = None) -> dict[str, Any]:
     players = {player.id: player for player in (await session.execute(select(Player))).scalars().all()}
     grouped = await _rows_by_player(session, list(players))
     wanted = query.strip().lower()
@@ -40,6 +59,10 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
         for player_id, rows in grouped.items()
         if not wanted or wanted in (players[player_id].osu_username or "").lower()
     }
+    for player_id in signed:
+        player = players.get(player_id)
+        if player is not None and player_id not in grouped and (not wanted or wanted in (player.osu_username or "").lower()):
+            chosen[player_id] = Rowless(player)
     titles: dict[int, set[str]] = {player_id: set() for player_id in chosen}
     best: dict[int, list] = {player_id: [] for player_id in chosen}
     if chosen:
@@ -61,24 +84,87 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
             top=[_play(found) for found in best[player_id][:TOP]],
             moved=[0] * len(DELTA_CATEGORIES),
             gained=[0.0] * len(DELTA_CATEGORIES),
-            you=players[player_id].telegram_id == viewer,
+            you=player_id == me or (bool(viewer) and players[player_id].telegram_id == viewer),
         )
         card["player"] = player_id
         people.append(card)
     people.sort(key=lambda card: card["pp"], reverse=True)
     return {"people": people, "at": stamp(naive(now) or utcnow())}
 
-async def one(session, player_id: int, viewer: int, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+async def one(session, player_id: int, viewer: int, *, now: Optional[datetime] = None, signed: Iterable[int] = (),
+              me: Optional[int] = None) -> Optional[dict[str, Any]]:
     player = await session.get(Player, player_id)
     rows = (await _rows_by_player(session, [player_id])).get(player_id)
-    if player is None or not rows:
+    if player is None or (not rows and player_id not in signed and player_id != me):
         return None
-    body = await _profile(session, _freshest(rows), you=player.telegram_id == viewer, now=now)
+    shown = _freshest(rows) if rows else Rowless(player)
+    body = await _profile(session, shown, you=player_id == me or (bool(viewer) and player.telegram_id == viewer), now=now)
     body["player"] = player_id
     return body
 
-async def _player_of(session, viewer: int) -> Optional[Player]:
-    return (await session.execute(select(Player).where(Player.telegram_id == viewer))).scalar_one_or_none()
+async def _player_of(session, viewer) -> Optional[Player]:
+    from services.render_farm.videos import player_of
+
+    return await player_of(session, viewer)
+
+def _number(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+async def signed_in(session, osu_user: dict[str, Any]) -> Optional[Player]:
+    osu_id = _number(osu_user.get("id"))
+    if not osu_id:
+        return None
+    player = (await session.execute(select(Player).where(Player.osu_user_id == osu_id))).scalar_one_or_none()
+    stats = osu_user.get("statistics") or {}
+    country = ((osu_user.get("country") or {}).get("code") or osu_user.get("country_code") or "")[:2]
+    seen = {
+        "osu_username": str(osu_user.get("username") or "")[:255],
+        "country": country or None,
+        "player_pp": _number(stats.get("pp")),
+        "global_rank": _number(stats.get("global_rank")),
+        "accuracy": round(float(stats.get("hit_accuracy") or 0.0), 2),
+        "play_count": _number(stats.get("play_count")),
+        "play_time": _number(stats.get("play_time")),
+        "ranked_score": _number(stats.get("ranked_score")),
+        "total_hits": _number(stats.get("total_hits")),
+        "total_score": _number(stats.get("total_score")),
+        "avatar_url": osu_user.get("avatar_url"),
+        "cover_url": (osu_user.get("cover") or {}).get("url") or osu_user.get("cover_url"),
+    }
+    if player is None:
+        player = Player(osu_user_id=osu_id, telegram_id=None, **seen)
+        session.add(player)
+    elif not (await _rows_by_player(session, [player.id])).get(player.id):
+        for name, value in seen.items():
+            if value is not None:
+                setattr(player, name, value)
+    await session.flush()
+    return player
+
+async def link_telegram(session, player_id: int, telegram_id: int) -> str:
+    player = await session.get(Player, player_id)
+    if player is None:
+        return GONE
+    if player.telegram_id == telegram_id:
+        return LINKED
+    other = (await session.execute(select(Player.id).where(Player.telegram_id == telegram_id))).first()
+    if player.telegram_id is not None or other is not None:
+        return TAKEN
+    player.telegram_id = telegram_id
+    from db.models.oauth_token import OAuthToken
+
+    kept = (await session.execute(select(OAuthToken).where(OAuthToken.player_id == player.id))).scalar_one_or_none()
+    if kept is not None:
+        other_token = (await session.execute(select(OAuthToken.id).where(OAuthToken.telegram_id == telegram_id))).first()
+        if other_token is None:
+            kept.telegram_id = telegram_id
+        else:
+            await session.delete(kept)
+    await session.commit()
+    return LINKED
 
 def _pin_body(player: Optional[Player]) -> dict[str, Any]:
     if player is None or player.pinned_chat_id is None:

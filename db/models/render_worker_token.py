@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, String
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String
 
 from db.database import Base
 
@@ -13,6 +13,7 @@ class RenderWorkerToken(Base):
     digest = Column(String(64), unique=True, nullable=False, index=True)
 
     issued_to = Column(BigInteger, nullable=True, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=True, index=True)
     issued_name = Column(String(128), nullable=True)
 
     worker = Column(String(128), nullable=True)
