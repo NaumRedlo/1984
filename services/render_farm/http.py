@@ -502,6 +502,29 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 logger.info("chat %s is not reachable: %s", chat_id, exc)
         return web.json_response(body)
 
+    async def map_board(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = invites.owner(_token(request))
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = request.match_info["beatmap"]
+        if not said.isdigit():
+            return web.json_response({"error": "no map"}, status=400)
+        chat_id, allowed = await _group_for(owner.telegram_id, request.query.get("chat", ""))
+        if not allowed:
+            return web.json_response({"error": "not your chat"}, status=403)
+        if chat_id is None:
+            return web.json_response({"error": "no chat"}, status=404)
+
+        from db.database import AsyncSessionFactory
+        from services.render_farm import maps
+
+        async with AsyncSessionFactory() as session:
+            body = await maps.board(session, _osu, int(said), chat_id, owner.telegram_id, sync=request.query.get("sync", "1") != "0")
+        return web.json_response(body)
+
     async def someone(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -802,6 +825,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/chat/{chat_id}/avatar", chat_avatar),
         web.get("/render/community", community),
         web.get("/render/community/person", someone),
+        web.get("/render/maps/{beatmap}/board", map_board),
         web.post("/render/me/profile", share_card),
         web.post("/render/me/title", wear_title),
         web.post("/render/me/played", played),

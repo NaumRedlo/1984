@@ -56,9 +56,13 @@ def _map(row) -> dict[str, Any]:
     }
 
 def _play(row, *, when: Optional[datetime] = None) -> dict[str, Any]:
+    guessed = getattr(row, "pp_estimated", None)
     return {
+        "id": row.score_id,
         "map": _map(row),
+        "score": int(row.score or 0),
         "pp": round(float(row.pp or 0.0), 2),
+        "pp_if": round(float(guessed), 2) if guessed is not None and not row.pp else None,
         "accuracy": round(float(row.accuracy or 0.0), 2),
         "mods": mods_of(row.mods),
         "grade": grade_of(row.rank),
@@ -183,7 +187,7 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
 
     people = []
     for u in users:
-        people.append(person(
+        card = person(
             u,
             titles=[row.title_code for row in unlocked[u.id]],
             top=[_play(row) for row in best[u.id][:TOP]],
@@ -191,7 +195,9 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
             gained=gained[u.id],
             was=_was(anchors.get(u.id)),
             you=u.telegram_id == viewer,
-        ))
+        )
+        card["earned"] = {row.title_code: stamp(row.unlocked_at) for row in unlocked[u.id] if row.unlocked_at}
+        people.append(card)
     people.sort(key=lambda p: p["pp"], reverse=True)
 
     live = []
@@ -236,8 +242,25 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
         "live": live,
         "happened": happened[:60],
         "titles": titles_catalogue(),
+        "title_holders": await title_holders(session),
         "at": stamp(now),
     }
+
+async def title_holders(session) -> dict[str, Any]:
+    everyone = set()
+    for player_id, user_id in (await session.execute(
+        select(User.player_id, User.id).where(User.osu_user_id.isnot(None))
+    )).all():
+        everyone.add(player_id if player_id is not None else -user_id)
+    held: dict[str, set] = {}
+    for code, player_id, user_id in (await session.execute(
+        select(UserTitleProgress.title_code, User.player_id, User.id)
+        .join(User, User.id == UserTitleProgress.user_id)
+        .where(UserTitleProgress.unlocked.is_(True), User.osu_user_id.isnot(None))
+    )).all():
+        if code in TITLE_REGISTRY:
+            held.setdefault(code, set()).add(player_id if player_id is not None else -user_id)
+    return {"players": len(everyone), "held": {code: len(who) for code, who in sorted(held.items())}}
 
 async def chosen(session, viewer: int, chat_id: Optional[int] = None):
     rows = (await session.execute(
@@ -305,12 +328,13 @@ async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Opt
     return len(rows)
 
 async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) -> dict[str, Any]:
-    held = [
+    progress = [
         row for row in (await session.execute(
-            select(UserTitleProgress).where(UserTitleProgress.user_id == mine.id, UserTitleProgress.unlocked.is_(True))
+            select(UserTitleProgress).where(UserTitleProgress.user_id == mine.id)
         )).scalars().all()
         if row.title_code in TITLE_REGISTRY
     ]
+    held = [row for row in progress if row.unlocked]
     titles = [row.title_code for row in held]
     top = (await session.execute(
         select(UserBestScore).where(UserBestScore.user_id == mine.id).order_by(UserBestScore.pp.desc()).limit(TOP)
@@ -333,6 +357,7 @@ async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) 
     body["duels"] = [int(mine.duel_wins or 0), int(mine.duel_losses or 0)]
     body["points"] = int(mine.hps_points or 0)
     body["title_dates"] = {row.title_code: stamp(row.unlocked_at) for row in held if row.unlocked_at}
+    body["title_progress"] = {row.title_code: int(row.current_value or 0) for row in progress}
     weeks = (await session.execute(
         select(LeaderboardSnapshot)
         .where(LeaderboardSnapshot.user_id == mine.id)
