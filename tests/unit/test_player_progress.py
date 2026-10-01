@@ -243,3 +243,26 @@ async def test_a_dry_run_reports_on_a_copy_and_leaves_the_database_as_it_was(tmp
     assert said["players"] == 2
     assert path.read_bytes() == before
     assert not player_sync.is_on()
+
+async def test_the_database_is_copied_before_the_move_and_only_then(tmp_path, monkeypatch):
+    monkeypatch.setattr(add_players, "REPORT", str(tmp_path / "players.log"))
+    monkeypatch.setattr(move_progress_to_players, "REPORT", str(tmp_path / "progress.log"))
+    path = tmp_path / "bot.db"
+    player_sync.switch_on(False)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            for table in ("user_best_scores", "user_map_attempts", "user_title_progress"):
+                await conn.execute(text(f"DROP TABLE {table}"))
+            for line in LEGACY:
+                await conn.execute(text(line))
+        await _legacy_rows(engine)
+        await run_players_migration(engine)
+        await run_player_progress_migration(engine)
+        copies = [name for name in tmp_path.iterdir() if ".bak-before-player-progress-" in name.name]
+        assert len(copies) == 1
+        await run_player_progress_migration(engine)
+        assert len([name for name in tmp_path.iterdir() if ".bak-before-player-progress-" in name.name]) == 1
+    finally:
+        await engine.dispose()

@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 import logging
 import os
 import shutil
@@ -190,7 +191,37 @@ async def _moved(conn) -> dict:
         await conn.execute(text("INSERT INTO bot_settings (key, value) VALUES (:key, CURRENT_TIMESTAMP)"), {"key": DONE})
     return said
 
+async def _waiting(conn) -> bool:
+    for model in (*SCORED, UserTitleProgress):
+        table = model.__tablename__
+        if await table_exists(conn, table):
+            have = await existing_columns(conn, table)
+            if "user_id" in have and "player_id" not in have:
+                return True
+    return False
+
+def _backed_up(engine) -> None:
+    path = engine.url.database
+    if not path or path == ":memory:" or not os.path.exists(path):
+        return
+    kept = f"{path}.bak-before-player-progress-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    try:
+        source = sqlite3.connect(path)
+        target = sqlite3.connect(kept)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        logger.warning("Migration: the database was copied to %s before scores move to players", kept)
+    except (OSError, sqlite3.Error) as exc:
+        logger.error("Migration: the database was not copied to %s: %s", kept, exc)
+
 async def run_player_progress_migration(engine) -> dict:
+    async with engine.connect() as conn:
+        waiting = await _waiting(conn)
+    if waiting:
+        _backed_up(engine)
     async with engine.begin() as conn:
         said = await _moved(conn)
     if not said:
