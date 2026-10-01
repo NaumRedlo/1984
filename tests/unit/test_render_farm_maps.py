@@ -5,6 +5,7 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import db.models
@@ -147,3 +148,90 @@ async def test_the_app_reads_the_board_of_a_map_in_its_own_chat(served, factory)
     assert [row["name"] for row in body["rows"]] == ["NaumRedlo", "kotofey"] and body["rows"][0]["you"] is True
     assert (await client.get("/render/maps/abc/board", headers=headers)).status == 400
     assert (await client.get(f"/render/maps/{MAP}/board?chat={OTHER}", headers=headers)).status == 403
+
+class _Osu:
+    def __init__(self, beatmap, scores=()):
+        self.beatmap = beatmap
+        self.scores = list(scores)
+        self.looked = 0
+
+    async def get_beatmap(self, beatmap_id):
+        self.looked += 1
+        return self.beatmap
+
+    async def get_beatmap_scores(self, beatmap_id, limit=50):
+        return [dict(score) for score in self.scores]
+
+    async def get_user_beatmap_scores(self, beatmap_id, osu_user_id, oauth_token=None):
+        return []
+
+    async def effective_sr(self, *args, **kwargs):
+        return None
+
+    async def _fill_ranked_dates_quietly(self, session, player_id):
+        return None
+
+    async def sync_user_map_attempts(self, user_model, session, raw_scores):
+        from utils.osu.api_client import OsuApiClient
+        return await OsuApiClient.sync_user_map_attempts(self, user_model, session, raw_scores)
+
+FULL = {"id": MAP, "version": "FOUR DIMENSIONS", "difficulty_rating": 7.21, "bpm": 222.22, "total_length": 258, "max_combo": 2385,
+        "status": "ranked", "beatmapset": {"id": 77, "artist": "xi", "title": "FREEDOM DiVE", "creator": "Nakagawa-Kanon"}}
+
+@pytest.fixture
+def fresh_lookups(monkeypatch):
+    from services.leaderboard import service
+    monkeypatch.setattr(service, "_beatmap_facts", {})
+    monkeypatch.setattr(service, "_sync_cooldown", {})
+    return service
+
+async def test_the_map_itself_says_its_longest_combo_and_is_asked_once(factory, fresh_lookups):
+    async with factory() as s:
+        naum = _user(CHAT, 7, "NaumRedlo")
+        s.add(naum)
+        await s.flush()
+        s.add(_attempt(naum.player_id, 1, 300.0, title="", artist="", version="", bpm=None, length=None, map_max_combo=None, star_rating=None, status=None))
+        await s.commit()
+    osu = _Osu(FULL)
+    async with factory() as s:
+        body = await maps.board(s, osu, MAP, CHAT, 7, now=NOW)
+        again = await maps.board(s, osu, MAP, CHAT, 7, sync=False, now=NOW)
+    about = body["map"]
+    assert (about["title"], about["version"], about["max_combo"], about["bpm"], about["length"], about["stars"]) == ("FREEDOM DiVE", "FOUR DIMENSIONS", 2385, 222.2, 258, 7.21)
+    assert about["status"] == "ranked" and body["metric"] == "pp"
+    assert again["map"] == about and osu.looked == 1
+
+async def test_scores_of_a_map_that_come_bare_do_not_wipe_what_a_play_already_knows(factory, fresh_lookups):
+    async with factory() as s:
+        naum = _user(CHAT, 7, "NaumRedlo")
+        s.add(naum)
+        await s.flush()
+        s.add(_attempt(naum.player_id, 1, 300.0))
+        await s.commit()
+    bare = {"id": 1, "user_id": 70, "pp": 300.0, "accuracy": 0.98, "max_combo": 1800, "rank": "S", "mods": [], "statistics": {}, "passed": True}
+    async with factory() as s:
+        await maps.board(s, _Osu(None, [bare]), MAP, CHAT, 7, now=NOW)
+        kept = (await s.execute(select(UserMapAttempt).where(UserMapAttempt.score_id == 1))).scalar_one()
+        assert (kept.title, kept.version, kept.bpm, kept.length, kept.map_max_combo, kept.status) == ("FREEDOM DiVE", "FOUR DIMENSIONS", 222.22, 258, 2000, "ranked")
+    fresh_lookups._sync_cooldown.clear()
+    newer = dict(bare, id=2, pp=310.0)
+    async with factory() as s:
+        body = await maps.board(s, _Osu(FULL, [newer]), MAP, CHAT, 7, now=NOW)
+        made = (await s.execute(select(UserMapAttempt).where(UserMapAttempt.score_id == 2))).scalar_one()
+        assert (made.title, made.version, made.map_max_combo, made.length) == ("FREEDOM DiVE", "FOUR DIMENSIONS", 2385, 258)
+    assert body["map"]["max_combo"] == 2385
+
+async def test_without_osu_the_map_is_told_from_the_plays_that_know_it(factory, fresh_lookups):
+    async with factory() as s:
+        naum = _user(CHAT, 7, "NaumRedlo")
+        s.add(naum)
+        await s.flush()
+        s.add_all([
+            _attempt(naum.player_id, 1, 300.0, minutes=600),
+            _attempt(naum.player_id, 2, 310.0, minutes=5, title="", artist="", version="", bpm=None, length=None, map_max_combo=None, star_rating=None, status=None),
+        ])
+        await s.commit()
+    async with factory() as s:
+        body = await maps.board(s, None, MAP, CHAT, 7, now=NOW)
+    about = body["map"]
+    assert (about["title"], about["bpm"], about["length"], about["max_combo"], about["status"]) == ("FREEDOM DiVE", 222.2, 258, 2000, "ranked")

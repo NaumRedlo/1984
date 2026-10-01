@@ -20,6 +20,9 @@ ROWS_PER_PAGE = 6
 PAGE_SIZE = ROWS_PER_PAGE
 SYNC_COOLDOWN = timedelta(minutes=5)
 _sync_cooldown: dict[tuple[int, int], datetime] = {}
+BEATMAP_FACTS_FOR = timedelta(hours=12)
+BEATMAP_FACTS_MOST = 512
+_beatmap_facts: dict[int, tuple[datetime, dict]] = {}
 _pending_stale_ids: set[int] = set()
 _stale_refresh_task: asyncio.Task[None] | None = None
 
@@ -450,6 +453,37 @@ def _parse_mods(mods) -> str:
         return "+" + ",".join(str(m) for m in mods if m)
     return str(mods)
 
+def known_beatmap(beatmap_id: int, now: Optional[datetime] = None) -> Optional[dict]:
+    held = _beatmap_facts.get(beatmap_id)
+    if held is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return held[1] if now - held[0] < BEATMAP_FACTS_FOR else None
+
+async def beatmap_facts(osu_api_client, beatmap_id: int, now: Optional[datetime] = None) -> Optional[dict]:
+    now = now or datetime.now(timezone.utc)
+    fresh = known_beatmap(beatmap_id, now)
+    if fresh is not None:
+        return fresh
+    held = _beatmap_facts.get(beatmap_id)
+    try:
+        found = await osu_api_client.get_beatmap(beatmap_id)
+    except Exception as exc:
+        logger.info("beatmap %s was not looked up: %s", beatmap_id, exc)
+        found = None
+    if not isinstance(found, dict) or not found.get("id"):
+        return held[1] if held else None
+    if len(_beatmap_facts) >= BEATMAP_FACTS_MOST and beatmap_id not in _beatmap_facts:
+        del _beatmap_facts[min(_beatmap_facts, key=lambda key: _beatmap_facts[key][0])]
+    _beatmap_facts[beatmap_id] = (now, found)
+    return found
+
+def _with_map(score: dict, beatmap_id: int, known: Optional[dict]) -> None:
+    if not (score.get("beatmap") or {}).get("version"):
+        score["beatmap"] = known or {"id": beatmap_id}
+    if not score.get("beatmapset"):
+        score["beatmapset"] = (known or {}).get("beatmapset") or {}
+
 async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id: int) -> None:
     now = datetime.now(timezone.utc)
     cooldown_key = (chat_id, beatmap_id)
@@ -458,9 +492,10 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         return
     _sync_cooldown[cooldown_key] = now
 
+    known = await beatmap_facts(osu_api_client, beatmap_id, now)
     public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
     if not public_scores:
-        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id)
+        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, known=known)
         try:
             await session.commit()
         except Exception:
@@ -481,24 +516,21 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         if not user_model:
             continue
         for s in user_scores:
-
-            if not s.get("beatmap"):
-                s["beatmap"] = {"id": beatmap_id}
-            if not s.get("beatmapset"):
-                s["beatmapset"] = {}
+            _with_map(s, beatmap_id, known)
         try:
             await osu_api_client.sync_user_map_attempts(user_model, session, user_scores)
         except Exception:
             pass
 
-    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()))
+    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()), known=known)
 
     try:
         await session.commit()
     except Exception:
         await session.rollback()
 
-async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, chat_id: int, skip_osu_ids: set = None) -> None:
+async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, chat_id: int, skip_osu_ids: set = None,
+                                      known: Optional[dict] = None) -> None:
     from services.oauth.token_manager import get_valid_token
     from db.models.oauth_token import OAuthToken
 
@@ -524,10 +556,7 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
         if not scores:
             continue
         for s in scores:
-            if not s.get("beatmap"):
-                s["beatmap"] = {"id": beatmap_id}
-            if not s.get("beatmapset"):
-                s["beatmapset"] = {}
+            _with_map(s, beatmap_id, known)
         try:
             await osu_api_client.sync_user_map_attempts(user_model, session, scores)
         except Exception:

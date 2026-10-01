@@ -62,6 +62,8 @@ async def _estimate_pp(raw: dict, beatmap: dict, beatmap_id: int, mods, stats: d
     return round(float(served["pp"]), 2)
 
 DATED_STATUSES = ("ranked", "approved", "loved")
+MAP_FACTS = ("beatmapset_id", "artist", "title", "version", "creator", "star_rating", "ar", "eff_sr", "bpm", "length",
+             "map_max_combo", "total_objects", "status")
 _RANKED_DATES: Dict[int, Optional[datetime]] = {}
 _RANKED_DATES_KEPT = 20000
 
@@ -702,6 +704,8 @@ class OsuApiClient:
                 attrs["pp_estimated"] = await _estimate_pp(raw, beatmap, beatmap_id, mods_list, stats)
             if attempt:
                 for key, value in attrs.items():
+                    if key in MAP_FACTS and value in (None, "", 0) and getattr(attempt, key) not in (None, "", 0):
+                        continue
                     setattr(attempt, key, value)
             else:
                 attempt = UserMapAttempt(player_id=user_model.player_id, score_id=score_id, **attrs)
