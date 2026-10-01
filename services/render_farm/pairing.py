@@ -90,6 +90,9 @@ def osu_state(code: str) -> Optional[str]:
     found = _pending.get(code)
     if found is None or found.linked_to is not None or found.wants_telegram_for is not None:
         return None
+    for state, (waiting, _) in _osu_states.items():
+        if waiting == code:
+            return state
     state = "app." + secrets.token_urlsafe(32)
     _osu_states[state] = (code, found.expires_at)
     return state

@@ -58,6 +58,7 @@ def test_a_pairing_can_be_answered_through_osu_and_only_once():
     code = pairing.start(MAC, "1.1.1.1")
     state = pairing.osu_state(code)
     assert state.startswith("app.") and pairing.osu_state("22222222") is None
+    assert pairing.osu_state(code) == state and len(pairing._osu_states) == 1
     assert pairing.take_osu_state(state) == code
     assert pairing.take_osu_state(state) is None
     linked = pairing.approve(code, 0, "alice", player_id=5)
