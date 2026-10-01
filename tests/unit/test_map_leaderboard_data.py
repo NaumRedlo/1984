@@ -44,6 +44,22 @@ def test_the_hardest_mods_win_over_a_bigger_score():
     mods = [t for t in _map_titles(rows, rank_by_score=False) if t["kind"] == "mods"]
     assert mods and mods[0]["who"] == "Brave" and mods[0]["value"] == "HDHR"
 
+def test_mods_written_with_commas_are_all_counted():
+    rows = [row("Light", pp=500, mods="FL"), row("Double", pp=100, mods="CL,HD,DT"), row("Hidden", pp=90, mods="HD,HR")]
+    mods = [t for t in _map_titles(rows, rank_by_score=False) if t["kind"] == "mods"]
+    assert mods[0]["who"] == "Double" and mods[0]["value"] == "CL,HD,DT"
+
+def test_the_hardest_mods_are_the_ones_that_raised_the_stars_most():
+    rows = [
+        dict(row("Rate", pp=300, mods="DT"), eff_sr=9.9),
+        dict(row("Precise", pp=320, mods="HD,HR"), eff_sr=7.4),
+        dict(row("Plain", pp=400, mods="CL"), eff_sr=7.0),
+    ]
+    mods = [t for t in _map_titles(rows, rank_by_score=False, stars=7.0) if t["kind"] == "mods"]
+    assert mods[0]["who"] == "Rate" and mods[0]["stars"] == 9.9
+    easy = [dict(row("Slow", pp=100, mods="HT"), eff_sr=5.6), dict(row("Classic", pp=90, mods="CL"), eff_sr=7.0)]
+    assert not [t for t in _map_titles(easy, rank_by_score=False, stars=7.0) if t["kind"] == "mods"]
+
 def test_an_all_nomod_board_has_no_hardest_mods_line():
     rows = [row("A", pp=300), row("B", pp=200)]
     assert not [t for t in _map_titles(rows, rank_by_score=False) if t["kind"] == "mods"]
@@ -136,3 +152,53 @@ async def test_a_loved_map_tracks_the_record_by_score(factory):
 async def test_a_map_nobody_has_played_has_no_history(factory):
     async with factory() as session:
         assert await _map_record_history(session, MAP, CHAT, rank_by_score=False) == []
+
+async def test_a_row_carries_the_day_it_was_played_and_its_stars_with_mods(factory):
+    from services.leaderboard.service import build_map_leaderboard
+
+    class Osu:
+        async def get_beatmap(self, beatmap_id):
+            return {"id": beatmap_id, "status": "ranked", "version": "Extra", "difficulty_rating": 7.0,
+                    "beatmapset": {"id": 1, "artist": "xi", "title": "Blue Zenith", "creator": "F"}}
+
+    async with factory() as session:
+        user = User(chat_id=CHAT, telegram_id=1, osu_user_id=2, osu_username="A")
+        session.add(user)
+        await session.flush()
+        session.add(UserMapAttempt(player_id=user.player_id, score_id=1, beatmap_id=MAP, pp=300.0, score=1, mods="HD,DT",
+                                   eff_sr=9.9, played_at=datetime(2026, 8, 14, 12, 0)))
+        await session.commit()
+        result = await build_map_leaderboard(session, Osu(), MAP, CHAT, sync=False)
+    first = result.rows[0]
+    assert (first["at"].year, first["at"].month, first["at"].day, first["at"].utcoffset().total_seconds()) == (2026, 8, 14, 0)
+    assert first["eff_sr"] == 9.9
+    mods = [t for t in result.data["titles"] if t["kind"] == "mods"]
+    assert mods and mods[0]["who"] == "A" and mods[0]["stars"] == 9.9
+
+async def test_a_play_stored_without_its_stars_is_asked_about_once_the_board_is_built(factory):
+    from services.leaderboard.service import build_map_leaderboard
+
+    class Osu:
+        asked = []
+
+        async def get_beatmap(self, beatmap_id):
+            return {"id": beatmap_id, "status": "ranked", "version": "Extra", "difficulty_rating": 7.0, "checksum": "abc",
+                    "beatmapset": {"id": 1, "artist": "xi", "title": "Blue Zenith", "creator": "F"}}
+
+        async def effective_sr(self, beatmap_id, mods, nominal, checksum=None):
+            self.asked.append((beatmap_id, mods, nominal, checksum))
+            return 9.8 if "DT" in mods else nominal
+
+    async with factory() as session:
+        for i, (name, mods, known) in enumerate([("Fast", "DT,CL", None), ("Plain", "CL", None), ("Sharp", "HR", 7.3)], 1):
+            user = User(chat_id=CHAT, telegram_id=i, osu_user_id=10 + i, osu_username=name)
+            session.add(user)
+            await session.flush()
+            session.add(UserMapAttempt(player_id=user.player_id, score_id=i, beatmap_id=MAP, pp=400.0 - i, score=i, mods=mods,
+                                       eff_sr=known, played_at=datetime(2026, 8, 14, 12, 0)))
+        await session.commit()
+        result = await build_map_leaderboard(session, Osu(), MAP, CHAT, sync=False)
+    assert Osu.asked == [(MAP, "DT,CL", 7.0, "abc")]
+    assert {row["username"]: row["eff_sr"] for row in result.rows} == {"Fast": 9.8, "Plain": None, "Sharp": 7.3}
+    mods = [t for t in result.data["titles"] if t["kind"] == "mods"]
+    assert mods[0]["who"] == "Fast" and mods[0]["stars"] == 9.8

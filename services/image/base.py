@@ -135,16 +135,10 @@ class BaseCardRenderer:
         text: str,
         font,
         fill,
-        *,
-        shadow: bool = False,
-        shadow_color=(0, 0, 0),
     ) -> int:
         fb = self._font_fallback(font)
         cyfb = self._font_cyrillic_fallback(font)
-        return draw_text_multifont(
-            draw, xy, text, font, fb, fill,
-            cyrillic_fallback=cyfb, shadow=shadow, shadow_color=shadow_color,
-        )
+        return draw_text_multifont(draw, xy, text, font, fb, fill, cyrillic_fallback=cyfb)
 
     def _text_size(self, draw: ImageDraw.Draw, text: str, font) -> tuple[int, int]:
         fb = self._font_fallback(font)
@@ -187,42 +181,24 @@ class BaseCardRenderer:
     def _draw_section_title(self, draw: ImageDraw.Draw, y: int, text: str):
         self._draw_text(draw, (PADDING_X, y), text, self.font_subtitle, ACCENT_RED)
 
-    def _draw_text_shadow(
-        self,
-        draw: ImageDraw.Draw,
-        xy: tuple,
-        text: str,
-        font,
-        fill,
-        *,
-        shadow: bool = True,
-        shadow_color=(0, 0, 0),
-    ) -> None:
-        if shadow:
-            x, y = xy
-            self._draw_text(draw, (x + 2, y + 2), text, font, shadow_color)
-            self._draw_text(draw, (x + 1, y + 1), text, font, shadow_color)
-        self._draw_text(draw, xy, text, font, fill)
-
-    def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill, *, shadow: bool = False):
+    def _text_right(self, draw: ImageDraw.Draw, x_right: int, y: int, text: str, font, fill):
         tw, _ = self._text_size(draw, text, font)
-        self._draw_text_shadow(draw, (x_right - tw, y), text, font, fill, shadow=shadow)
+        self._draw_text(draw, (x_right - tw, y), text, font, fill)
 
     def _text_mid(self, draw: ImageDraw.Draw, x: float, cy: float, text: str, font, fill,
-                  *, align: str = "left", shadow: bool = False) -> int:
+                  *, align: str = "left") -> int:
         top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
         w = self._text_size(draw, text, font)[0]
         if align == "center":
             x -= w / 2
         elif align == "right":
             x -= w
-        self._draw_text_shadow(draw, (int(round(x)), int(round(cy - (top + bottom) / 2))), text, font, fill,
-                               shadow=shadow)
+        self._draw_text(draw, (int(round(x)), int(round(cy - (top + bottom) / 2))), text, font, fill)
         return int(round(x + w))
 
-    def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill, *, shadow: bool = False):
+    def _text_center(self, draw: ImageDraw.Draw, cx: int, y: int, text: str, font, fill):
         tw, _ = self._text_size(draw, text, font)
-        self._draw_text_shadow(draw, (cx - tw // 2, y), text, font, fill, shadow=shadow)
+        self._draw_text(draw, (cx - tw // 2, y), text, font, fill)
 
     def _draw_panel(self, draw: ImageDraw.Draw, x: int, y: int, w: int, h: int, bg=PANEL_BG):
         draw.rounded_rectangle((x, y, x + w, y + h), radius=8, fill=bg)

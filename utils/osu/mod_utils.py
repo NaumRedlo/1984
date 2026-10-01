@@ -1,4 +1,5 @@
-from typing import Dict, Tuple
+import re
+from typing import Dict, Optional, Tuple
 
 MOD_BITS = {
     "NF": 1 << 0,
@@ -41,10 +42,48 @@ MOD_DIFFICULTY = {
     "AP": 0.10,
 }
 
-def mod_difficulty(mods_str: str) -> float:
+STAR_MODS = frozenset({"DT", "NC", "HT", "DC", "HR", "EZ", "FL", "DA"})
+PARTLY_IN_STARS = {"HD": 1.03}
+NEUTRAL_MODS = frozenset({"CL", "NM", "SD", "PF"})
+STARS_SAY_NOTHING = 0.005
+
+def mod_tokens(mods) -> Tuple[str, ...]:
+    if isinstance(mods, (list, tuple)):
+        parts = [m.get("acronym", "") if isinstance(m, dict) else str(m) for m in mods]
+    else:
+        parts = re.split(r"[^A-Za-z0-9]+", str(mods or ""))
+    out = []
+    for part in parts:
+        part = part.upper()
+        if not part:
+            continue
+        if len(part) > 3 and len(part) % 2 == 0:
+            out.extend(part[i:i + 2] for i in range(0, len(part), 2))
+        else:
+            out.append(part)
+    return tuple(out)
+
+def mod_difficulty(mods_str) -> float:
     weight = 1.0
-    for token in parse_mods_tokens((mods_str or "").upper()):
+    for token in mod_tokens(mods_str):
         weight *= MOD_DIFFICULTY.get(token, 1.0)
+    return weight
+
+def mods_hardness(mods, stars: Optional[float] = None, nominal: Optional[float] = None) -> float:
+    tokens = [token for token in mod_tokens(mods) if token not in NEUTRAL_MODS]
+    told = None
+    if stars and nominal and nominal > 0:
+        ratio = float(stars) / float(nominal)
+        if abs(ratio - 1.0) > STARS_SAY_NOTHING:
+            told = ratio
+    weight = told if told is not None else 1.0
+    for token in tokens:
+        if told is None:
+            weight *= MOD_DIFFICULTY.get(token, 1.0)
+        elif token in PARTLY_IN_STARS:
+            weight *= PARTLY_IN_STARS[token]
+        elif token not in STAR_MODS:
+            weight *= MOD_DIFFICULTY.get(token, 1.0)
     return weight
 
 def _ar_to_ms(ar: float) -> float:

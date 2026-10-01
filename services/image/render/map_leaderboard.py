@@ -59,6 +59,7 @@ _MLB_STRINGS = {
         "combo": "Combo",
         "pp": "PP",
         "score": "Score",
+        "date": "Date",
         "plays": "Plays",
         "players": "Players",
         "average": "Average result",
@@ -85,6 +86,7 @@ _MLB_STRINGS = {
         "combo": "Комбо",
         "pp": "PP",
         "score": "Очки",
+        "date": "Дата",
         "plays": "Попыток",
         "players": "Игроков",
         "average": "Средний результат",
@@ -243,12 +245,13 @@ class MapLeaderboardCardMixin:
         y = self.PAD
         self._mlb_header(img, draw, (left_x, y, left_x + self.LEFT_W, y + head_h), data)
         board_y = y + head_h + self.GAP
+        lang = data.get("lang") or "en"
         self._mlb_board(img, draw, (left_x, board_y, left_x + self.LEFT_W, board_y + board_h),
-                        shown, viewer_name, page, pages, S)
+                        shown, viewer_name, page, pages, S, lang)
         if yours_h:
             yy = board_y + board_h + self.GAP
             self._mlb_viewer(img, draw, (left_x, yy, left_x + self.LEFT_W, yy + yours_h),
-                             viewer, S)
+                             viewer, S, lang)
 
         self._mlb_titles(img, draw, (right_x, y, right_x + right_w, y + titles_h), titles, S)
         sy = y + titles_h + self.GAP
@@ -366,7 +369,7 @@ class MapLeaderboardCardMixin:
         w = self._text_size(draw, text, font)[0]
         self._draw_text(draw, (x0 + (x1 - x0 - w) / 2, y0 + dy), text, font, fill)
 
-    def _mlb_board(self, img, draw, box, shown, viewer_name, page, pages, S):
+    def _mlb_board(self, img, draw, box, shown, viewer_name, page, pages, S, lang="en"):
         x0, y0, x1, y1 = box
         _panel(draw, box)
         self._draw_text(draw, (x0 + 20, y0 + 16), S["board"], self.font_label, TEXT)
@@ -391,7 +394,7 @@ class MapLeaderboardCardMixin:
         ry = y0 + 76
         for i, row in enumerate(shown):
             self._mlb_row(img, draw, (x0 + 10, ry, x1 - 10, ry + 48), row, cols,
-                          alt=i % 2 == 1, is_viewer=row.get("username") == viewer_name)
+                          alt=i % 2 == 1, is_viewer=row.get("username") == viewer_name, lang=lang)
             ry += self.ROW_H
 
     def _mlb_columns(self, x0, x1):
@@ -405,7 +408,7 @@ class MapLeaderboardCardMixin:
             "score": x1 - 22,
         }
 
-    def _mlb_row(self, img, draw, box, row, cols, alt, is_viewer):
+    def _mlb_row(self, img, draw, box, row, cols, alt, is_viewer, lang="en"):
         x0, y0, x1, y1 = box
         if is_viewer:
             draw.rounded_rectangle(box, radius=12, fill=MINE_BG, outline=MINE, width=2)
@@ -420,9 +423,12 @@ class MapLeaderboardCardMixin:
         self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, int(mid), 36)
 
         name_limit = cols["grade"] - 22 - cols["name"]
-        self._text_mid(draw, cols["name"], mid,
+        when = _when(row.get("at"), lang)
+        self._text_mid(draw, cols["name"], mid - 9 if when else mid,
                        self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
                        self.font_row, TEXT)
+        if when:
+            self._text_mid(draw, cols["name"], mid + 13, when, self.font_stat_label, MINE if is_viewer else MUTED)
 
         rank = (row.get("rank") or "").upper()
         if rank:
@@ -477,7 +483,7 @@ class MapLeaderboardCardMixin:
             draw.ellipse((x, mid - d // 2, x + d, mid + d // 2), fill=RECENT_TRACK)
         draw.ellipse((x, mid - d // 2, x + d, mid + d // 2), outline=(228, 76, 76), width=2)
 
-    def _mlb_viewer(self, img, draw, box, viewer, S):
+    def _mlb_viewer(self, img, draw, box, viewer, S, lang="en"):
         x0, y0, x1, y1 = box
         draw.rounded_rectangle(box, radius=RADIUS, fill=MINE_BG, outline=MINE_DIM, width=2)
         mid = (y0 + y1) // 2
@@ -490,13 +496,16 @@ class MapLeaderboardCardMixin:
         if not place:
             return
 
-        stats = (
+        stats = [
             (S["accuracy"], f"{float(viewer.get('accuracy') or 0):.2f}%", TEXT),
             (S["combo"], f"{int(viewer.get('combo') or 0):,}x", TEXT),
             (S["pp"], _pp_text(viewer), MINE),
             (S["score"], f"{int(viewer.get('score') or 0):,}", TEXT),
-        )
-        left = x0 + 300
+        ]
+        when = _when(viewer.get("at"), lang)
+        if when:
+            stats.insert(0, (S["date"], when, TEXT))
+        left = x0 + 260
         span = (x1 - 20 - left) // len(stats)
         for i, (label, value, colour) in enumerate(stats):
             cx = left + span * i + span // 2
@@ -524,6 +533,12 @@ class MapLeaderboardCardMixin:
                 mx = x1 - 28 - vw
                 for mod in mods:
                     mx = self._draw_mod_badge(img, mx, int(mid - size / 2), mod, size=size) + 4
+                stars = title.get("stars")
+                if stars:
+                    pill_w = self._text_size(draw, f"{float(stars):.2f}", self.font_stat_label)[0] + 13 + 4 + 20
+                    self._draw_sr_pill(img, x1 - 28 - vw - 10 - pill_w, 0, float(stars), self.font_stat_label,
+                                       center_y=mid, star_size=13)
+                    vw += 10 + pill_w
                 draw = ImageDraw.Draw(img)
             else:
                 value = title.get("value") or ""

@@ -328,14 +328,13 @@ class ProfileCardMixin:
         cy = ay + d / 2 - span / 2
         for kind, step in lines:
             if kind == "name":
-                nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE, shadow=True)
+                nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE)
                 if data.get("is_supporter"):
                     self._pf_supporter_badge(img, nr + 14, int(round(cy)))
             elif kind == "handle":
                 self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
             elif kind == "title":
-                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or COL_RED,
-                               shadow=True)
+                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or COL_RED)
             else:
                 self._pf_country_line(img, data, nx, cy, fonts, S)
             draw = ImageDraw.Draw(img)
@@ -344,10 +343,10 @@ class ProfileCardMixin:
         rank_x = 872
         gr = data.get("global_rank", 0) or 0
         cr = data.get("country_rank", 0) or 0
-        self._draw_text_shadow(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], COL_MUTED)
-        self._draw_text_shadow(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
-        self._draw_text_shadow(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
-        self._draw_text_shadow(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
+        self._draw_text(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], COL_MUTED)
+        self._draw_text(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
+        self._draw_text(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
+        self._draw_text(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
 
     def _pf_country_line(self, img, data, x, cy, fonts, S):
         flag = load_flag(str(data.get("country", "") or ""), height=30)
@@ -364,7 +363,7 @@ class ProfileCardMixin:
         )
         if not cname or cname in ("—", "__", "--"):
             cname = S["unknown_country"]
-        self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE, shadow=True)
+        self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
 
     def _pf_supporter_badge(self, img, x, cy):
         ph, pw = 40, 64
@@ -548,7 +547,7 @@ class ProfileCardMixin:
         gfont = fonts["poster_grade_ss"] if len(label) > 1 else fonts["poster_grade"]
         g_top, g_bot = draw.textbbox((0, 0), "H", font=gfont)[1::2]
         g_cy = y + h - 12 - (g_bot - g_top) / 2
-        g_right = self._text_mid(draw, x + 10, g_cy, label, gfont, gcol, shadow=True)
+        g_right = self._text_mid(draw, x + 10, g_cy, label, gfont, gcol)
 
         pp_txt = f"{int(pp)}pp"
         acc_txt = f"{acc:.2f}%"
@@ -558,11 +557,11 @@ class ProfileCardMixin:
         if self._text_size(draw, pp_txt, pp_font)[0] > room:
             pp_font = fonts["poster_pp_sm"]
         if grade == "X":
-            self._text_mid(draw, right, g_cy, pp_txt, pp_font, COL_WHITE, align="right", shadow=True)
+            self._text_mid(draw, right, g_cy, pp_txt, pp_font, COL_WHITE, align="right")
         else:
-            self._text_mid(draw, right, g_cy - 9, pp_txt, pp_font, COL_WHITE, align="right", shadow=True)
+            self._text_mid(draw, right, g_cy - 9, pp_txt, pp_font, COL_WHITE, align="right")
             self._text_mid(draw, right, g_cy + 10, acc_txt, fonts["poster_acc"], (205, 203, 214),
-                           align="right", shadow=True)
+                           align="right")
 
     def _pf_right_panel(self, img, data, fonts):
         S = _pf_lang(data)

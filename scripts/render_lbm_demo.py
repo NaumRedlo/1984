@@ -42,15 +42,15 @@ class _Osu:
         }
 
 PLAYERS = [
-    ("NaumRedlo", "RU", 720.0, 99.2, 2100, "XH", "HD,HR"),
-    ("nazeetskyyy", "US", 673.0, 98.6, 2010, "X", "DT"),
-    ("rookie_main", "RU", 626.0, 98.0, 1920, "SH", "HD"),
-    ("ppfarmer", "US", 579.0, 97.4, 1830, "S", ""),
-    ("streamgod", "RU", 532.0, 96.8, 1740, "A", "FL"),
-    ("acc_demon", "US", 485.0, 96.2, 1650, "A", "HD,DT"),
-    ("tapper", "RU", 438.0, 95.6, 1560, "B", ""),
-    ("fl_andy", "US", 391.0, 95.0, 1470, "C", "EZ"),
-    ("miss_one", "RU", 344.0, 94.4, 1380, "D", "NF"),
+    ("NaumRedlo", "RU", 720.0, 99.2, 2100, "XH", "HD,HR", 7.81),
+    ("nazeetskyyy", "US", 673.0, 98.6, 2010, "X", "DT", 10.32),
+    ("rookie_main", "RU", 626.0, 98.0, 1920, "SH", "HD", 7.32),
+    ("ppfarmer", "US", 579.0, 97.4, 1830, "S", "", 7.32),
+    ("streamgod", "RU", 532.0, 96.8, 1740, "A", "FL", 8.4),
+    ("acc_demon", "US", 485.0, 96.2, 1650, "A", "CL,HD,DT", 10.32),
+    ("tapper", "RU", 438.0, 95.6, 1560, "B", "", 7.32),
+    ("fl_andy", "US", 391.0, 95.0, 1470, "C", "EZ", 6.1),
+    ("miss_one", "RU", 344.0, 94.4, 1380, "D", "NF", 7.32),
 ]
 
 async def build(status: str) -> dict:
@@ -62,7 +62,7 @@ async def build(status: str) -> dict:
                (70, 130, 150), (140, 80, 120), (90, 110, 70), (110, 70, 90)]
     start = datetime(2026, 9, 1, 12, tzinfo=timezone.utc)
     async with factory() as session:
-        for i, (name, country, pp, acc, combo, rank, mods) in enumerate(PLAYERS):
+        for i, (name, country, pp, acc, combo, rank, mods, stars) in enumerate(PLAYERS):
             user = User(chat_id=CHAT, telegram_id=100 + i, osu_user_id=200 + i, osu_username=name,
                         country=country, avatar_data=_picture(palette[i]))
             session.add(user)
@@ -71,7 +71,7 @@ async def build(status: str) -> dict:
             session.add(UserMapAttempt(
                 player_id=user.player_id, score_id=1000 + i, beatmap_id=MAP,
                 pp=0.0 if loved else pp, pp_estimated=pp if loved else None,
-                score=int(pp * 14000), accuracy=acc, max_combo=combo, rank=rank, mods=mods,
+                score=int(pp * 14000), accuracy=acc, max_combo=combo, rank=rank, mods=mods, eff_sr=stars,
                 played_at=start + timedelta(days=9 - i),
             ))
         await session.commit()

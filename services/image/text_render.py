@@ -145,15 +145,11 @@ def draw_text_multifont(
     fill,
     *,
     cyrillic_fallback=None,
-    shadow: bool = False,
-    shadow_color=(0, 0, 0),
 ) -> int:
     if not text:
         return xy[0]
     x, y = xy
     for f, run in _runs(text, primary, fallback, cyrillic_fallback):
-        if shadow:
-            _draw_run(draw, x + 1, y + 1, run, f, shadow_color)
         _draw_run(draw, x, y, run, f, fill)
         x += _run_width(draw, run, f)
     return x

@@ -11,7 +11,7 @@ from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.i18n import t
-from utils.osu.mod_utils import mod_difficulty
+from utils.osu.mod_utils import NEUTRAL_MODS, mod_tokens, mods_hardness
 from utils.logger import get_logger
 
 logger = get_logger("services.leaderboard")
@@ -583,7 +583,25 @@ def _ranks_by_score(status) -> bool:
         status = _STATUS_INT_MAP.get(status, "")
     return str(status or "").lower() in _SCORE_RANKED_STATUSES
 
-def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[str, Any]]:
+HARDER_THAN_PLAIN = 1.005
+
+async def _fill_stars_with_mods(osu_api_client, beatmap_id: int, rows: list[dict[str, Any]], stars: Optional[float],
+                                checksum: Optional[str]) -> None:
+    ask = getattr(osu_api_client, "effective_sr", None)
+    if ask is None or not stars:
+        return
+    for row in rows:
+        if row.get("eff_sr") or not any(token not in NEUTRAL_MODS for token in mod_tokens(row.get("mods"))):
+            continue
+        try:
+            found = await ask(beatmap_id, row.get("mods"), stars, checksum)
+        except Exception as exc:
+            logger.info("stars of map %s with %s were not found: %s", beatmap_id, row.get("mods"), exc)
+            continue
+        if found:
+            row["eff_sr"] = float(found)
+
+def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool, stars: Optional[float] = None) -> list[dict[str, Any]]:
     if not rows:
         return []
 
@@ -608,11 +626,15 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool) -> list[dict[st
         best("score", lambda r: f"{int(r.get('score') or 0):,}", "score", "stars"),
     ]
 
-    hardest = max(rows, key=lambda r: mod_difficulty(r.get("mods") or ""))
-    if mod_difficulty(hardest.get("mods") or "") > 1.0:
+    def hardness(row):
+        return mods_hardness(row.get("mods") or "", row.get("eff_sr"), stars)
+
+    hardest = max(rows, key=hardness)
+    if hardness(hardest) > HARDER_THAN_PLAIN:
         titles.append({
             "kind": "mods", "icon": "skull",
             "who": hardest.get("username") or "—", "value": hardest.get("mods") or "",
+            "stars": hardest.get("eff_sr") if stars and hardest.get("eff_sr") and abs(float(hardest["eff_sr"]) - float(stars)) > 0.005 else None,
         })
     return titles
 
@@ -724,6 +746,8 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             UserMapAttempt.max_combo,
             UserMapAttempt.rank,
             UserMapAttempt.mods,
+            UserMapAttempt.eff_sr,
+            func.coalesce(UserMapAttempt.played_at, UserMapAttempt.created_at),
         )
         .join(UserMapAttempt, UserMapAttempt.player_id == User.player_id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
@@ -731,7 +755,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))
     )
 
-    for position, (user, pp, pp_estimated, score, accuracy, max_combo, rank, mods) in enumerate(result.all(), start=1):
+    for position, (user, pp, pp_estimated, score, accuracy, max_combo, rank, mods, eff_sr, played) in enumerate(result.all(), start=1):
         estimated = not pp and pp_estimated is not None
         pp_f = float(pp_estimated if estimated else pp or 0)
         score_i = int(score or 0)
@@ -749,6 +773,8 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             "accuracy": float(accuracy or 0.0),
             "combo": int(max_combo or 0),
             "mods": _parse_mods(mods),
+            "eff_sr": float(eff_sr) if eff_sr else None,
+            "at": played.replace(tzinfo=timezone.utc) if played is not None and played.tzinfo is None else played,
             "rank": rank or "F",
             "avatar_url": user.avatar_url,
             "cover_url": user.cover_url,
@@ -760,6 +786,8 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         })
 
     total_pages = _calc_lbm_total_pages(len(rows))
+    stars = float(beatmap.get("difficulty_rating") or 0.0) or None
+    await _fill_stars_with_mods(osu_api_client, beatmap_id, rows, stars, beatmap.get("checksum"))
 
     data = {
         "map_title": map_title,
@@ -780,7 +808,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         "rows": rows,
         "page": 0,
 
-        "titles": _map_titles(rows, rank_by_score),
+        "titles": _map_titles(rows, rank_by_score, stars),
         "average": _map_average(rows, rank_by_score),
         "history": await _map_record_history(
             session, beatmap_id, chat_id, rank_by_score=rank_by_score

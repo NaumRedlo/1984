@@ -302,8 +302,8 @@ class RecentCardMixin:
         mrow_y = hero_y + 22
         draw = self._paste_ringed_avatar(img, mapper_avatar, mx + 2, mrow_y, mav_sz)
         mav_cy = mrow_y + mav_sz / 2
-        self._text_mid(draw, mx + mav_sz + 12, mav_cy - 7, S["mapped_by"], f_lbl, TEXT_SECONDARY, shadow=True)
-        self._text_mid(draw, mx + mav_sz + 12, mav_cy + 8, mapper_name[:26], f_small, (210, 210, 222), shadow=True)
+        self._text_mid(draw, mx + mav_sz + 12, mav_cy - 7, S["mapped_by"], f_lbl, TEXT_SECONDARY)
+        self._text_mid(draw, mx + mav_sz + 12, mav_cy + 8, mapper_name[:26], f_small, (210, 210, 222))
 
         t_y = hero_y + 60
         disp = title
@@ -311,7 +311,7 @@ class RecentCardMixin:
             disp = disp[:-1]
         if disp != title:
             disp += "…"
-        self._draw_text_shadow(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
+        self._draw_text(draw, (mx, t_y), disp, f_title, TEXT_PRIMARY)
 
         art_txt = artist
         while self._text_size(draw, art_txt + "…", f_artist)[0] > mid_w * 0.55 and len(art_txt) > 4:
@@ -319,7 +319,7 @@ class RecentCardMixin:
         if art_txt != artist:
             art_txt += "…"
         a_cy = t_y + 58
-        apx = self._text_mid(draw, mx, a_cy, art_txt, f_artist, TEXT_SECONDARY, shadow=True) + 12
+        apx = self._text_mid(draw, mx, a_cy, art_txt, f_artist, TEXT_SECONDARY) + 12
         if version:
             vlabel = version if len(version) <= 18 else version[:17] + "…"
             vpw = self._text_size(draw, vlabel, f_pill)[0] + 18
@@ -336,7 +336,7 @@ class RecentCardMixin:
             if ic:
                 img.paste(ic, (cx, int(round(chip_cy - ic.height / 2))), ic)
                 cx += 21
-            cx = self._text_mid(ImageDraw.Draw(img), cx, chip_cy, text, f_chip, TEXT_PRIMARY, shadow=True) + 22
+            cx = self._text_mid(ImageDraw.Draw(img), cx, chip_cy, text, f_chip, TEXT_PRIMARY) + 22
 
         cx = self._draw_sr_pill(img, cx, chip_y, stars, f_chip, center_y=chip_cy)
         chip("timer", f"{total_length // 60}:{total_length % 60:02d}")
@@ -403,7 +403,7 @@ class RecentCardMixin:
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
 
         self._text_mid(draw, centers[0], lbl_cy, "PP", f_lbl, TEXT_SECONDARY, align="center")
-        self._text_mid(draw, centers[0], val_cy, f"{pp:.0f}" if pp else "—", f_val, pp_color, align="center", shadow=True)
+        self._text_mid(draw, centers[0], val_cy, f"{pp:.0f}" if pp else "—", f_val, pp_color, align="center")
         pp_badges = []
         if is_fc:
             pp_badges.append(("FC", ACCENT_GREEN))
@@ -425,7 +425,7 @@ class RecentCardMixin:
         draw = ImageDraw.Draw(img)
 
         self._text_mid(draw, centers[1], lbl_cy, S["accuracy"], f_lbl, TEXT_SECONDARY, align="center")
-        self._text_mid(draw, centers[1], val_cy, f"{acc:.2f}%", f_val, TEXT_PRIMARY, align="center", shadow=True)
+        self._text_mid(draw, centers[1], val_cy, f"{acc:.2f}%", f_val, TEXT_PRIMARY, align="center")
         bar(1, acc / 100.0, RECENT_LINE)
 
         self._text_mid(draw, centers[2], lbl_cy, S["combo"], f_lbl, TEXT_SECONDARY, align="center")
@@ -434,12 +434,12 @@ class RecentCardMixin:
         combo_w, _ = self._text_size(draw, combo_str, f_val)
         max_w, _ = self._text_size(draw, max_str, f_chip)
         combo_x0 = int(centers[2] - (combo_w + max_w) / 2)
-        self._text_mid(draw, combo_x0, val_cy, combo_str, f_val, RECENT_LINE, shadow=True)
+        self._text_mid(draw, combo_x0, val_cy, combo_str, f_val, RECENT_LINE)
         if max_str:
             v_top, v_bottom = draw.textbbox((0, 0), "H", font=f_val)[1::2]
             c_top, c_bottom = draw.textbbox((0, 0), "H", font=f_chip)[1::2]
             baseline = val_cy - (v_top + v_bottom) / 2 + v_bottom
-            self._draw_text_shadow(draw, (combo_x0 + combo_w + 2, int(round(baseline - c_bottom))),
+            self._draw_text(draw, (combo_x0 + combo_w + 2, int(round(baseline - c_bottom))),
                                    max_str, f_chip, TEXT_SECONDARY)
         bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
 
@@ -448,7 +448,7 @@ class RecentCardMixin:
             col = tuple(col)
             c = centers[3 + i]
             self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
-            self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center", shadow=True)
+            self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center")
 
         mid_y = stats_y + stats_h + 16
         mid_h = H - mid_y - 22
@@ -512,13 +512,13 @@ class RecentCardMixin:
         self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
                                  outline=RECENT_ACCENT, width=3)
         draw = ImageDraw.Draw(img)
-        self._text_center(draw, pcx, pav_y + pav + 12, S["played_by"], f_lbl, TEXT_SECONDARY, shadow=True)
+        self._text_center(draw, pcx, pav_y + pav + 12, S["played_by"], f_lbl, TEXT_SECONDARY)
         uname = username
         while self._text_size(draw, uname, f_player)[0] > ply_w - 24 and len(uname) > 3:
             uname = uname[:-1]
         if uname != username:
             uname += ".."
-        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE, shadow=True)
+        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE)
 
         return self._save(img)
 

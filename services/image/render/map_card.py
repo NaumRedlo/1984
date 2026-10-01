@@ -134,11 +134,11 @@ class MapCardMixin:
         meta = self._fit_pool(draw, meta, self.font_label, text_w)
 
         self._draw_text(draw, (_PAD, zone_h - 150), artist, self.font_subtitle,
-                        TEXT_SECONDARY, shadow=True)
+                        TEXT_SECONDARY)
         self._draw_text(draw, (_PAD, zone_h - 126), title, self.font_big,
-                        _WHITE, shadow=True)
+                        _WHITE)
         self._draw_text(draw, (_PAD, zone_h - 86), meta, self.font_label,
-                        (170, 178, 215), shadow=True)
+                        (170, 178, 215))
 
     def generate_map_card(
         self, data: Dict, cover: Optional[Image.Image] = None,
@@ -334,8 +334,8 @@ class MapCardMixin:
                                      outline=colors.ACCENT, width=3)
             draw = ImageDraw.Draw(card)
             self._text_right(draw, text_right, av_cy - 20, S["mapped_by"], self.font_stat_label,
-                             _WHATIF_MUTED, shadow=True)
-            self._text_right(draw, text_right, av_cy - 1, creator, self.font_label, _WHITE, shadow=True)
+                             _WHATIF_MUTED)
+            self._text_right(draw, text_right, av_cy - 1, creator, self.font_label, _WHITE)
             mapper_left = text_right - block_w - 14
 
         text_x = thumb_x + cov_w + 18
@@ -344,8 +344,8 @@ class MapCardMixin:
         text_w = min(px1 - head_pad - 110 - text_x, mapper_left - text_x)
         artist = self._fit_pool(draw, str(data.get("artist") or ""), self.font_subtitle, text_w)
         title = self._fit_pool(draw, str(data.get("title") or "???"), self.font_big, text_w)
-        self._draw_text(draw, (text_x, text_y), artist, self.font_subtitle, TEXT_SECONDARY, shadow=True)
-        self._draw_text(draw, (text_x, text_y + 22), title, self.font_big, _WHITE, shadow=True)
+        self._draw_text(draw, (text_x, text_y), artist, self.font_subtitle, TEXT_SECONDARY)
+        self._draw_text(draw, (text_x, text_y + 22), title, self.font_big, _WHITE)
 
         version = str(data.get("version") or "")
         vy = text_y + 64

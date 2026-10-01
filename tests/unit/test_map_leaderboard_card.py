@@ -46,3 +46,15 @@ async def test_a_reader_with_no_result_and_one_off_the_page_both_get_their_own_p
     data["viewer"] = data["rows"][0]
     without = Image.open(BytesIO((await CardRenderer().generate_map_leaderboard_v2_async(data)).getvalue())).height
     assert with_panel > without
+
+async def test_every_row_says_when_it_was_played_and_the_reader_s_own_panel_does_too():
+    from services.image.render.map_leaderboard import _MLB_STRINGS
+
+    data = await build("ranked")
+    assert all(row["at"] is not None for row in data["rows"])
+    hardest = [title for title in data["titles"] if title["kind"] == "mods"]
+    assert hardest and hardest[0]["who"] == "acc_demon" and hardest[0]["stars"] == 10.32
+    assert all(words.get("date") for words in _MLB_STRINGS.values())
+    data["viewer"] = dict(data["rows"][3], username="elsewhere")
+    png = (await CardRenderer().generate_map_leaderboard_v2_async(data)).getvalue()
+    assert Image.open(BytesIO(png)).height > 900
