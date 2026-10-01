@@ -11,6 +11,7 @@ from services.image.constants import (
     SANS_BOLD, SANS_SEMI, SANS_REG, NUM_BOLD,
     MPLUS_BOLD, MPLUS_REG,
 )
+from services.image import legibility
 from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
 from services.image.text_render import (
     draw_text_multifont, text_size_multifont,
@@ -138,7 +139,17 @@ class BaseCardRenderer:
     ) -> int:
         fb = self._font_fallback(font)
         cyfb = self._font_cyrillic_fallback(font)
+        fill = self._readable(draw, xy, text, font, fill)
         return draw_text_multifont(draw, xy, text, font, fb, fill, cyrillic_fallback=cyfb)
+
+    def _readable(self, draw: ImageDraw.Draw, xy: tuple, text: str, font, fill):
+        image = getattr(draw, "_image", None)
+        if image is None or not text or not legibility.is_quiet(fill):
+            return fill
+        w, h = self._text_size(draw, text, font)
+        top = draw.textbbox((0, 0), "H", font=font)[1]
+        x, y = xy
+        return legibility.readable(fill, legibility.backdrop(image, (x, y + top, x + w, y + top + max(h - top, 1))))
 
     def _text_size(self, draw: ImageDraw.Draw, text: str, font) -> tuple[int, int]:
         fb = self._font_fallback(font)
@@ -325,7 +336,7 @@ class BaseCardRenderer:
                      corner_mask: Optional[Image.Image] = None) -> Image.Image:
         from PIL import ImageChops
         bg = cover_center_crop(cover.convert("RGBA"), w, h)
-        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, darken_alpha)))
+        bg = legibility.calm(Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, darken_alpha))))
         ramp = Image.new("L", (w, h), 0)
         rd = ImageDraw.Draw(ramp)
         for fx in range(w):

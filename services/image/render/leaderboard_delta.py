@@ -3,6 +3,7 @@ from io import BytesIO
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from services.image.base import BaseCardRenderer
+from services.image import legibility
 from services.image import colors
 from services.image.constants import TOP_COLORS
 from services.image.utils import cover_center_crop, load_icon
@@ -85,7 +86,7 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         except Exception:
             return None
 
-        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 150)))
+        bg = legibility.calm(Image.alpha_composite(bg, Image.new("RGBA", (w, h), (0, 0, 0, 150))))
 
         ramp = Image.new("L", (w, h), 0)
         rd = ImageDraw.Draw(ramp)

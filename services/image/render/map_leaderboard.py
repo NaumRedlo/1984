@@ -11,6 +11,7 @@ from services.image.constants import (
     GRADE_COLORS, MOD_ACRONYMS, NUM_BOLD, RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL,
     RECENT_TRACK, TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS, status_colours, status_name,
 )
+from services.image import legibility
 from services.image.utils import (
     _find_font, _none_coro, cover_center_crop, download_image, load_icon,
 )
@@ -358,7 +359,7 @@ class MapLeaderboardCardMixin:
             ramp.putpixel((i, 0), int(232 - 150 * (i / max(1, w - 1))))
         scrim = Image.new("RGBA", (w, h), (12, 9, 13, 255))
         scrim.putalpha(ramp.resize((w, h)))
-        art = Image.alpha_composite(art, scrim)
+        art = legibility.calm(Image.alpha_composite(art, scrim))
 
         mask = Image.new("L", (w, h), 0)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=RADIUS, fill=255)
@@ -533,12 +534,6 @@ class MapLeaderboardCardMixin:
                 mx = x1 - 28 - vw
                 for mod in mods:
                     mx = self._draw_mod_badge(img, mx, int(mid - size / 2), mod, size=size) + 4
-                stars = title.get("stars")
-                if stars:
-                    pill_w = self._text_size(draw, f"{float(stars):.2f}", self.font_stat_label)[0] + 13 + 4 + 20
-                    self._draw_sr_pill(img, x1 - 28 - vw - 10 - pill_w, 0, float(stars), self.font_stat_label,
-                                       center_y=mid, star_size=13)
-                    vw += 10 + pill_w
                 draw = ImageDraw.Draw(img)
             else:
                 value = title.get("value") or ""

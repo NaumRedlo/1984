@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from services.image import legibility
 from services.image.constants import (
     SANS_BOLD,
     NUM_BOLD,
@@ -194,7 +195,7 @@ class TopPlaysCardMixin:
             bg = cover_center_crop(cover, w, h).convert("RGBA")
         except Exception:
             return
-        bg = Image.alpha_composite(bg, Image.new("RGBA", (w, h), (16, 12, 14, darken)))
+        bg = legibility.calm(Image.alpha_composite(bg, Image.new("RGBA", (w, h), (16, 12, 14, darken))))
         mask = self._rounded_mask((w, h), radius)
         img.paste(bg.convert("RGB"), (x, y), mask)
 

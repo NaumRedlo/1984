@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw
 
 from services.image import colors
 from services.image.constants import TEXT_SECONDARY, status_colours
+from services.image import legibility
 from services.image.utils import download_image, cover_center_crop, load_icon, tint_icon
 from services.image.render.recent import _sr_color
 from utils.formatting.text import format_length
@@ -100,7 +101,7 @@ class MapCardMixin:
         if cover is not None:
             try:
                 bg = cover_center_crop(cover.convert("RGBA"), w, zone_h)
-                bg = Image.alpha_composite(bg, _vertical_shade(w, zone_h, 60, 225))
+                bg = legibility.calm(Image.alpha_composite(bg, _vertical_shade(w, zone_h, 60, 225)))
                 card.paste(bg, (0, 0), bg)
             except Exception:
                 pass

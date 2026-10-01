@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 from PIL import Image, ImageDraw
 
+from services.image import legibility
 from services.image.constants import (
     HEADER_BG,
     ROW_EVEN,
@@ -47,7 +48,7 @@ class CompareCardMixin:
         if cover1:
             cropped1 = cover_center_crop(cover1, half_w, cover_h)
             overlay1 = Image.new("RGBA", (half_w, cover_h), (0, 0, 0, 100))
-            cropped1 = Image.alpha_composite(cropped1, overlay1)
+            cropped1 = legibility.calm(Image.alpha_composite(cropped1, overlay1))
             fade1 = Image.new("L", (half_w, cover_h), 255)
             fade_zone = 80
             for fx in range(fade_zone):
@@ -60,7 +61,7 @@ class CompareCardMixin:
         if cover2:
             cropped2 = cover_center_crop(cover2, half_w, cover_h)
             overlay2 = Image.new("RGBA", (half_w, cover_h), (0, 0, 0, 100))
-            cropped2 = Image.alpha_composite(cropped2, overlay2)
+            cropped2 = legibility.calm(Image.alpha_composite(cropped2, overlay2))
             fade2 = Image.new("L", (half_w, cover_h), 255)
             fade_zone = 80
             for fx in range(fade_zone):

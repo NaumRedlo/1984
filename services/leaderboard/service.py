@@ -634,7 +634,6 @@ def _map_titles(rows: list[dict[str, Any]], rank_by_score: bool, stars: Optional
         titles.append({
             "kind": "mods", "icon": "skull",
             "who": hardest.get("username") or "—", "value": hardest.get("mods") or "",
-            "stars": hardest.get("eff_sr") if stars and hardest.get("eff_sr") and abs(float(hardest["eff_sr"]) - float(stars)) > 0.005 else None,
         })
     return titles
 

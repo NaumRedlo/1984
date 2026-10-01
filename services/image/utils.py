@@ -7,6 +7,7 @@ import aiohttp
 from PIL import Image, ImageDraw
 
 from utils.logger import get_logger
+from services.image import legibility
 from services.image.constants import ICONS_DIR, FLAGS_DIR, FALLBACK_CANDIDATES, MOD_INK
 
 logger = get_logger("services.image_gen")
@@ -168,5 +169,5 @@ def cover_center_crop(cover: Image.Image, target_w: int, target_h: int) -> Image
 def draw_cover_background(img: Image.Image, cover: Image.Image, y: int, h: int, w: int, x: int = 0):
     cropped = cover_center_crop(cover, w, h)
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 128))
-    cropped = Image.alpha_composite(cropped, overlay)
+    cropped = legibility.calm(Image.alpha_composite(cropped, overlay))
     img.paste(cropped.convert("RGB"), (x, y))

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+from services.image import legibility
 from services.image.constants import (
     status_colours,
     TEXT_PRIMARY,
@@ -498,7 +499,7 @@ class RecentCardMixin:
         if player_cover or cover:
             pc = cover_center_crop(player_cover or cover, ply_w, mid_h)
             ov = Image.new("RGBA", (ply_w, mid_h), (0, 0, 0, 170))
-            pc = Image.alpha_composite(pc, ov)
+            pc = legibility.calm(Image.alpha_composite(pc, ov))
             mask = self._rounded_mask((ply_w, mid_h), 14)
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)

@@ -56,7 +56,7 @@ def test_the_hardest_mods_are_the_ones_that_raised_the_stars_most():
         dict(row("Plain", pp=400, mods="CL"), eff_sr=7.0),
     ]
     mods = [t for t in _map_titles(rows, rank_by_score=False, stars=7.0) if t["kind"] == "mods"]
-    assert mods[0]["who"] == "Rate" and mods[0]["stars"] == 9.9
+    assert mods[0]["who"] == "Rate" and mods[0]["value"] == "DT"
     easy = [dict(row("Slow", pp=100, mods="HT"), eff_sr=5.6), dict(row("Classic", pp=90, mods="CL"), eff_sr=7.0)]
     assert not [t for t in _map_titles(easy, rank_by_score=False, stars=7.0) if t["kind"] == "mods"]
 
@@ -173,7 +173,7 @@ async def test_a_row_carries_the_day_it_was_played_and_its_stars_with_mods(facto
     assert (first["at"].year, first["at"].month, first["at"].day, first["at"].utcoffset().total_seconds()) == (2026, 8, 14, 0)
     assert first["eff_sr"] == 9.9
     mods = [t for t in result.data["titles"] if t["kind"] == "mods"]
-    assert mods and mods[0]["who"] == "A" and mods[0]["stars"] == 9.9
+    assert mods and mods[0]["who"] == "A" and mods[0]["value"] == "HD,DT"
 
 async def test_a_play_stored_without_its_stars_is_asked_about_once_the_board_is_built(factory):
     from services.leaderboard.service import build_map_leaderboard
@@ -201,4 +201,4 @@ async def test_a_play_stored_without_its_stars_is_asked_about_once_the_board_is_
     assert Osu.asked == [(MAP, "DT,CL", 7.0, "abc")]
     assert {row["username"]: row["eff_sr"] for row in result.rows} == {"Fast": 9.8, "Plain": None, "Sharp": 7.3}
     mods = [t for t in result.data["titles"] if t["kind"] == "mods"]
-    assert mods[0]["who"] == "Fast" and mods[0]["stars"] == 9.8
+    assert mods[0]["who"] == "Fast" and mods[0]["value"] == "DT,CL"

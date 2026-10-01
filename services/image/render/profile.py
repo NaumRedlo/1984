@@ -425,16 +425,20 @@ class ProfileCardMixin:
         self._text_mid(draw, 968, bar_cy, pct, fonts["count"], COL_CORAL, align="right")
 
         jx = 1020
-        self._draw_text(draw, (jx, STATS_Y0 + 14), S["join_date"], fonts["stat_lbl"], COL_MUTED)
-        self._draw_text(draw, (jx, STATS_Y0 + 34), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
-        self._draw_text(draw, (jx, STATS_Y0 + 62), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
+        lines = (14, 34, 62, 82)
+        ink_top = lines[0] + draw.textbbox((0, 0), "H", font=fonts["stat_lbl"])[1]
+        ink_bottom = lines[3] + draw.textbbox((0, 0), "0", font=fonts["ps_val"])[3]
+        jy = STATS_Y0 + int(round((STATS_Y1 - STATS_Y0 - ink_top - ink_bottom) / 2))
+        self._draw_text(draw, (jx, jy + lines[0]), S["join_date"], fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (jx, jy + lines[1]), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
+        self._draw_text(draw, (jx, jy + lines[2]), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
         lang = data.get("lang") or "en"
         if data.get("is_online"):
             seen_text, seen_col = S["online"], COL_GREEN
         else:
             seen_text = _fmt_last_seen(data.get("last_visit"), lang)
             seen_col = COL_MUTED if seen_text == S["hidden"] else COL_WHITE
-        self._draw_text(draw, (jx, STATS_Y0 + 82), seen_text, fonts["ps_val"], seen_col)
+        self._draw_text(draw, (jx, jy + lines[3]), seen_text, fonts["ps_val"], seen_col)
 
     def _pf_left_panel(self, img, data, top_bg_images, fonts):
         S = _pf_lang(data)
@@ -593,10 +597,11 @@ class ProfileCardMixin:
                 draw = ImageDraw.Draw(img)
                 tx = cx0 + 32
 
-            _, lh = self._text_size(draw, label, fonts["ps_lbl"])
-            ty = ry + (icon_sz - lh) // 2
+            top, bottom = draw.textbbox((0, 0), "H", font=fonts["ps_lbl"])[1::2]
+            ty = int(round(ry + 2 + icon_sz / 2 - (top + bottom) / 2))
             self._draw_text(draw, (tx, ty), label, fonts["ps_lbl"], (208, 206, 222))
-            self._text_right(draw, cx1, ty, value, fonts["ps_val"], COL_WHITE)
+            self._text_right(draw, cx1, ty + bottom - draw.textbbox((0, 0), "0", font=fonts["ps_val"])[3], value,
+                             fonts["ps_val"], COL_WHITE)
             ry += step
 
         div_y = MID_Y0 + 56 + len(rows) * step + 6

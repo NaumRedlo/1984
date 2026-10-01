@@ -53,7 +53,7 @@ async def test_every_row_says_when_it_was_played_and_the_reader_s_own_panel_does
     data = await build("ranked")
     assert all(row["at"] is not None for row in data["rows"])
     hardest = [title for title in data["titles"] if title["kind"] == "mods"]
-    assert hardest and hardest[0]["who"] == "acc_demon" and hardest[0]["stars"] == 10.32
+    assert hardest and hardest[0]["who"] == "acc_demon" and hardest[0]["value"] == "CL,HD,DT"
     assert all(words.get("date") for words in _MLB_STRINGS.values())
     data["viewer"] = dict(data["rows"][3], username="elsewhere")
     png = (await CardRenderer().generate_map_leaderboard_v2_async(data)).getvalue()
