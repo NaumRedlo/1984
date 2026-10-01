@@ -93,6 +93,17 @@ sender attached (`PUT /render/videos/{id}/replay`, kept once under its MD5 in
 the same video itself. One person may send 60 videos a day, 20 receivers at a
 time, and an inbox holds 100.
 
+A player who switches *share my replays* on in Dossier (`POST /render/me/replays`)
+gives the bot their own osu! standard plays through `POST /render/replays`: the
+replay must carry the player's osu! name, is kept once under its MD5 in
+`PLAYER_REPLAYS_DIR` (`data/player-replays`, `PLAYER_REPLAYS_STORAGE_MOST`
+bytes, 4 GiB) with the map's name beside it — the app's words, or osu!'s when
+the app had none — and only the newest `PLAYER_REPLAYS_EACH` (300) per player
+stay. `GET /render/replays` lists the 200 newest plays of the people who share
+a chat with the asker (`scope=all`: of every sharing player), and
+`GET /render/replays/{md5}` hands one over. Switching sharing off removes the
+player's replays.
+
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
 there is more than one proxy in front of it (a CDN, then Caddy), set

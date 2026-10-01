@@ -45,6 +45,7 @@ from db.migrations.add_last_full_update import run_last_full_update_migration
 from db.migrations.scope_best_score_ids import run_scope_best_score_ids_migration
 from db.migrations.add_players import run_players_migration
 from db.migrations.add_video_sharing import run_video_sharing_migration
+from db.migrations.add_shared_replays import run_shared_replays_migration
 
 async def run_all_migrations(engine) -> None:
     await run_migration(engine)
@@ -109,5 +110,6 @@ async def run_all_migrations(engine) -> None:
     await run_scope_best_score_ids_migration(engine)
     await run_players_migration(engine)
     await run_video_sharing_migration(engine)
+    await run_shared_replays_migration(engine)
 
 __all__ = ["run_all_migrations"]

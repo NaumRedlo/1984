@@ -1,5 +1,6 @@
 import struct
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Optional
 
 @dataclass
@@ -19,6 +20,7 @@ class Header:
     combo: int
     perfect: bool
     mods: int
+    played_at: Optional[datetime] = None
 
 class _Reader:
     def __init__(self, data: bytes) -> None:
@@ -72,5 +74,18 @@ def header(data: bytes) -> Optional[Header]:
         return None
     if len(beatmap_md5) != 32 or not all(c in "0123456789abcdefABCDEF" for c in beatmap_md5):
         return None
+    try:
+        read.words()
+        played_at = _moment(read.number("<q"))
+    except (ValueError, struct.error):
+        played_at = None
     return Header(mode, version, beatmap_md5.lower(), player, replay_md5, counts[0], counts[1], counts[2],
-                  counts[3], counts[4], counts[5], score, combo, perfect, mods)
+                  counts[3], counts[4], counts[5], score, combo, perfect, mods, played_at)
+
+def _moment(ticks: int) -> Optional[datetime]:
+    if ticks <= 0:
+        return None
+    try:
+        return datetime(1, 1, 1) + timedelta(microseconds=ticks // 10)
+    except OverflowError:
+        return None

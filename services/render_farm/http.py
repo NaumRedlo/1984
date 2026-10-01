@@ -10,7 +10,7 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, donated, invites, pairing, players, videos
+from services.render_farm import community as gathered, donated, invites, pairing, players, replays, videos
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -1085,6 +1085,92 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             done = delivery_id is not None and await videos.drop(session, owner.telegram_id, delivery_id)
         return web.json_response({"ok": done}, status=200 if done else 404)
 
+    async def replays_state(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await replays.state(session, owner.telegram_id)
+        if body is None:
+            return web.json_response({"error": "not registered"}, status=404)
+        return web.json_response(body)
+
+    async def replays_switch(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        on = (await _json_object(request)).get("on")
+        if not isinstance(on, bool):
+            return web.json_response({"error": "bad request"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await replays.switch(session, owner.telegram_id, on)
+        if body is None:
+            return web.json_response({"error": "not registered"}, status=404)
+        return web.json_response(body)
+
+    async def replay_share(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        try:
+            path, _ = await _spool(request, RENDER_REPLAY_MOST, "player-replay-")
+        except ValueError:
+            return web.json_response({"error": "too large", "most": RENDER_REPLAY_MOST}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        try:
+            with open(path, "rb") as got:
+                data = got.read()
+        finally:
+            os.unlink(path)
+        from db.database import AsyncSessionFactory
+
+        try:
+            async with AsyncSessionFactory() as session:
+                verdict = await replays.keep(session, owner.telegram_id, data, _meta(request), osu=_osu)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        status = {
+            replays.KEPT: 200, replays.KNOWN: 200, replays.NOT_REGISTERED: 404, replays.NOT_SHARING: 409,
+            replays.NOT_A_REPLAY: 400, replays.NOT_YOURS: 403, replays.FULL: 507,
+        }[verdict]
+        if status != 200:
+            return web.json_response({"error": verdict}, status=status)
+        return web.json_response({"ok": True, "known": verdict == replays.KNOWN})
+
+    async def replays_listed(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        scope = replays.ALL if request.query.get("scope") == replays.ALL else replays.CHAT
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            body = await replays.listed(session, owner.telegram_id, scope)
+        if body is None:
+            return web.json_response({"error": "not registered"}, status=404)
+        return web.json_response(body)
+
+    async def replay_file(request: web.Request) -> web.StreamResponse:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        said = request.match_info.get("hash", "").lower()
+        if len(said) != 32 or not all(c in "0123456789abcdef" for c in said):
+            return web.json_response({"error": "no replay"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            allowed = await replays.readable(session, owner.telegram_id, said)
+        path = replays.path_of(said)
+        if not allowed or not os.path.isfile(path):
+            return web.json_response({"error": "no replay"}, status=404)
+        return web.FileResponse(path)
+
     return [
         web.post("/render/pair", pair),
         web.get("/render/pair/{code}", pair_status),
@@ -1113,6 +1199,11 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/inbox/{delivery}/telegram", inbox_telegram),
         web.post("/render/inbox/{delivery}/seen", inbox_seen),
         web.delete("/render/inbox/{delivery}", inbox_drop),
+        web.get("/render/me/replays", replays_state),
+        web.post("/render/me/replays", replays_switch),
+        web.post("/render/replays", replay_share),
+        web.get("/render/replays", replays_listed),
+        web.get("/render/replays/{hash}", replay_file),
         web.post("/render/me/replay", donate_replay),
         web.get("/render/players", every_player),
         web.get("/render/players/{player_id}", one_player),

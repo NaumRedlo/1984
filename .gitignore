@@ -41,3 +41,4 @@ docs/work-plan-*.md
 *.private.md
 /data/skins/
 /data/shared-replays/
+/data/player-replays/

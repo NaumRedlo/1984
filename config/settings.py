@@ -42,6 +42,9 @@ DONATED_REPLAYS_DIR = os.getenv("DONATED_REPLAYS_DIR", os.path.join(os.path.absp
 DONATED_REPLAYS_STORAGE_MOST = int(os.getenv("DONATED_REPLAYS_STORAGE_MOST", str(2 * 1024 * 1024 * 1024)))
 SHARED_REPLAYS_DIR = os.getenv("SHARED_REPLAYS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "shared-replays"))
 SHARED_REPLAYS_STORAGE_MOST = int(os.getenv("SHARED_REPLAYS_STORAGE_MOST", str(1024 * 1024 * 1024)))
+PLAYER_REPLAYS_DIR = os.getenv("PLAYER_REPLAYS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "player-replays"))
+PLAYER_REPLAYS_STORAGE_MOST = int(os.getenv("PLAYER_REPLAYS_STORAGE_MOST", str(4 * 1024 * 1024 * 1024)))
+PLAYER_REPLAYS_EACH = int(os.getenv("PLAYER_REPLAYS_EACH", "300"))
 RENDER_ORDERS_EACH = int(os.getenv("RENDER_ORDERS_EACH", "2"))
 
 _raw_proxy_hops = os.getenv("TRUSTED_PROXY_HOPS", "1").strip()
