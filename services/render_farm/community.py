@@ -204,13 +204,20 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
 
     live = []
     if players:
-        for row in (await session.execute(
+        attempts = (await session.execute(
             select(UserMapAttempt)
             .where(UserMapAttempt.player_id.in_(players), UserMapAttempt.played_at.isnot(None))
             .order_by(UserMapAttempt.played_at.desc())
             .limit(LIVE)
-        )).scalars().all():
+        )).scalars().all()
+        for row in attempts:
             live.append({"who": row_of[row.player_id], "passed": row.passed is not False, **_play(row, when=row.played_at)})
+        from services.render_farm import witnessed
+
+        for row in await witnessed.unconfirmed(session, players, attempts, most=LIVE, now=now):
+            live.append({"who": row_of[row.player_id], "passed": bool(row.passed), **witnessed.said(row)})
+        live.sort(key=lambda play: play["at"] or 0, reverse=True)
+        del live[LIVE:]
 
     happened = []
     since = now - HAPPENED
@@ -363,6 +370,12 @@ async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) 
         you=you,
     )
     body["recent"] = [{"passed": row.passed is not False, **_play(row, when=row.played_at)} for row in recent]
+    from services.render_farm import witnessed
+
+    for row in await witnessed.unconfirmed(session, [mine.player_id], recent, most=RECENT, now=now):
+        body["recent"].append({"passed": bool(row.passed), **witnessed.said(row)})
+    body["recent"].sort(key=lambda play: play["at"] or 0, reverse=True)
+    del body["recent"][RECENT:]
     body["duels"] = [int(mine.duel_wins or 0), int(mine.duel_losses or 0)]
     body["points"] = int(mine.hps_points or 0)
     body["title_dates"] = {row.title_code: stamp(row.unlocked_at) for row in held if row.unlocked_at}
