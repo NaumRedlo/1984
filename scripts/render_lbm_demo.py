@@ -69,7 +69,7 @@ async def build(status: str) -> dict:
             await session.flush()
             loved = status == "loved"
             session.add(UserMapAttempt(
-                user_id=user.id, score_id=1000 + i, beatmap_id=MAP,
+                player_id=user.player_id, score_id=1000 + i, beatmap_id=MAP,
                 pp=0.0 if loved else pp, pp_estimated=pp if loved else None,
                 score=int(pp * 14000), accuracy=acc, max_combo=combo, rank=rank, mods=mods,
                 played_at=start + timedelta(days=9 - i),

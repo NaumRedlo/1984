@@ -8,7 +8,7 @@ class UserMapAttempt(Base):
     __tablename__ = "user_map_attempts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
     score_id = Column(BigInteger, nullable=False)
     beatmap_id = Column(Integer, nullable=False, index=True)
     beatmapset_id = Column(Integer, nullable=True)
@@ -43,9 +43,9 @@ class UserMapAttempt(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("user_id", "score_id", name="uq_user_map_attempts_user_score"),
-        Index("ix_user_map_attempts_beatmap_user_pp", "beatmap_id", "user_id", "pp"),
+        UniqueConstraint("player_id", "score_id", name="uq_user_map_attempts_player_score"),
+        Index("ix_user_map_attempts_beatmap_player_pp", "beatmap_id", "player_id", "pp"),
     )
 
     def __repr__(self):
-        return f"<UserMapAttempt(id={self.id}, user_id={self.user_id}, beatmap_id={self.beatmap_id}, pp={self.pp})>"
+        return f"<UserMapAttempt(id={self.id}, player_id={self.player_id}, beatmap_id={self.beatmap_id}, pp={self.pp})>"

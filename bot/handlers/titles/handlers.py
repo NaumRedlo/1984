@@ -211,10 +211,12 @@ async def _navigate(callback: types.CallbackQuery, uid_str: str, code: str, page
     await callback.answer()
     await _render(callback.message, uid, code, page, payload, edit=True)
 
-async def _unlocked_codes(session, user_id: int) -> set:
+async def _unlocked_codes(session, player_id: Optional[int]) -> set:
+    if player_id is None:
+        return set()
     rows = await session.execute(
         select(UserTitleProgress.title_code).where(
-            UserTitleProgress.user_id == user_id,
+            UserTitleProgress.player_id == player_id,
             UserTitleProgress.unlocked == True,
         )
     )
@@ -237,7 +239,7 @@ async def set_title_cmd(message: types.Message, trigger_args: TriggerArgs = None
             await session.commit()
             await message.answer(t("st.cleared", lang))
             return
-        unlocked = await _unlocked_codes(session, user.id)
+        unlocked = await _unlocked_codes(session, user.player_id)
         ql = arg.lower()
         matches = [(c, TITLE_REGISTRY[c]) for c in TITLE_REGISTRY
                    if c in unlocked and any(ql in n for n in _names_of(TITLE_REGISTRY[c]))]

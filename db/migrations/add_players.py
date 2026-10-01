@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from db import player_sync
 from db.models.chat_member import ChatMember
-from db.models.player import SHARED, Player
+from db.models.player import OWN, Player
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ async def _read(conn) -> tuple[list[Row], set[int]]:
     if "users" not in tables:
         return [], set()
     have = await _columns(conn, "users")
-    wanted = [name for name in SHARED if name in have]
+    wanted = [name for name in OWN if name in have]
     fresh = "last_api_update" if "last_api_update" in have else "NULL"
     listed = ", ".join(["id", "chat_id", "telegram_id", "osu_user_id", fresh, *wanted])
     result = await conn.execute(text(f"SELECT {listed} FROM users"))
@@ -128,7 +128,7 @@ async def run_players_migration(engine) -> Optional[dict]:
                     continue
                 ids[osu_id] = player_id
                 continue
-            values = {name: source.values.get(name) for name in SHARED if name in source.values}
+            values = {name: source.values.get(name) for name in OWN if name in source.values}
             values["osu_username"] = values.get("osu_username") or ""
             names = ["osu_user_id", "telegram_id", *values]
             placed = ", ".join(f":{name}" for name in names)

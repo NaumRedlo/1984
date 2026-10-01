@@ -4,22 +4,26 @@ from sqlalchemy import delete, event, inspect, select
 from sqlalchemy.orm import Session
 
 from db.models.chat_member import ChatMember
-from db.models.player import SHARED, Player
+from db.models.player import PROGRESS, SHARED, Player
 from db.models.user import User
 
 logger = logging.getLogger(__name__)
 
-_on = False
+_on = True
 
 def switch_on(on: bool = True) -> None:
     global _on
     _on = on
+
+def is_on() -> bool:
+    return _on
 
 def _detach(session, user) -> None:
     player_id = user.player_id
     if user.id is not None:
         session.execute(delete(ChatMember).where(ChatMember.user_id == user.id))
     user.player = None
+    user.player_id = None
     if player_id is None:
         return
     stays = session.execute(select(ChatMember.id).where(ChatMember.player_id == player_id)).first()
@@ -34,6 +38,22 @@ def _waiting(session, **wanted):
         if isinstance(found, Player) and all(getattr(found, name) == value for name, value in wanted.items()):
             return found
     return None
+
+LATER_WINS = ("last_seen_at",)
+
+def _bare(moment):
+    return moment.replace(tzinfo=None) if getattr(moment, "tzinfo", None) is not None else moment
+
+def _inherit(user, player) -> None:
+    for name in PROGRESS:
+        held = getattr(player, name)
+        if held is None:
+            continue
+        mine = getattr(user, name)
+        if name in LATER_WINS and mine is not None and _bare(mine) >= _bare(held):
+            continue
+        if mine != held:
+            setattr(user, name, held)
 
 def _link(session, user) -> None:
     player = _waiting(session, osu_user_id=user.osu_user_id) or session.execute(select(Player).where(Player.osu_user_id == user.osu_user_id)).scalar_one_or_none()
@@ -51,6 +71,10 @@ def _link(session, user) -> None:
         session.add(player)
     elif player.telegram_id is None:
         player.telegram_id = user.telegram_id
+        for name in SHARED:
+            setattr(player, name, getattr(user, name))
+    else:
+        _inherit(user, player)
     user.player = player
     session.add(ChatMember(chat_id=user.chat_id, player=player, user=user))
 

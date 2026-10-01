@@ -37,13 +37,13 @@ async def test_build_payload_registered_uses_viewer_not_subject_language(monkeyp
 
     monkeypatch.setattr(tp, "get_language", fake_get_language)
 
-    async def fake_fetch_best_scores(session, user_id):
+    async def fake_fetch_best_scores(session, player_id):
         return []
 
     monkeypatch.setattr(tp, "_fetch_best_scores", fake_fetch_best_scores)
 
     subject = SimpleNamespace(
-        id=1, telegram_id=222, osu_username="subject", country="US",
+        id=1, player_id=1, telegram_id=222, osu_username="subject", country="US",
         avatar_url=None, cover_url=None, global_rank=100, player_pp=5000.0,
         accuracy=98.0,
     )

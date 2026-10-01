@@ -42,10 +42,10 @@ from db.migrations.add_effective_fields import run_effective_fields_migration
 from db.migrations.add_best_score_pp_delta_fields import run_best_score_pp_delta_fields_migration
 from db.migrations.add_leaderboard_snapshots import run_leaderboard_snapshots_migration
 from db.migrations.add_last_full_update import run_last_full_update_migration
-from db.migrations.scope_best_score_ids import run_scope_best_score_ids_migration
 from db.migrations.add_players import run_players_migration
 from db.migrations.add_video_sharing import run_video_sharing_migration
 from db.migrations.add_shared_replays import run_shared_replays_migration
+from db.migrations.move_progress_to_players import run_player_progress_migration
 
 async def run_all_migrations(engine) -> None:
     await run_migration(engine)
@@ -107,9 +107,9 @@ async def run_all_migrations(engine) -> None:
     await run_render_worker_tokens_migration(engine)
     await run_pp_estimated_migration(engine)
     await run_app_profile_fields_migration(engine)
-    await run_scope_best_score_ids_migration(engine)
     await run_players_migration(engine)
     await run_video_sharing_migration(engine)
     await run_shared_replays_migration(engine)
+    await run_player_progress_migration(engine)
 
 __all__ = ["run_all_migrations"]

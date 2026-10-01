@@ -6,7 +6,7 @@ class UserBestScore(Base):
     __tablename__ = 'user_best_scores'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey('players.id'), nullable=False, index=True)
     score_id = Column(BigInteger, nullable=False)
     beatmap_id = Column(Integer, nullable=False)
     beatmapset_id = Column(Integer, nullable=True)
@@ -40,9 +40,9 @@ class UserBestScore(Base):
     pp_changed_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint('user_id', 'score_id', name='uq_user_best_scores_user_score'),
-        Index('ix_user_best_scores_user_pp', 'user_id', 'pp'),
+        UniqueConstraint('player_id', 'score_id', name='uq_user_best_scores_player_score'),
+        Index('ix_user_best_scores_player_pp', 'player_id', 'pp'),
     )
 
     def __repr__(self):
-        return f"<UserBestScore(id={self.id}, user_id={self.user_id}, pp={self.pp}, title='{self.title}')>"
+        return f"<UserBestScore(id={self.id}, player_id={self.player_id}, pp={self.pp}, title='{self.title}')>"

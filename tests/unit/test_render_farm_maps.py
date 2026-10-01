@@ -34,8 +34,8 @@ def _user(chat, tg, name, **kw):
     base.update(kw)
     return User(**base)
 
-def _attempt(user_id, score_id, pp, *, score=0, passed=True, status="ranked", minutes=10, **kw):
-    base = dict(user_id=user_id, score_id=score_id, beatmap_id=MAP, beatmapset_id=77, pp=pp, score=score,
+def _attempt(player_id, score_id, pp, *, score=0, passed=True, status="ranked", minutes=10, **kw):
+    base = dict(player_id=player_id, score_id=score_id, beatmap_id=MAP, beatmapset_id=77, pp=pp, score=score,
                 accuracy=98.0, rank="S", mods="HD,DT", artist="xi", title="FREEDOM DiVE", version="FOUR DIMENSIONS",
                 creator="Nakagawa-Kanon", star_rating=7.2, bpm=222.22, length=258, max_combo=1800, map_max_combo=2000,
                 count_300=1700, count_100=12, count_50=0, count_miss=1, status=status, passed=passed,
@@ -49,13 +49,13 @@ async def _seed(factory, *, status="ranked"):
         s.add_all([naum, koto, lumen, far])
         await s.flush()
         s.add_all([
-            _attempt(naum.id, 1, 300.0, score=900_000, minutes=600, status=status),
-            _attempt(naum.id, 2, 412.6, score=700_000, minutes=30, status=status),
-            _attempt(naum.id, 3, 0.0, score=1_500_000, passed=False, minutes=5, rank="F", status=status),
-            _attempt(koto.id, 4, 380.0, score=1_100_000, minutes=120, status=status),
-            _attempt(lumen.id, 5, 0.0, score=10_000, passed=False, minutes=3, rank="F", status=status),
-            _attempt(far.id, 6, 999.0, score=9_000_000, status=status),
-            UserMapAttempt(user_id=koto.id, score_id=7, beatmap_id=MAP + 1, pp=500.0, passed=True, played_at=NOW),
+            _attempt(naum.player_id, 1, 300.0, score=900_000, minutes=600, status=status),
+            _attempt(naum.player_id, 2, 412.6, score=700_000, minutes=30, status=status),
+            _attempt(naum.player_id, 3, 0.0, score=1_500_000, passed=False, minutes=5, rank="F", status=status),
+            _attempt(koto.player_id, 4, 380.0, score=1_100_000, minutes=120, status=status),
+            _attempt(lumen.player_id, 5, 0.0, score=10_000, passed=False, minutes=3, rank="F", status=status),
+            _attempt(far.player_id, 6, 999.0, score=9_000_000, status=status),
+            UserMapAttempt(player_id=koto.player_id, score_id=7, beatmap_id=MAP + 1, pp=500.0, passed=True, played_at=NOW),
         ])
         await s.commit()
         return naum.id, koto.id, lumen.id
@@ -97,11 +97,12 @@ async def test_the_community_counts_who_holds_each_title_across_every_chat(facto
     naum, koto, lumen = await _seed(factory)
     async with factory() as s:
         far = (await s.execute(User.__table__.select().where(User.chat_id == OTHER))).first()
+        naum, koto = (await s.get(User, naum)).player_id, (await s.get(User, koto)).player_id
         s.add_all([
-            UserTitleProgress(user_id=naum, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW - timedelta(days=2)),
-            UserTitleProgress(user_id=naum, title_code="perfectionist", current_value=40, unlocked=False),
-            UserTitleProgress(user_id=far.id, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW),
-            UserTitleProgress(user_id=koto, title_code="not_a_title", current_value=1, unlocked=True, unlocked_at=NOW),
+            UserTitleProgress(player_id=naum, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW - timedelta(days=2)),
+            UserTitleProgress(player_id=naum, title_code="perfectionist", current_value=40, unlocked=False),
+            UserTitleProgress(player_id=far.player_id, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW),
+            UserTitleProgress(player_id=koto, title_code="not_a_title", current_value=1, unlocked=True, unlocked_at=NOW),
         ])
         await s.commit()
         body = await community.gather(s, CHAT, 7, now=NOW)

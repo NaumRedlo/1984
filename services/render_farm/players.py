@@ -40,30 +40,25 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
         for player_id, rows in grouped.items()
         if not wanted or wanted in (players[player_id].osu_username or "").lower()
     }
-    every_row = {row.id: player_id for player_id, rows in grouped.items() if player_id in chosen for row in rows}
-
     titles: dict[int, set[str]] = {player_id: set() for player_id in chosen}
-    if every_row:
+    best: dict[int, list] = {player_id: [] for player_id in chosen}
+    if chosen:
         for row in (await session.execute(
-            select(UserTitleProgress).where(UserTitleProgress.user_id.in_(list(every_row)), UserTitleProgress.unlocked.is_(True))
+            select(UserTitleProgress).where(UserTitleProgress.player_id.in_(list(chosen)), UserTitleProgress.unlocked.is_(True))
         )).scalars().all():
             if row.title_code in TITLE_REGISTRY:
-                titles[every_row[row.user_id]].add(row.title_code)
-
-    shown = [row.id for row in chosen.values()]
-    best: dict[int, list] = {row_id: [] for row_id in shown}
-    if shown:
+                titles[row.player_id].add(row.title_code)
         for row in (await session.execute(
-            select(UserBestScore).where(UserBestScore.user_id.in_(shown)).order_by(UserBestScore.user_id, UserBestScore.pp.desc())
+            select(UserBestScore).where(UserBestScore.player_id.in_(list(chosen))).order_by(UserBestScore.player_id, UserBestScore.pp.desc())
         )).scalars().all():
-            best[row.user_id].append(row)
+            best[row.player_id].append(row)
 
     people = []
     for player_id, row in chosen.items():
         card = person(
             row,
             titles=titles[player_id],
-            top=[_play(found) for found in best[row.id][:TOP]],
+            top=[_play(found) for found in best[player_id][:TOP]],
             moved=[0] * len(DELTA_CATEGORIES),
             gained=[0.0] * len(DELTA_CATEGORIES),
             you=players[player_id].telegram_id == viewer,

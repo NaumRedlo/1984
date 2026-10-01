@@ -602,7 +602,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             User.osu_username, User.avatar_url, User.avatar_data,
             UserMapAttempt.pp, UserMapAttempt.pp_estimated, UserMapAttempt.score, played.label("at"),
         )
-        .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
+        .join(UserMapAttempt, UserMapAttempt.player_id == User.player_id)
         .where(
             User.chat_id == chat_id,
             User.osu_user_id.isnot(None),
@@ -640,10 +640,10 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
     stats_stmt = (
         select(
             func.count(UserMapAttempt.id),
-            func.count(func.distinct(UserMapAttempt.user_id)),
+            func.count(func.distinct(UserMapAttempt.player_id)),
         )
         .select_from(UserMapAttempt)
-        .join(User, User.id == UserMapAttempt.user_id)
+        .join(User, User.player_id == UserMapAttempt.player_id)
         .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
     )
     stats_result = await session.execute(stats_stmt)
@@ -662,25 +662,25 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
 
     best_metric_sq = (
         select(
-            UserMapAttempt.user_id,
+            UserMapAttempt.player_id,
             func.max(metric_col).label("best_metric"),
         )
-        .join(User, User.id == UserMapAttempt.user_id)
+        .join(User, User.player_id == UserMapAttempt.player_id)
         .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
-        .group_by(UserMapAttempt.user_id)
+        .group_by(UserMapAttempt.player_id)
         .subquery()
     )
     pick_sq = (
         select(
-            UserMapAttempt.user_id,
+            UserMapAttempt.player_id,
             func.min(UserMapAttempt.id).label("pick_id"),
         )
         .where(UserMapAttempt.beatmap_id == beatmap_id)
         .join(best_metric_sq, and_(
-            UserMapAttempt.user_id == best_metric_sq.c.user_id,
+            UserMapAttempt.player_id == best_metric_sq.c.player_id,
             func.coalesce(metric_col, 0) == func.coalesce(best_metric_sq.c.best_metric, 0),
         ))
-        .group_by(UserMapAttempt.user_id)
+        .group_by(UserMapAttempt.player_id)
         .subquery()
     )
 
@@ -696,7 +696,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             UserMapAttempt.rank,
             UserMapAttempt.mods,
         )
-        .join(UserMapAttempt, UserMapAttempt.user_id == User.id)
+        .join(UserMapAttempt, UserMapAttempt.player_id == User.player_id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
         .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
         .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))

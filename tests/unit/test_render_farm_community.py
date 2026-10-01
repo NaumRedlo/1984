@@ -35,8 +35,8 @@ def _user(tg, name, **kw):
     base.update(kw)
     return User(**base)
 
-def _best(user_id, score_id, pp, **kw):
-    base = dict(user_id=user_id, score_id=score_id, beatmap_id=score_id, beatmapset_id=score_id + 1,
+def _best(player_id, score_id, pp, **kw):
+    base = dict(player_id=player_id, score_id=score_id, beatmap_id=score_id, beatmapset_id=score_id + 1,
                 pp=pp, accuracy=98.5, rank="S", mods="HD,DT", artist="xi", title="FREEDOM DiVE",
                 version="FOUR DIMENSIONS", creator="Nakagawa-Kanon", star_rating=7.2, max_combo=1983,
                 map_max_combo=2000, is_fc=False, created_at=NOW - timedelta(days=60))
@@ -51,18 +51,18 @@ async def _seed(factory):
         s.add_all([naum, koto, lumen])
         await s.flush()
         s.add_all([
-            _best(naum.id, 1, 412.6),
-            _best(naum.id, 2, 398.1, created_at=NOW - timedelta(days=2)),
-            _best(koto.id, 3, 611.2, rank="XH", mods="HD,HR,CL"),
-            UserMapAttempt(user_id=koto.id, score_id=10, beatmap_id=5, pp=530.0, accuracy=99.4, rank="S",
+            _best(naum.player_id, 1, 412.6),
+            _best(naum.player_id, 2, 398.1, created_at=NOW - timedelta(days=2)),
+            _best(koto.player_id, 3, 611.2, rank="XH", mods="HD,HR,CL"),
+            UserMapAttempt(player_id=koto.player_id, score_id=10, beatmap_id=5, pp=530.0, accuracy=99.4, rank="S",
                            mods="HD,HR", artist="Phoneboy", title="Nevermind", version="Insane",
                            played_at=NOW - timedelta(minutes=3), passed=True),
-            UserMapAttempt(user_id=naum.id, score_id=11, beatmap_id=6, pp=312.0, accuracy=96.7, rank="A",
+            UserMapAttempt(player_id=naum.player_id, score_id=11, beatmap_id=6, pp=312.0, accuracy=96.7, rank="A",
                            mods="HD,DT", artist="Dj Grimoire", title="Astral Quantization", version="Nattu",
                            played_at=NOW - timedelta(minutes=9), passed=True),
-            UserTitleProgress(user_id=naum.id, title_code="wysi", current_value=1, unlocked=True,
+            UserTitleProgress(player_id=naum.player_id, title_code="wysi", current_value=1, unlocked=True,
                               unlocked_at=NOW - timedelta(days=1)),
-            UserTitleProgress(user_id=naum.id, title_code="not_a_title", current_value=1, unlocked=True,
+            UserTitleProgress(player_id=naum.player_id, title_code="not_a_title", current_value=1, unlocked=True,
                               unlocked_at=NOW - timedelta(days=1)),
             LeaderboardSnapshot(tenant_chat_id=CHAT, user_id=naum.id, period_key=current_period_key(NOW),
                                 player_pp=3000, accuracy=97.0, play_count=900, play_time=7000,

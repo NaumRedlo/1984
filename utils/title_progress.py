@@ -16,8 +16,8 @@ from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 S_OR_BETTER = ("S", "SH", "X", "XH")
 SS_RANKS = ("X", "XH")
 
-def _model_conds(M, user_id, crit, *, require_passed):
-    conds = [M.user_id == user_id]
+def _model_conds(M, player_id, crit, *, require_passed):
+    conds = [M.player_id == player_id]
     if require_passed:
         conds.append(M.passed.is_(True))
     if crit.get("min_sr") is not None:
@@ -53,9 +53,9 @@ def _model_conds(M, user_id, crit, *, require_passed):
         conds.append(M.count_100 <= crit["max_100"])
     return conds
 
-async def _exists_best(session, user_id, **crit) -> int:
+async def _exists_best(session, player_id, **crit) -> int:
     for M, require_passed in ((UserBestScore, False), (UserMapAttempt, True)):
-        conds = _model_conds(M, user_id, crit, require_passed=require_passed)
+        conds = _model_conds(M, player_id, crit, require_passed=require_passed)
         n = (await session.execute(select(func.count()).select_from(M).where(*conds))).scalar() or 0
         if n > 0:
             return 1
@@ -125,18 +125,18 @@ TITLE_CRITERIA: Dict[str, dict] = {
     "ez_pass_7":      dict(min_sr=7.0, mods_all=["EZ"]),
 }
 
-async def _calc_doublethink(session, user_id: int) -> int:
-    easy = await _exists_best(session, user_id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"])
+async def _calc_doublethink(session, player_id: int) -> int:
+    easy = await _exists_best(session, player_id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"])
     if not easy:
         return 0
-    hard = await _exists_best(session, user_id, min_sr=7.0)
+    hard = await _exists_best(session, player_id, min_sr=7.0)
     return 1 if hard else 0
 
 async def _corpus_rank_map(session, uid):
     by_map: Dict[int, set] = {}
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
-            select(M.beatmap_id, M.rank).where(M.user_id == uid, M.rank.isnot(None))
+            select(M.beatmap_id, M.rank).where(M.player_id == uid, M.rank.isnot(None))
         )).all()
         for bid, rank in rows:
             by_map.setdefault(bid, set()).add(rank)
@@ -145,7 +145,7 @@ async def _corpus_rank_map(session, uid):
 async def _calc_broken_record(session, uid) -> int:
     counts = (await session.execute(
         select(func.count()).select_from(UserMapAttempt)
-        .where(UserMapAttempt.user_id == uid)
+        .where(UserMapAttempt.player_id == uid)
         .group_by(UserMapAttempt.beatmap_id)
     )).scalars().all()
     return max(counts) if counts else 0
@@ -153,7 +153,7 @@ async def _calc_broken_record(session, uid) -> int:
 async def _calc_off_day(session, uid) -> int:
     counts = (await session.execute(
         select(func.count()).select_from(UserMapAttempt)
-        .where(UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(False))
+        .where(UserMapAttempt.player_id == uid, UserMapAttempt.passed.is_(False))
         .group_by(UserMapAttempt.beatmap_id)
     )).scalars().all()
     return max(counts) if counts else 0
@@ -176,7 +176,7 @@ async def _calc_dejavu(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.score, M.beatmap_id).where(
-                M.user_id == uid, M.score.isnot(None), M.score > 0)
+                M.player_id == uid, M.score.isnot(None), M.score > 0)
         )).all()
         for sc, bid in rows:
             by_score.setdefault(sc, set()).add(bid)
@@ -185,7 +185,7 @@ async def _calc_dejavu(session, uid) -> int:
 async def _calc_wysi(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         combos = (await session.execute(
-            select(M.max_combo).where(M.user_id == uid, M.max_combo.isnot(None))
+            select(M.max_combo).where(M.player_id == uid, M.max_combo.isnot(None))
         )).scalars().all()
         if any("727" in str(c) for c in combos):
             return 1
@@ -194,7 +194,7 @@ async def _calc_wysi(session, uid) -> int:
 async def _longest_run(session, uid, predicate, *, need_rank=False, need_acc=False):
     cols = [UserMapAttempt.played_at]
     cols.append(UserMapAttempt.rank if need_rank else UserMapAttempt.accuracy)
-    conds = [UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None)]
+    conds = [UserMapAttempt.player_id == uid, UserMapAttempt.played_at.isnot(None)]
     if need_acc:
         conds.append(UserMapAttempt.accuracy.isnot(None))
     rows = (await session.execute(
@@ -222,7 +222,7 @@ async def _calc_graveyard(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         n = (await session.execute(
             select(func.count()).select_from(M)
-            .where(M.user_id == uid, M.status == "graveyard")
+            .where(M.player_id == uid, M.status == "graveyard")
         )).scalar() or 0
         if n:
             return 1
@@ -231,8 +231,8 @@ async def _calc_graveyard(session, uid) -> int:
 async def _calc_archaeologist(session, uid) -> int:
     cutoff = utcnow() - _ARCHAEOLOGY_AGE
     checks = (
-        (UserBestScore, [UserBestScore.user_id == uid]),
-        (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
+        (UserBestScore, [UserBestScore.player_id == uid]),
+        (UserMapAttempt, [UserMapAttempt.player_id == uid, UserMapAttempt.passed.is_(True)]),
     )
     for M, conds in checks:
         n = (await session.execute(
@@ -263,7 +263,7 @@ _SESSION_GAP = timedelta(minutes=30)
 async def _sessions(session, uid):
     rows = (await session.execute(
         select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
-        .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
+        .where(UserMapAttempt.player_id == uid, UserMapAttempt.played_at.isnot(None))
         .order_by(UserMapAttempt.played_at)
     )).all()
     out, cur, prev = [], [], None
@@ -301,7 +301,7 @@ async def _calc_stuck_loop(session, uid) -> int:
 async def _stuck_loop_tail(session, uid):
     rows = (await session.execute(
         select(UserMapAttempt.played_at, UserMapAttempt.beatmap_id)
-        .where(UserMapAttempt.user_id == uid, UserMapAttempt.played_at.isnot(None))
+        .where(UserMapAttempt.player_id == uid, UserMapAttempt.played_at.isnot(None))
         .order_by(UserMapAttempt.played_at.desc())
     )).all()
     run, prev, target_bid = 0, None, None
@@ -359,9 +359,9 @@ def update_weekly_plays(user) -> None:
 
 async def unlock_title(user, code: str, session, *, value=None) -> bool:
     td = TITLE_REGISTRY.get(code)
-    if td is None:
+    if td is None or user.player_id is None:
         return False
-    prog = (await _ensure_progress_rows(session, user.id))[code]
+    prog = (await _ensure_progress_rows(session, user.player_id))[code]
     if prog.unlocked:
         return False
     prog.current_value = value if value is not None else (td.target or 1)
@@ -376,7 +376,7 @@ _CHOKE_MIN_ACC = 99.0
 async def _calc_magic7(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         scores = (await session.execute(
-            select(M.score).where(M.user_id == uid, M.score.isnot(None))
+            select(M.score).where(M.player_id == uid, M.score.isnot(None))
         )).scalars().all()
         if any("777777" in str(sc) for sc in scores):
             return 1
@@ -386,7 +386,7 @@ async def _calc_choke(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.max_combo, M.map_max_combo, M.accuracy).where(
-                M.user_id == uid, M.max_combo.isnot(None),
+                M.player_id == uid, M.max_combo.isnot(None),
                 M.map_max_combo.isnot(None), M.map_max_combo > 0,
                 M.accuracy >= _CHOKE_MIN_ACC)
         )).all()
@@ -399,7 +399,7 @@ async def _calc_last_note(session, uid) -> int:
         select(UserMapAttempt.count_300, UserMapAttempt.count_100,
                UserMapAttempt.count_50, UserMapAttempt.count_miss,
                UserMapAttempt.total_objects)
-        .where(UserMapAttempt.user_id == uid,
+        .where(UserMapAttempt.player_id == uid,
                UserMapAttempt.passed.is_(False),
                UserMapAttempt.total_objects.isnot(None),
                UserMapAttempt.total_objects > 0)
@@ -416,7 +416,7 @@ async def _calc_masks(session, uid) -> int:
     seen: set[str] = set()
     for M in (UserBestScore, UserMapAttempt):
         for mstr in (await session.execute(
-            select(M.mods).where(M.user_id == uid, M.mods.isnot(None))
+            select(M.mods).where(M.player_id == uid, M.mods.isnot(None))
         )).scalars().all():
             for ac in str(mstr).split(","):
                 ac = ac.strip().upper()
@@ -428,7 +428,7 @@ async def _calc_long_chain(session, uid) -> int:
     best = 0
     for M in (UserBestScore, UserMapAttempt):
         v = (await session.execute(
-            select(func.max(M.max_combo)).where(M.user_id == uid)
+            select(func.max(M.max_combo)).where(M.player_id == uid)
         )).scalar() or 0
         best = max(best, v)
     return best
@@ -463,7 +463,7 @@ async def _calc_heavy_hand(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.ar, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
-            .where(M.user_id == uid, M.ar.isnot(None), M.star_rating >= 5.0)
+            .where(M.player_id == uid, M.ar.isnot(None), M.star_rating >= 5.0)
         )).all()
         for ar, mods, is_fc, miss, mc, mmc in rows:
             if _row_is_fc(is_fc, miss, mc, mmc) and _eff_ar(ar, mods) >= 10.3:
@@ -472,8 +472,8 @@ async def _calc_heavy_hand(session, uid) -> int:
 
 async def _calc_sr10(session, uid) -> int:
     checks = (
-        (UserBestScore, [UserBestScore.user_id == uid]),
-        (UserMapAttempt, [UserMapAttempt.user_id == uid, UserMapAttempt.passed.is_(True)]),
+        (UserBestScore, [UserBestScore.player_id == uid]),
+        (UserMapAttempt, [UserMapAttempt.player_id == uid, UserMapAttempt.passed.is_(True)]),
     )
     for M, conds in checks:
         eff = func.coalesce(M.eff_sr, M.star_rating)
@@ -488,7 +488,7 @@ async def _calc_watchmaker(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.bpm, M.mods, func.coalesce(M.eff_sr, M.star_rating))
-            .where(M.user_id == uid, M.rank.in_(SS_RANKS), M.bpm.isnot(None))
+            .where(M.player_id == uid, M.rank.in_(SS_RANKS), M.bpm.isnot(None))
         )).all()
         for bpm, mods, eff in rows:
             if (eff or 0) >= 6.0 and _eff_bpm(bpm, mods) >= 240.0:
@@ -500,7 +500,7 @@ async def _calc_double_sentence(session, uid) -> int:
         rows = (await session.execute(
             select(M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
                    func.coalesce(M.eff_sr, M.star_rating))
-            .where(M.user_id == uid, M.mods.like("%HD%"), M.mods.like("%HR%"))
+            .where(M.player_id == uid, M.mods.like("%HD%"), M.mods.like("%HR%"))
         )).all()
         for is_fc, miss, mc, mmc, eff in rows:
             if (eff or 0) >= 7.0 and _row_is_fc(is_fc, miss, mc, mmc):
@@ -511,7 +511,7 @@ async def _calc_rapid_fire(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
         rows = (await session.execute(
             select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo)
-            .where(M.user_id == uid, M.bpm.isnot(None))
+            .where(M.player_id == uid, M.bpm.isnot(None))
         )).all()
         for bpm, mods, is_fc, miss, mc, mmc in rows:
             if _eff_bpm(bpm, mods) >= 240.0 and _row_is_fc(is_fc, miss, mc, mmc):
@@ -523,7 +523,7 @@ async def _calc_overdrive(session, uid) -> int:
         rows = (await session.execute(
             select(M.bpm, M.mods, M.is_fc, M.count_miss, M.max_combo, M.map_max_combo,
                    func.coalesce(M.eff_sr, M.star_rating))
-            .where(M.user_id == uid, M.bpm.isnot(None))
+            .where(M.player_id == uid, M.bpm.isnot(None))
         )).all()
         for bpm, mods, is_fc, miss, mc, mmc, eff in rows:
             if (eff or 0) >= 7.0 and _eff_bpm(bpm, mods) >= 300.0 and _row_is_fc(is_fc, miss, mc, mmc):
@@ -585,12 +585,12 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
         if not play.get("passed"):
             return False
         if _play_matches(play, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]):
-            return bool(await _exists_best(session, user.id, min_sr=7.0))
+            return bool(await _exists_best(session, user.player_id, min_sr=7.0))
         if _play_matches(play, min_sr=7.0):
-            return bool(await _exists_best(session, user.id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
+            return bool(await _exists_best(session, user.player_id, max_sr=2.0, ranks=SS_RANKS, mods_all=["EZ"]))
         return False
     if code == "repeat_15":
-        run, bid = await _stuck_loop_tail(session, user.id)
+        run, bid = await _stuck_loop_tail(session, user.player_id)
         return run >= 15 and bid == play.get("beatmap_id")
     if code == "magic7":
         return "777777" in str(play.get("score") or "")
@@ -602,9 +602,9 @@ async def _play_unlocks(code: str, play: Dict, user: User, session) -> bool:
     return False
 
 async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[TitleDef]:
-    if not plays:
+    if not plays or user.player_id is None:
         return []
-    rows = await _ensure_progress_rows(session, user.id)
+    rows = await _ensure_progress_rows(session, user.player_id)
     newly: List[TitleDef] = []
     for code, td in TITLE_REGISTRY.items():
         prog = rows[code]
@@ -626,9 +626,9 @@ async def evaluate_recent_plays(user: User, plays: List[Dict], session) -> List[
 async def evaluate_recent_play(user: User, play: Dict, session) -> List[TitleDef]:
     return await evaluate_recent_plays(user, [play], session)
 
-async def _progress_rows(session, user_id: int) -> Dict[str, UserTitleProgress]:
+async def _progress_rows(session, player_id: int) -> Dict[str, UserTitleProgress]:
     rows = (await session.execute(
-        select(UserTitleProgress).where(UserTitleProgress.user_id == user_id)
+        select(UserTitleProgress).where(UserTitleProgress.player_id == player_id)
     )).scalars().all()
     return {p.title_code: p for p in rows}
 
@@ -643,29 +643,33 @@ def _insert_ignoring_duplicates(session):
         return None
     return insert(UserTitleProgress)
 
-async def _ensure_progress_rows(session, user_id: int) -> Dict[str, UserTitleProgress]:
-    existing = await _progress_rows(session, user_id)
+async def _ensure_progress_rows(session, player_id: int) -> Dict[str, UserTitleProgress]:
+    existing = await _progress_rows(session, player_id)
     missing = [code for code in TITLE_REGISTRY if code not in existing]
     if not missing:
         return existing
     insert = _insert_ignoring_duplicates(session)
     if insert is None:
         for code in missing:
-            prog = UserTitleProgress(user_id=user_id, title_code=code,
+            prog = UserTitleProgress(player_id=player_id, title_code=code,
                                      current_value=0, unlocked=False)
             session.add(prog)
             existing[code] = prog
         return existing
     await session.execute(
         insert.values([
-            {"user_id": user_id, "title_code": code, "current_value": 0, "unlocked": False}
+            {"player_id": player_id, "title_code": code, "current_value": 0, "unlocked": False}
             for code in missing
-        ]).on_conflict_do_nothing(index_elements=["user_id", "title_code"])
+        ]).on_conflict_do_nothing(index_elements=["player_id", "title_code"])
     )
-    return await _progress_rows(session, user_id)
+    return await _progress_rows(session, player_id)
 
 async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dict]:
-    existing = await _ensure_progress_rows(session, user.id)
+    if user.player_id is None:
+        await session.flush()
+    if user.player_id is None:
+        return []
+    existing = await _ensure_progress_rows(session, user.player_id)
 
     progress_list = []
 
@@ -674,7 +678,7 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
         if not calc:
             continue
 
-        raw = calc(user, user.id, session)
+        raw = calc(user, user.player_id, session)
         current = await raw if hasattr(raw, "__await__") else raw
 
         prog = existing[code]
@@ -748,9 +752,8 @@ def build_titles_summary(progress_list: List[Dict]) -> Dict:
 
 async def calc_title_rarity(title_code: str, session) -> float:
     total_stmt = (
-        select(func.count())
-        .select_from(User)
-        .where(User.osu_user_id.isnot(None))
+        select(func.count(func.distinct(User.player_id)))
+        .where(User.osu_user_id.isnot(None), User.player_id.isnot(None))
     )
     total = (await session.execute(total_stmt)).scalar() or 0
     if total == 0:

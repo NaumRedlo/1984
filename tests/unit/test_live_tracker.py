@@ -65,7 +65,7 @@ def test_a_round_is_bounded():
     assert len(tracker.due(list(range(100)))) == ROUND_MOST
 
 
-async def test_a_player_s_recent_plays_reach_every_group_they_are_in(database, monkeypatch):
+async def test_a_player_s_recent_plays_are_kept_once_however_many_groups_they_are_in(database, monkeypatch):
     async def quietly(user, plays, session):
         return []
 
@@ -82,8 +82,8 @@ async def test_a_player_s_recent_plays_reach_every_group_they_are_in(database, m
     client = _Client([{"id": 1, "beatmap": {}, "statistics": {}, "passed": True}])
     tracker = LiveTracker(client, clock=_Clock())
     assert sorted(await tracker.known()) == [70, 80]
-    assert await tracker.catch(70) == 2
-    assert sorted(client.synced) == [-2, -1]
+    assert await tracker.catch(70) == 1
+    assert len(client.synced) == 1
     assert client.asked == [(70, 20, "osu")]
     assert 70 in tracker.asked
 

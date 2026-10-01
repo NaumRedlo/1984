@@ -21,7 +21,7 @@ CHAT_C = -300
 def sync_off_between_tests():
     player_sync.switch_on(False)
     yield
-    player_sync.switch_on(False)
+    player_sync.switch_on()
 
 @pytest_asyncio.fixture
 async def engine(tmp_path, monkeypatch):

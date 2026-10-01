@@ -64,7 +64,11 @@ class LiveTracker:
         async with AsyncSessionFactory() as session:
             users = (await session.execute(select(User).where(User.osu_user_id == osu_user_id))).scalars().all()
             plays = [_play_from_score(score) for score in scores]
+            done: set[int] = set()
             for user in users:
+                if user.player_id is not None and user.player_id in done:
+                    continue
+                done.add(user.player_id)
                 synced += await self.api_client.sync_user_map_attempts(user, session, scores)
                 await evaluate_recent_plays(user, plays, session)
             await session.commit()

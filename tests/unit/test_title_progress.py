@@ -29,23 +29,23 @@ async def factory(tmp_path):
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
 
-async def _user(factory) -> int:
+async def _user(factory) -> tuple[int, int]:
     async with factory() as s:
         u = User(chat_id=-100, telegram_id=1, osu_username="alice", osu_user_id=1001, play_count=0)
         s.add(u)
         await s.commit()
-        return u.id
+        return u.id, u.player_id
 
-def _attempt(uid, n, **kw):
-    base = dict(user_id=uid, score_id=n, beatmap_id=10, pp=0.0, passed=True, rank="A",
+def _attempt(pid, n, **kw):
+    base = dict(player_id=pid, score_id=n, beatmap_id=10, pp=0.0, passed=True, rank="A",
                 played_at=datetime(2026, 1, 1) + timedelta(minutes=n))
     base.update(kw)
     return UserMapAttempt(**base)
 
-async def _unlocked(factory, uid) -> set:
+async def _unlocked(factory, pid) -> set:
     async with factory() as s:
         rows = await s.execute(select(UserTitleProgress.title_code).where(
-            UserTitleProgress.user_id == uid, UserTitleProgress.unlocked.is_(True)))
+            UserTitleProgress.player_id == pid, UserTitleProgress.unlocked.is_(True)))
         return {r[0] for r in rows.all()}
 
 def test_joined_mods_are_read_in_pairs():
@@ -60,26 +60,26 @@ def test_a_recent_play_names_its_map():
     assert _mod_set(play["mods"]) == {"HD", "TD"}
 
 async def test_registering_is_enough_for_the_first_title(factory):
-    uid = await _user(factory)
+    uid, pid = await _user(factory)
     async with factory() as s:
         user = await s.get(User, uid)
         await refresh_user_titles(user, s)
         await s.commit()
-    assert "registered" in await _unlocked(factory, uid)
+    assert "registered" in await _unlocked(factory, pid)
 
 async def test_secret_titles_unlock_on_recalculation(factory):
-    uid = await _user(factory)
+    uid, pid = await _user(factory)
     async with factory() as s:
-        s.add(_attempt(uid, 1, score=1777777))
+        s.add(_attempt(pid, 1, score=1777777))
         await s.commit()
     async with factory() as s:
         user = await s.get(User, uid)
         await refresh_user_titles(user, s)
         await s.commit()
-    assert "magic7" in await _unlocked(factory, uid)
+    assert "magic7" in await _unlocked(factory, pid)
 
 async def test_two_sessions_do_not_collide_on_new_rows(factory):
-    uid = await _user(factory)
+    uid, pid = await _user(factory)
     async with factory() as first, factory() as second:
         u1 = await first.get(User, uid)
         u2 = await second.get(User, uid)
@@ -90,14 +90,14 @@ async def test_two_sessions_do_not_collide_on_new_rows(factory):
         await second.commit()
     async with factory() as s:
         n = (await s.execute(select(func.count()).select_from(UserTitleProgress)
-                             .where(UserTitleProgress.user_id == uid))).scalar()
+                             .where(UserTitleProgress.player_id == pid))).scalar()
     assert n == len(TITLE_REGISTRY)
-    assert "compare_50" in await _unlocked(factory, uid)
+    assert "compare_50" in await _unlocked(factory, pid)
 
 async def test_stuck_in_a_loop_unlocks_from_recent(factory):
-    uid = await _user(factory)
+    uid, pid = await _user(factory)
     async with factory() as s:
-        s.add_all([_attempt(uid, n, beatmap_id=42) for n in range(1, 16)])
+        s.add_all([_attempt(pid, n, beatmap_id=42) for n in range(1, 16)])
         await s.commit()
     async with factory() as s:
         user = await s.get(User, uid)
@@ -106,9 +106,9 @@ async def test_stuck_in_a_loop_unlocks_from_recent(factory):
     assert "repeat_15" in {td.code for td in newly}
 
 async def test_classic_is_not_a_mask(factory):
-    uid = await _user(factory)
+    uid, pid = await _user(factory)
     async with factory() as s:
-        s.add_all([_attempt(uid, n, mods=m) for n, m in
+        s.add_all([_attempt(pid, n, mods=m) for n, m in
                    enumerate(["CL", "HD,CL", "HR,CL", "DT,CL", "NM"], start=1)])
         await s.commit()
     async with factory() as s:

@@ -15,10 +15,12 @@ router = Router(name="settings_titles")
 
 _TITLES_PER_PAGE = 5
 
-async def _unlocked_title_codes(session, user_id: int) -> set:
+async def _unlocked_title_codes(session, player_id) -> set:
+    if player_id is None:
+        return set()
     rows = await session.execute(
         select(UserTitleProgress.title_code).where(
-            UserTitleProgress.user_id == user_id,
+            UserTitleProgress.player_id == player_id,
             UserTitleProgress.unlocked == True,
         )
     )
@@ -30,7 +32,7 @@ async def _title_view(tg_id: int, tenant_chat_id, page: int = 0, lang: str = "en
         if not user:
             return None, None
         active = user.active_title_code
-        codes = await _unlocked_title_codes(session, user.id)
+        codes = await _unlocked_title_codes(session, user.player_id)
 
     active_name = None
     if active:
@@ -108,7 +110,7 @@ async def _set_active_title(callback: types.CallbackQuery, tenant_chat_id, code,
             await callback.answer(t("sts.not_registered", lang), show_alert=True)
             return
         if code is not None:
-            codes = await _unlocked_title_codes(session, user.id)
+            codes = await _unlocked_title_codes(session, user.player_id)
             if code not in codes:
                 await callback.answer(t("sts.title.not_unlocked", lang), show_alert=True)
                 return

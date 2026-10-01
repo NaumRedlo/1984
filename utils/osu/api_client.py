@@ -445,15 +445,20 @@ class OsuApiClient:
 
         from db.models.best_score import UserBestScore
 
+        if user_model.player_id is None:
+            await session.flush()
+        if user_model.player_id is None:
+            return False
+
         raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100, oauth_token=oauth_token)
         if not raw_scores:
             return False
 
-        stmt = select(UserBestScore).where(UserBestScore.user_id == user_model.id)
+        stmt = select(UserBestScore).where(UserBestScore.player_id == user_model.player_id)
         result = await session.execute(stmt)
         existing = {s.score_id: s for s in result.scalars().all()}
 
-        is_baseline_sync = user_model.best_scores_baseline_at is None
+        is_baseline_sync = user_model.best_scores_baseline_at is None and not existing
         sync_time = datetime.now(timezone.utc)
 
         incoming_ids = set()
@@ -543,7 +548,7 @@ class OsuApiClient:
                         score_obj.star_rating = star_rating
             else:
                 new_score = UserBestScore(
-                    user_id=user_model.id,
+                    player_id=user_model.player_id,
                     score_id=score_id,
                     beatmap_id=beatmap.get("id", 0),
                     beatmapset_id=beatmapset.get("id"),
@@ -579,15 +584,15 @@ class OsuApiClient:
         if stale_ids:
             await session.execute(
                 delete(UserBestScore).where(
-                    UserBestScore.user_id == user_model.id,
+                    UserBestScore.player_id == user_model.player_id,
                     UserBestScore.score_id.in_(stale_ids)
                 )
             )
 
-        if is_baseline_sync:
+        if user_model.best_scores_baseline_at is None:
             user_model.best_scores_baseline_at = sync_time
 
-        await self._fill_ranked_dates_quietly(session, user_model.id)
+        await self._fill_ranked_dates_quietly(session, user_model.player_id)
         logger.debug(f"Synced best scores for {user_model.osu_username}: {len(incoming_ids)} current, {len(stale_ids)} removed")
         return True
 
@@ -597,6 +602,10 @@ class OsuApiClient:
         from db.models.map_attempt import UserMapAttempt
 
         if not raw_scores:
+            return 0
+        if user_model.player_id is None:
+            await session.flush()
+        if user_model.player_id is None:
             return 0
 
         incoming_ids = []
@@ -618,7 +627,7 @@ class OsuApiClient:
             return 0
 
         stmt = select(UserMapAttempt).where(
-            UserMapAttempt.user_id == user_model.id,
+            UserMapAttempt.player_id == user_model.player_id,
             UserMapAttempt.score_id.in_(incoming_ids),
         )
         result = await session.execute(stmt)
@@ -693,12 +702,12 @@ class OsuApiClient:
                 for key, value in attrs.items():
                     setattr(attempt, key, value)
             else:
-                attempt = UserMapAttempt(user_id=user_model.id, score_id=score_id, **attrs)
+                attempt = UserMapAttempt(player_id=user_model.player_id, score_id=score_id, **attrs)
                 session.add(attempt)
                 existing[score_id] = attempt
             synced += 1
 
-        await self._fill_ranked_dates_quietly(session, user_model.id)
+        await self._fill_ranked_dates_quietly(session, user_model.player_id)
         logger.debug(f"Synced map attempts for {user_model.osu_username}: {synced} rows")
         return synced
 
@@ -752,7 +761,7 @@ class OsuApiClient:
                 _remember_ranked_date(b, found.get(b))
         return {b: _RANKED_DATES[b] for b in wanted if b in _RANKED_DATES}
 
-    async def fill_ranked_dates(self, session, user_id: int, *, limit: int = 150) -> int:
+    async def fill_ranked_dates(self, session, player_id: int, *, limit: int = 150) -> int:
         from sqlalchemy import select
 
         from db.models.best_score import UserBestScore
@@ -761,7 +770,7 @@ class OsuApiClient:
         rows = []
         for M in (UserBestScore, UserMapAttempt):
             rows += (await session.execute(
-                select(M).where(M.user_id == user_id, M.ranked_date.is_(None),
+                select(M).where(M.player_id == player_id, M.ranked_date.is_(None),
                                 M.status.in_(DATED_STATUSES)).limit(limit)
             )).scalars().all()
         if not rows:
@@ -775,12 +784,12 @@ class OsuApiClient:
                 filled += 1
         return filled
 
-    async def _fill_ranked_dates_quietly(self, session, user_id: int) -> None:
+    async def _fill_ranked_dates_quietly(self, session, player_id: int) -> None:
         await session.flush()
         try:
-            await self.fill_ranked_dates(session, user_id)
+            await self.fill_ranked_dates(session, player_id)
         except Exception as exc:
-            logger.warning(f"ranked dates for user_id={user_id} not filled: {exc}")
+            logger.warning(f"ranked dates for player_id={player_id} not filled: {exc}")
 
     async def get_beatmap(self, beatmap_id: Union[int, str]) -> Optional[Dict]:
         logger.debug(f"Fetching beatmap data for ID: {beatmap_id}")

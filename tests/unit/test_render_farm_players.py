@@ -24,7 +24,7 @@ NOW = datetime(2026, 10, 1, 12, 0)
 def syncing():
     player_sync.switch_on()
     yield
-    player_sync.switch_on(False)
+    player_sync.switch_on()
 
 @pytest_asyncio.fixture
 async def factory():
@@ -49,9 +49,9 @@ async def _seed(factory):
         s.add_all([naum_here, naum_there, koto])
         await s.flush()
         s.add_all([
-            UserTitleProgress(user_id=naum_here.id, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW),
-            UserTitleProgress(user_id=naum_there.id, title_code="perfectionist", current_value=1, unlocked=True, unlocked_at=NOW),
-            UserBestScore(user_id=naum_there.id, score_id=1, beatmap_id=1, pp=412.6, accuracy=98.5, rank="S",
+            UserTitleProgress(player_id=naum_here.player_id, title_code="wysi", current_value=1, unlocked=True, unlocked_at=NOW),
+            UserTitleProgress(player_id=naum_there.player_id, title_code="perfectionist", current_value=1, unlocked=True, unlocked_at=NOW),
+            UserBestScore(player_id=naum_there.player_id, score_id=1, beatmap_id=1, pp=412.6, accuracy=98.5, rank="S",
                           artist="xi", title="FREEDOM DiVE", version="FOUR DIMENSIONS", created_at=NOW),
         ])
         await s.commit()

@@ -257,9 +257,7 @@ async def purge_confirm(callback: types.CallbackQuery):
         return
 
     from db.models.oauth_token import OAuthToken
-    from db.models.title_progress import UserTitleProgress
-    from db.models.best_score import UserBestScore
-    from db.models.map_attempt import UserMapAttempt
+    from db.player_data import clear_if_last
 
     async with get_db_session() as session:
         user = (await session.execute(
@@ -272,9 +270,7 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         username = user.osu_username or str(user_id)
 
-        await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user_id))
-        await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user_id))
-        await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user_id))
+        await clear_if_last(session, user)
 
         await session.execute(delete(User).where(User.id == user_id))
 

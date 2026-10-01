@@ -31,13 +31,13 @@ async def board(session, osu, beatmap_id: int, chat_id: int, viewer: int, *, syn
             logger.info("scores of map %s were not refreshed: %s", beatmap_id, exc)
 
     users = {
-        user.id: user for user in (await session.execute(
-            select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None))
+        user.player_id: user for user in (await session.execute(
+            select(User).where(User.chat_id == chat_id, User.osu_user_id.isnot(None), User.player_id.isnot(None))
         )).scalars().all()
     }
     attempts = (await session.execute(
         select(UserMapAttempt)
-        .where(UserMapAttempt.user_id.in_(list(users)), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(UserMapAttempt.player_id.in_(list(users)), UserMapAttempt.beatmap_id == beatmap_id)
         .order_by(UserMapAttempt.id)
     )).scalars().all() if users else []
 
@@ -49,17 +49,17 @@ async def board(session, osu, beatmap_id: int, chat_id: int, viewer: int, *, syn
     for row in attempts:
         if row.passed is False:
             continue
-        held = best.get(row.user_id)
+        held = best.get(row.player_id)
         if held is None or _worth(row, by_score) > _worth(held, by_score):
-            best[row.user_id] = row
+            best[row.player_id] = row
     ranked = sorted(best.values(), key=lambda row: (-_worth(row, by_score), row.id))
 
     rows = []
     for place, row in enumerate(ranked, 1):
-        user = users[row.user_id]
+        user = users[row.player_id]
         rows.append({
             "who": user.id,
-            "player": getattr(user, "player_id", None),
+            "player": user.player_id,
             "name": user.osu_username,
             "country": (user.country or "").upper(),
             "avatar": user.avatar_url or (f"https://a.ppy.sh/{user.osu_user_id}" if user.osu_user_id else ""),
@@ -91,7 +91,7 @@ async def board(session, osu, beatmap_id: int, chat_id: int, viewer: int, *, syn
         "metric": "score" if by_score else "pp",
         "map": about,
         "plays": len(attempts),
-        "players": len({row.user_id for row in attempts}),
+        "players": len({row.player_id for row in attempts}),
         "rows": rows,
         "records": records,
         "at": stamp(naive(now) or utcnow()),

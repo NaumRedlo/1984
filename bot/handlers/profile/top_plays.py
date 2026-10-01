@@ -56,8 +56,10 @@ def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
                                           callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-async def _fetch_best_scores(session, user_id: int):
-    stmt = select(UserBestScore).where(UserBestScore.user_id == user_id)
+async def _fetch_best_scores(session, player_id):
+    if player_id is None:
+        return []
+    stmt = select(UserBestScore).where(UserBestScore.player_id == player_id)
     result = await session.execute(stmt)
     return result.scalars().all()
 
@@ -101,7 +103,7 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         player_pp = user.get("pp")
         accuracy = user.get("accuracy")
     else:
-        scores = await _fetch_best_scores(session, user.id)
+        scores = await _fetch_best_scores(session, user.player_id)
         built = build_top_plays_list(scores)
         username = user.osu_username
         country = user.country

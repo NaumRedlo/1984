@@ -159,6 +159,8 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
     )).scalars().all()
     ids = [u.id for u in users]
     by_id = {u.id: u for u in users}
+    row_of = {u.player_id: u.id for u in users if u.player_id is not None}
+    players = list(row_of)
 
     anchors = {
         s.user_id: s for s in (await session.execute(
@@ -171,19 +173,19 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
     moved, gained = _movement(users, anchors)
 
     unlocked: dict[int, list] = {uid: [] for uid in ids}
-    if ids:
+    if players:
         for row in (await session.execute(
-            select(UserTitleProgress).where(UserTitleProgress.user_id.in_(ids), UserTitleProgress.unlocked.is_(True))
+            select(UserTitleProgress).where(UserTitleProgress.player_id.in_(players), UserTitleProgress.unlocked.is_(True))
         )).scalars().all():
             if row.title_code in TITLE_REGISTRY:
-                unlocked[row.user_id].append(row)
+                unlocked[row_of[row.player_id]].append(row)
 
     best: dict[int, list] = {uid: [] for uid in ids}
-    if ids:
+    if players:
         for row in (await session.execute(
-            select(UserBestScore).where(UserBestScore.user_id.in_(ids)).order_by(UserBestScore.user_id, UserBestScore.pp.desc())
+            select(UserBestScore).where(UserBestScore.player_id.in_(players)).order_by(UserBestScore.player_id, UserBestScore.pp.desc())
         )).scalars().all():
-            best[row.user_id].append(row)
+            best[row_of[row.player_id]].append(row)
 
     people = []
     for u in users:
@@ -201,14 +203,14 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
     people.sort(key=lambda p: p["pp"], reverse=True)
 
     live = []
-    if ids:
+    if players:
         for row in (await session.execute(
             select(UserMapAttempt)
-            .where(UserMapAttempt.user_id.in_(ids), UserMapAttempt.played_at.isnot(None))
+            .where(UserMapAttempt.player_id.in_(players), UserMapAttempt.played_at.isnot(None))
             .order_by(UserMapAttempt.played_at.desc())
             .limit(LIVE)
         )).scalars().all():
-            live.append({"who": row.user_id, "passed": row.passed is not False, **_play(row, when=row.played_at)})
+            live.append({"who": row_of[row.player_id], "passed": row.passed is not False, **_play(row, when=row.played_at)})
 
     happened = []
     since = now - HAPPENED
@@ -247,19 +249,17 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
     }
 
 async def title_holders(session) -> dict[str, Any]:
-    everyone = set()
-    for player_id, user_id in (await session.execute(
-        select(User.player_id, User.id).where(User.osu_user_id.isnot(None))
-    )).all():
-        everyone.add(player_id if player_id is not None else -user_id)
+    everyone = {
+        player_id for (player_id,) in (await session.execute(
+            select(User.player_id).where(User.osu_user_id.isnot(None), User.player_id.isnot(None))
+        )).all()
+    }
     held: dict[str, set] = {}
-    for code, player_id, user_id in (await session.execute(
-        select(UserTitleProgress.title_code, User.player_id, User.id)
-        .join(User, User.id == UserTitleProgress.user_id)
-        .where(UserTitleProgress.unlocked.is_(True), User.osu_user_id.isnot(None))
+    for code, player_id in (await session.execute(
+        select(UserTitleProgress.title_code, UserTitleProgress.player_id).where(UserTitleProgress.unlocked.is_(True))
     )).all():
-        if code in TITLE_REGISTRY:
-            held.setdefault(code, set()).add(player_id if player_id is not None else -user_id)
+        if code in TITLE_REGISTRY and player_id in everyone:
+            held.setdefault(code, set()).add(player_id)
     return {"players": len(everyone), "held": {code: len(who) for code, who in sorted(held.items())}}
 
 async def chosen(session, viewer: int, chat_id: Optional[int] = None):
@@ -281,7 +281,7 @@ async def wear(session, viewer: int, chat_id: Optional[int], code: Optional[str]
         return NOT_REGISTERED
     if code is not None:
         unlocked = set((await session.execute(
-            select(UserTitleProgress.title_code).where(UserTitleProgress.user_id == mine.id, UserTitleProgress.unlocked.is_(True))
+            select(UserTitleProgress.title_code).where(UserTitleProgress.player_id == mine.player_id, UserTitleProgress.unlocked.is_(True))
         )).scalars().all())
         if code not in unlocked or code not in TITLE_REGISTRY:
             return NOT_UNLOCKED
@@ -330,18 +330,18 @@ async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Opt
 async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) -> dict[str, Any]:
     progress = [
         row for row in (await session.execute(
-            select(UserTitleProgress).where(UserTitleProgress.user_id == mine.id)
+            select(UserTitleProgress).where(UserTitleProgress.player_id == mine.player_id)
         )).scalars().all()
         if row.title_code in TITLE_REGISTRY
     ]
     held = [row for row in progress if row.unlocked]
     titles = [row.title_code for row in held]
     top = (await session.execute(
-        select(UserBestScore).where(UserBestScore.user_id == mine.id).order_by(UserBestScore.pp.desc()).limit(TOP)
+        select(UserBestScore).where(UserBestScore.player_id == mine.player_id).order_by(UserBestScore.pp.desc()).limit(TOP)
     )).scalars().all()
     recent = (await session.execute(
         select(UserMapAttempt)
-        .where(UserMapAttempt.user_id == mine.id, UserMapAttempt.played_at.isnot(None))
+        .where(UserMapAttempt.player_id == mine.player_id, UserMapAttempt.played_at.isnot(None))
         .order_by(UserMapAttempt.played_at.desc())
         .limit(RECENT)
     )).scalars().all()
@@ -374,7 +374,7 @@ async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) 
     since = (now or utcnow()) - timedelta(days=ACTIVITY_DAYS)
     played = (await session.execute(
         select(UserMapAttempt.played_at)
-        .where(UserMapAttempt.user_id == mine.id, UserMapAttempt.played_at.isnot(None), UserMapAttempt.played_at >= since)
+        .where(UserMapAttempt.player_id == mine.player_id, UserMapAttempt.played_at.isnot(None), UserMapAttempt.played_at >= since)
     )).all()
     days: dict[str, int] = {}
     for (moment,) in played:

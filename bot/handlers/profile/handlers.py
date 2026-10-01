@@ -141,7 +141,7 @@ async def _build_page_data(
             from sqlalchemy import func
             stmt = (
                 select(func.max(UserBestScore.pp))
-                .where(UserBestScore.user_id == user.id)
+                .where(UserBestScore.player_id == user.player_id)
             )
             result = await session.execute(stmt)
             best_pp = result.scalar()
@@ -157,7 +157,7 @@ async def _build_page_data(
         if is_registered:
             stmt = (
                 select(UserBestScore)
-                .where(UserBestScore.user_id == user.id)
+                .where(UserBestScore.player_id == user.player_id)
                 .order_by(UserBestScore.pp.desc())
                 .limit(5)
             )

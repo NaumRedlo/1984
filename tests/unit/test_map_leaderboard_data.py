@@ -94,7 +94,7 @@ async def _seed(session, plays):
     await session.flush()
     for i, (name, pp, day) in enumerate(plays, 1):
         session.add(UserMapAttempt(
-            user_id=users[name].id, score_id=90000 + i, beatmap_id=MAP,
+            player_id=users[name].player_id, score_id=90000 + i, beatmap_id=MAP,
             pp=pp, score=int(pp * 1000), played_at=datetime(2026, 8, day, 12, 0),
         ))
     await session.commit()
@@ -126,7 +126,7 @@ async def test_a_loved_map_tracks_the_record_by_score(factory):
         await session.flush()
         for i, score in enumerate([100, 500, 300], 1):
             session.add(UserMapAttempt(
-                user_id=users.id, score_id=i, beatmap_id=MAP, pp=0.0, score=score,
+                player_id=users.player_id, score_id=i, beatmap_id=MAP, pp=0.0, score=score,
                 played_at=datetime(2026, 8, i, 12, 0),
             ))
         await session.commit()

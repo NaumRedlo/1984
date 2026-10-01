@@ -121,9 +121,9 @@ async def test_the_map_leaderboard_shows_an_estimate_where_osu_gave_none(factory
         await session.flush()
         played = datetime(2026, 9, 1, tzinfo=timezone.utc)
         session.add_all([
-            UserMapAttempt(user_id=a.id, score_id=1, beatmap_id=MAP, pp=0.0, pp_estimated=321.5,
+            UserMapAttempt(player_id=a.player_id, score_id=1, beatmap_id=MAP, pp=0.0, pp_estimated=321.5,
                            score=900, played_at=played),
-            UserMapAttempt(user_id=b.id, score_id=2, beatmap_id=MAP, pp=0.0, score=800, played_at=played),
+            UserMapAttempt(player_id=b.player_id, score_id=2, beatmap_id=MAP, pp=0.0, score=800, played_at=played),
         ])
         await session.commit()
         result = await build_map_leaderboard(session, _Osu(), MAP, CHAT, sync=False)

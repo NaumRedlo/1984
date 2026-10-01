@@ -9,6 +9,13 @@ logger = get_logger("services.refresh.orchestrator")
 
 _in_flight: set[int] = set()
 _in_flight_lock = asyncio.Lock()
+_players: dict[int, asyncio.Lock] = {}
+
+def _one_at_a_time(user) -> asyncio.Lock:
+    player_id = getattr(user, "player_id", None)
+    if player_id is None:
+        return asyncio.Lock()
+    return _players.setdefault(player_id, asyncio.Lock())
 
 async def _acquire(user_id: int) -> bool:
     async with _in_flight_lock:
@@ -47,15 +54,17 @@ async def refresh_user(
             return False
 
         if mode in ("full", "background_full"):
-            await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
+            async with _one_at_a_time(user):
+                await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
 
-            try:
-                from utils.title_progress import refresh_user_titles
-                await refresh_user_titles(user, session)
-            except Exception as exc:
-                logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
+                try:
+                    from utils.title_progress import refresh_user_titles
+                    await refresh_user_titles(user, session)
+                except Exception as exc:
+                    logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
 
-            user.last_full_update = utcnow()
+                user.last_full_update = utcnow()
+                await session.flush()
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 

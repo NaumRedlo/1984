@@ -8,9 +8,7 @@ from sqlalchemy import delete, select
 from bot.filters import TextTriggerFilter, TriggerArgs
 from config.settings import ADMIN_IDS
 from db.database import get_db_session
-from db.models.best_score import UserBestScore
-from db.models.map_attempt import UserMapAttempt
-from db.models.title_progress import UserTitleProgress
+from db.player_data import clear_if_last
 from db.models.user import User
 from db.models.oauth_token import OAuthToken
 from utils.logger import get_logger
@@ -51,9 +49,7 @@ async def _can_unlink(user: User, lang: str = "en") -> tuple[bool, str | None]:
     return False, t("common.duration_dh", lang, days=days, hours=hours)
 
 async def _clear_user_cache(session, user: User) -> None:
-    await session.execute(delete(UserBestScore).where(UserBestScore.user_id == user.id))
-    await session.execute(delete(UserMapAttempt).where(UserMapAttempt.user_id == user.id))
-    await session.execute(delete(UserTitleProgress).where(UserTitleProgress.user_id == user.id))
+    await clear_if_last(session, user)
 
 @router.message(TextTriggerFilter("register", "reg"))
 async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
