@@ -182,6 +182,33 @@ async def _chat_label(bot, chat_id) -> str:
         pass
     return f"<code>{chat_id}</code>"
 
+@router.message(TextTriggerFilter("members"))
+async def cmd_members(message: types.Message, trigger_args: TriggerArgs):
+    from db.database import AsyncSessionFactory
+    from services import membership
+
+    apply = (trigger_args.args or "").strip().lower() == "sync"
+    wait = await message.answer("Сверяю состав бесед с Telegram…")
+    try:
+        said = await membership.sweep(message.bot, AsyncSessionFactory, dry=not apply)
+    except Exception as exc:
+        logger.error("roster sweep by admin failed: %s", exc, exc_info=True)
+        await wait.edit_text("Не удалось сверить состав бесед.")
+        return
+    why = {membership.NO_BOT: "бота нет в беседе", membership.EVERYONE: "все игроки выглядят отсутствующими, изменения не применены"}
+    lines = ["<b>Состав бесед</b>" + ("" if apply else " (проверка, без изменений)")]
+    for told in said:
+        lines.append(f"\n<code>{told.chat_id}</code>: записей {told.held}, в беседе {told.present}, не проверено {told.unknown}")
+        if told.skipped:
+            lines.append(f"пропущена: {why.get(told.skipped, told.skipped)}")
+        if told.added:
+            lines.append(("добавлены: " if apply else "будут добавлены: ") + ", ".join(escape_html(name or "?") for name in told.added))
+        if told.removed:
+            lines.append(("убраны: " if apply else "будут убраны: ") + ", ".join(escape_html(name or "?") for name in told.removed))
+    if not apply:
+        lines.append("\nЧтобы применить: <code>members sync</code>")
+    await wait.edit_text("\n".join(lines)[:4000], parse_mode="HTML")
+
 @router.message(TextTriggerFilter("purgeuser"))
 async def cmd_purge_user(message: types.Message, trigger_args: TriggerArgs):
     raw = (trigger_args.args or "").strip()

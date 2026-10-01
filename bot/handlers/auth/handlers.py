@@ -122,6 +122,9 @@ async def register_user(message: types.Message, trigger_args: TriggerArgs, osu_a
                     last_api_update=datetime.now(timezone.utc),
                 )
                 session.add(user)
+                from services import membership
+
+                await membership.welcome_back(session, user)
                 is_new = True
             else:
                 user.osu_user_id = osu_id

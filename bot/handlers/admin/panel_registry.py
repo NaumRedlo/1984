@@ -37,6 +37,8 @@ CATEGORIES: tuple[Category, ...] = (
     Category("chats", "🔔", "Чаты / топики", (
         CommandSpec("whereami", "Где я",
                     "Показать chat_id и message_thread_id.", where="group"),
+        CommandSpec("members", "Состав бесед",
+                    "Сверить игроков каждой беседы с Telegram; «members sync» применяет изменения.", args="[sync]"),
     )),
 )
 

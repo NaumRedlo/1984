@@ -145,6 +145,29 @@ graph, what-if). The bot says at start-up whether the service answers.
 | 🏅 **Titles** | Achievements across seven rarities, with progress bars and an active title on the profile card |
 | 📈 **Top plays** | Best scores by weighted pp — the same `0.95^(N-1)` curve osu! itself uses — with change tracking |
 
+### Who is in a chat
+
+A person's data is kept in two places: what is theirs anywhere (the osu!
+account, its statistics, scores, titles) on the player, and what belongs to one
+chat (points, duels, the weekly board) on that chat's row. The bot keeps each
+chat's rows in step with who is really there:
+
+- every `MEMBERSHIP_EVERY_HOURS` (6; `0` switches it off) it asks Telegram
+  about every row of every group, and about every known player who has no row
+  in a group; a service message about someone leaving or joining is acted on
+  at once;
+- a known player found in a group gets a row there without registering again;
+- whoever has left or was removed loses the row, the weekly snapshots of that
+  chat and the pin on it. What is shared stays with the player, and what
+  belonged to the chat is put aside in `left_members` for a year and given back
+  if they return;
+- only a plain "left" or "kicked" from Telegram counts. An error, an unknown
+  status, a group the bot cannot confirm it is in, or a group where every
+  player at once seems gone removes nobody.
+
+The admin command `members` shows what a sweep would change without changing
+anything; `members sync` applies it at once.
+
 ### Commands
 
 Gameplay commands are deliberately short and take no slash. Case does not
