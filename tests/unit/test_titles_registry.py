@@ -84,3 +84,13 @@ def test_the_rebalanced_tiers_are_the_ones_the_plan_asked_for():
 def test_a_description_fits_beside_the_tier_pill_in_both_languages():
     for code, td in TITLE_REGISTRY.items():
         assert len(td.description) <= 70 and len(td.description_ru) <= 70, code
+
+def test_no_mod_is_drawn_as_a_mod_badge_like_the_others():
+    from services.image.utils import load_mod_icon
+
+    tokens = _tokenize_desc("Pass maps from 5* with NM, HD, HR, DT and FL.")
+    assert [seg for seg, kind in tokens if kind == "mod"] == ["NM", "HD", "HR", "DT", "FL"]
+    ru = _tokenize_desc(TITLE_REGISTRY["four_ministries"].description_ru)
+    assert "NM" in [seg for seg, kind in ru if kind == "mod"]
+    icon = load_mod_icon("NM", size=27)
+    assert icon is not None and icon.getbbox() is not None

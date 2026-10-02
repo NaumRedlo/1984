@@ -72,7 +72,7 @@ COL_INK_LIGHT = (250, 248, 252)
 
 _DESC_RE = re.compile(
     r"(?P<sr>\d+(?:\.\d+)?\*\+?)"
-    r"|(?P<mod>(?<![A-Za-z])(?:HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF|TD)+(?![A-Za-z]))"
+    r"|(?P<mod>(?<![A-Za-z])(?:NM|HD|HR|DT|NC|FL|EZ|HT|SO|NF|SD|PF|TD)+(?![A-Za-z]))"
     r"|(?P<fc>(?<![A-Za-z])FC(?![A-Za-z]))"
     r"|(?P<pass>(?<![A-Za-z])Pass(?![A-Za-z]))"
     r"|(?P<grade>(?<![A-Za-z])(?:SS|S|A|B|C|D)(?![A-Za-z]))"
