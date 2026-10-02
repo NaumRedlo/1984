@@ -15,10 +15,6 @@ CATALOG = {
         "en": "User <b>{name}</b> exists on osu! but isn't registered in the bot.",
         "ru": "Пользователь <b>{name}</b> найден в osu!, но не зарегистрирован в боте.",
     },
-    "common.title_unlocked": {
-        "en": "<b>{user}</b> — new title: {title} ({rarity})!",
-        "ru": "<b>{user}</b> — новый титул: {title} ({rarity})!",
-    },
 
     "common.error_prefix": {"en": "Error! ", "ru": "Ошибка! "},
     "common.success_prefix": {"en": "Success! ", "ru": "Успешно! "},

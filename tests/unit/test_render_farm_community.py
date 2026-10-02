@@ -140,7 +140,7 @@ async def test_the_titles_come_with_the_catalogue_in_both_languages(factory):
     assert "registered" in codes and "wysi" in codes
     assert all(t["name_ru"] and t["about_ru"] for t in catalogue)
     rarities = [t["rarity"] for t in catalogue]
-    assert rarities == sorted(rarities, key=["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret"].index)
+    assert rarities == sorted(rarities, key=["common", "uncommon", "rare", "epic", "legendary", "mythic", "anomaly"].index)
 
 async def test_the_person_s_own_profile_has_recent_plays(factory):
     await _seed(factory)

@@ -748,6 +748,27 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 live_tracker.nudge(int(osu_user_id))
         return web.json_response({"kept": verdict == witnessed.KEPT, "play": row.id if row is not None else None}, status=201 if verdict == witnessed.KEPT else 200)
 
+    async def witness_session(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = await _json_object(request)
+        from db.database import AsyncSessionFactory
+        from services.render_farm import witness_sessions
+
+        async with AsyncSessionFactory() as session:
+            player = await videos.player_of(session, owner)
+            if player is None:
+                return web.json_response({"error": "not registered"}, status=404)
+            verdict = await witness_sessions.keep(session, player, said)
+            await session.commit()
+        if verdict == witness_sessions.BAD:
+            return web.json_response({"error": "not a session"}, status=400)
+        return web.json_response({"kept": True}, status=200)
+
     async def wear_title(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -1277,6 +1298,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/me/title", wear_title),
         web.post("/render/me/played", played),
         web.post("/render/me/play", witnessed_play),
+        web.post("/render/me/session", witness_session),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

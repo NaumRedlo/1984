@@ -55,3 +55,32 @@ def test_tt_tabs_all_rarities_translated():
     assert en["all"] == "ALL" and ru["all"] == "ВСЕ"
     for r in RARITY_ORDER:
         assert en[r] != ru[r]
+
+def test_there_is_no_secret_tier_and_the_titles_that_were_secret_are_anomalies_that_stay_hidden():
+    assert "secret" not in RARITY_ORDER and "secret" not in RARITY_META
+    assert RARITY_ORDER[-1] == "anomaly"
+    hidden = {code for code, td in TITLE_REGISTRY.items() if td.secret}
+    assert hidden == {"doublethink", "repeat_15", "compare_50", "comeback_180d", "magic7", "choke_95"}
+    for code in hidden:
+        td = TITLE_REGISTRY[code]
+        assert td.rarity == "anomaly" and td.hint and td.hint_ru
+
+def test_the_catalogue_tells_which_titles_are_hidden_until_earned():
+    from services.render_farm import community
+
+    catalogue = {t["code"]: t for t in community.titles_catalogue()}
+    assert catalogue["magic7"]["hidden"] is True and catalogue["magic7"]["rarity"] == "anomaly"
+    assert catalogue["wysi"]["hidden"] is False
+    assert catalogue["dejavu"]["rarity"] == "anomaly" and catalogue["dejavu"]["hidden"] is False
+
+def test_the_rebalanced_tiers_are_the_ones_the_plan_asked_for():
+    tier = {code: td.rarity for code, td in TITLE_REGISTRY.items()}
+    assert (tier["s_50"], tier["ss_100"], tier["archaeologist"], tier["heavy_hand"]) == ("uncommon", "rare", "uncommon", "epic")
+    assert (tier["ss_hdfl_5"], tier["sr_10"], tier["archivist"], tier["streak_30d"]) == ("legendary", "legendary", "epic", "epic")
+    assert tier["dejavu"] == "anomaly" and tier["off_day"] == "rare" and tier["ss_streak_10"] == "mythic"
+    assert TITLE_REGISTRY["week_500"].target == 300 and TITLE_REGISTRY["ss_streak_10"].target == 5
+    assert TITLE_REGISTRY["session_30maps"].target == 50 and TITLE_REGISTRY["session_3h"].target == 180
+
+def test_a_description_fits_beside_the_tier_pill_in_both_languages():
+    for code, td in TITLE_REGISTRY.items():
+        assert len(td.description) <= 70 and len(td.description_ru) <= 70, code

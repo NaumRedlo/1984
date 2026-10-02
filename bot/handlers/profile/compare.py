@@ -12,7 +12,6 @@ from utils.language import get_language
 from utils.logger import get_logger
 from utils.formatting.text import escape_html
 from utils.osu.resolve_user import resolve_osu_query_status
-from utils.titles import TITLE_REGISTRY
 from utils.title_progress import unlock_title
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
@@ -150,9 +149,8 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 return
 
             self_user.compare_uses = (self_user.compare_uses or 0) + 1
-            informant = None
-            if self_user.compare_uses >= 50 and await unlock_title(self_user, "compare_50", session):
-                informant = TITLE_REGISTRY["compare_50"]
+            if self_user.compare_uses >= 50:
+                await unlock_title(self_user, "compare_50", session)
             await session.commit()
 
             pp_diff = (user1["pp"] or 0) - (user2["pp"] or 0)
@@ -212,17 +210,6 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
             except Exception as img_err:
                 logger.warning(f"Compare card generation failed: {img_err}")
                 await wait_msg.edit_text(compare_text, parse_mode="HTML")
-
-            if informant is not None:
-                try:
-                    await message.answer(
-                        t("common.title_unlocked", lang,
-                          user=escape_html(self_user.osu_username),
-                          title=escape_html(informant.name), rarity=informant.rarity_label),
-                        parse_mode="HTML",
-                    )
-                except Exception:
-                    pass
 
         except Exception as e:
             logger.error(f"Error in /compare: {e}", exc_info=True)

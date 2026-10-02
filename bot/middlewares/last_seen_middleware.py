@@ -6,13 +6,9 @@ from sqlalchemy import select
 
 from db.database import AsyncSessionFactory
 from db.models.user import User
-from utils.formatting.text import escape_html
-from utils.i18n import t
-from utils.language import get_language
 from utils.logger import get_logger
 from utils.timeutils import utcnow
 from utils.ttl_cache import TTLCache
-from utils.titles import TITLE_REGISTRY
 from utils.title_progress import detect_comeback, touch_activity_day, unlock_title
 
 logger = get_logger("middleware.last_seen")
@@ -26,21 +22,6 @@ def _event_chat(event) -> object | None:
     if isinstance(event, CallbackQuery):
         return event.message.chat if event.message else None
     return None
-
-async def _announce_comeback(event, td) -> None:
-    try:
-        target = event if isinstance(event, Message) else getattr(event, "message", None)
-        if target is None or not event.from_user:
-            return
-        lang = (await get_language(event.from_user.id)).lower()
-        name = event.from_user.first_name or event.from_user.username or t("common.anon_name", lang)
-        await target.answer(
-            t("common.title_unlocked", lang, user=escape_html(name),
-              title=escape_html(td.name), rarity=td.rarity_label),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
 
 class LastSeenMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable, event: object, data: Dict[str, Any]) -> Any:
@@ -59,7 +40,6 @@ class LastSeenMiddleware(BaseMiddleware):
             key = (user_id, chat_id)
             if key not in _last_updated:
                 _last_updated[key] = now_mono
-                comeback_td = None
                 try:
                     async with AsyncSessionFactory() as session:
                         user = (await session.execute(
@@ -71,12 +51,10 @@ class LastSeenMiddleware(BaseMiddleware):
                             came_back = detect_comeback(user)
                             touch_activity_day(user)
                             user.last_seen_at = utcnow()
-                            if came_back and await unlock_title(user, "comeback_180d", session):
-                                comeback_td = TITLE_REGISTRY["comeback_180d"]
+                            if came_back:
+                                await unlock_title(user, "comeback_180d", session)
                             await session.commit()
                 except Exception as e:
                     logger.debug(f"last_seen update failed for {user_id}@{chat_id}: {e}")
-                if comeback_td is not None:
-                    await _announce_comeback(event, comeback_td)
 
         return await handler(event, data)

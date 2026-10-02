@@ -83,6 +83,7 @@ def titles_catalogue() -> list[dict[str, Any]]:
         "about": t.description,
         "about_ru": t.description_ru or t.description,
         "target": t.target,
+        "hidden": t.hidden,
     } for t in ordered]
 
 def _positions(values: dict[int, float]) -> dict[int, int]:

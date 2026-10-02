@@ -3,13 +3,13 @@ from services.image.render.titles import build_titles_card_data, _tt_tabs, HEAD_
 from utils.titles import TITLE_REGISTRY, RARITY_ORDER
 
 def _progress(n=3):
-    rarities = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "secret"]
+    rarities = ["common", "uncommon", "rare", "epic", "legendary", "mythic", "anomaly"]
     out = []
     for i in range(n):
         out.append({
             "code": f"t{i}", "name": f"Title {i}", "description": f"Do the thing {i} times.",
             "rarity": rarities[i % len(rarities)], "color": (200, 80, 80),
-            "unlocked": i % 2 == 0, "secret": rarities[i % len(rarities)] == "secret",
+            "unlocked": i % 2 == 0, "secret": rarities[i % len(rarities)] == "anomaly",
             "target": 10, "current": 5, "unlocked_at": "2026-06-01T00:00:00" if i % 2 == 0 else None,
             "rarity_label": rarities[i % len(rarities)].title(),
         })

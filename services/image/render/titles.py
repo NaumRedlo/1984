@@ -369,7 +369,7 @@ class TitlesCardMixin:
             rows.append((rarity_label_for(r, lang), RARITY_META[r]["color"], b["unlocked"], b["total"]))
         sw = 13
 
-        step = max(26.0, ((BODY_Y1 - 14) - y) / len(rows))
+        step = max(22.0, ((BODY_Y1 - 14) - y) / len(rows))
         for i, (label, col, u, t) in enumerate(rows):
             yc = int(y + step * i + step / 2)
             self._aa_rounded_fill(img, (cx0, yc - sw // 2, cx0 + sw, yc - sw // 2 + sw), radius=3, fill=col)
@@ -507,7 +507,7 @@ class TitlesCardMixin:
 
         label = (S["secret_badge"] if masked else t["rarity_label"]).upper()
         bw = self._text_size(draw, label, fonts["badge"])[0] + 22
-        bx1 = x + w - 168
+        bx1 = x + w - 112
         bx0 = bx1 - bw
         bh = 24
         by = mid - bh // 2

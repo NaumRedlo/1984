@@ -154,10 +154,6 @@ CATALOG = {
     },
     "rs.misses": {"en": " ({n} misses)", "ru": " ({n} миссов)"},
     "rs.fc": {"en": " (FC)", "ru": " (FC)"},
-    "rs.titles_unlocked": {
-        "en": "<b>{user}</b> — new title: {titles}!",
-        "ru": "<b>{user}</b> — новый титул: {titles}!",
-    },
     "rs.fetch_failed": {
         "en": "Couldn't fetch the last score from the osu! API.",
         "ru": "Не удалось получить последний скор из osu! API.",

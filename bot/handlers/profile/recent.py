@@ -269,16 +269,6 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             else:
                 await wait_msg.edit_text(fallback_text, parse_mode="HTML")
 
-        if newly_titles:
-            names = ", ".join(f"{td.name} ({td.rarity_label})" for td in newly_titles)
-            try:
-                await message.answer(
-                    t("rs.titles_unlocked", lang, user=escape_html(display_name), titles=escape_html(names)),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
     except Exception as e:
         logger.error(f"Error fetching score for {target_id}: {e}", exc_info=True)
         error_text = format_error(t("rs.fetch_failed", lang), lang)

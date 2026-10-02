@@ -97,6 +97,8 @@ class Player(Base):
 
     accept_videos = Column(String(16), nullable=True)
 
+    time_zone = Column(String(64), nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 
