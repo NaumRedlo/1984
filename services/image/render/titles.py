@@ -557,6 +557,16 @@ class TitlesCardMixin:
             white.putalpha(star.split()[3])
             img.paste(white, (x + (sz - star.width) // 2, y + (sz - star.height) // 2), white)
 
+    def _tt_fit(self, draw, text, font, limit):
+        if limit <= 0:
+            return ""
+        if self._text_size(draw, text, font)[0] <= limit:
+            return text
+        cut = text
+        while cut and self._text_size(draw, cut.rstrip() + "…", font)[0] > limit:
+            cut = cut[:-1]
+        return cut.rstrip() + "…" if cut else ""
+
     def _tt_bottom(self, img, data, fonts):
         self._pf_panel(img, (INNER_L, BOTTOM_Y0, INNER_R, BOTTOM_Y1), radius=14)
         draw = ImageDraw.Draw(img)
@@ -580,10 +590,12 @@ class TitlesCardMixin:
             self._tt_emblem(img, x, emb_y, emb, latest["color"], unlocked=True, secret=False)
             draw = ImageDraw.Draw(img)
             nx = x + emb + 10
-            self._draw_text(draw, (nx, self._tt_cy(latest["name"], fonts["bot_val"], emb_c)),
-                            latest["name"], fonts["bot_val"], COL_WHITE)
-            nw, _ = self._text_size(draw, latest["name"], fonts["bot_val"])
             date = _fmt_dt(latest.get("unlocked_at"))
+            date_w, _ = self._text_size(draw, date, fonts["st_lbl"])
+            name = self._tt_fit(draw, latest["name"], fonts["bot_val"], zx0 - 16 - nx - date_w - 12)
+            self._draw_text(draw, (nx, self._tt_cy(name, fonts["bot_val"], emb_c)),
+                            name, fonts["bot_val"], COL_WHITE)
+            nw, _ = self._text_size(draw, name, fonts["bot_val"])
             self._draw_text(draw, (nx + nw + 12, self._tt_cy(date, fonts["st_lbl"], emb_c)),
                             date, fonts["st_lbl"], COL_MUTED)
         else:
@@ -597,6 +609,7 @@ class TitlesCardMixin:
             self._tt_emblem(img, x, emb_y, emb, nxt["color"], unlocked=not nmask, secret=nmask, fonts=fonts)
             draw = ImageDraw.Draw(img)
             nm = S["hidden_title"] if nmask else nxt["name"]
+            nm = self._tt_fit(draw, nm, fonts["bot_val"], zx1 - 16 - (x + emb + 10))
             self._draw_text(draw, (x + emb + 10, self._tt_cy(nm, fonts["bot_val"], emb_c)),
                             nm, fonts["bot_val"], _mix(nxt["color"], COL_WHITE, 0.2))
         else:

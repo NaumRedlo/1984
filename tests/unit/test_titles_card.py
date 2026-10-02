@@ -94,3 +94,25 @@ def test_tabs_fit_within_card_width_both_languages():
         widths = [draw.textbbox((0, 0), lbl, font=font)[2] + pad_x * 2 for _, lbl in tabs]
         total_w = sum(widths) + gap * (len(widths) - 1)
         assert total_w <= (INNER_R - INNER_L), f"{lang} tabs overflow the card width"
+
+def test_a_long_title_name_in_the_bottom_bar_stays_in_its_own_column():
+    from PIL import Image
+    from io import BytesIO
+    from services.image.render.titles import BOTTOM_Y0, BOTTOM_Y1, INNER_L
+
+    def bar(name, latest_name):
+        td = TITLE_REGISTRY["mod_passport"]
+        item = {"code": td.code, "name": name, "description": td.description, "rarity": td.rarity, "color": td.color, "unlocked": False,
+                "secret": False, "target": 5, "current": 4, "progress_pct": 80.0, "unlocked_at": None, "rarity_label": td.rarity_label}
+        done = {**item, "name": latest_name, "unlocked": True, "unlocked_at": "2026-06-01T00:00:00"}
+        summary = {"unlocked": 1, "total": 2, "overall_pct": 50.0, "rarest": done, "by_rarity": {r: {"unlocked": 0, "total": 0} for r in RARITY_ORDER}, "latest": done, "next_up": item}
+        data = build_titles_card_data("kazaki1865", "@kazaki", "RU", [done, item], summary)
+        data["lang"] = "ru"
+        return Image.open(BytesIO(_render(data))).convert("RGB")
+
+    short = bar("Паспорт", "Идеал")
+    long = bar("Модифицированный паспорт и ещё множество слов подряд для проверки", "Очень-очень длинное название титула, которое не помещается")
+    first, second = INNER_L + 360, INNER_L + 720
+    for left, right, below in ((first - 10, first + 22, 10), (second - 10, second + 22, 10), (second + 22, second + 340, 10)):
+        box = (left, BOTTOM_Y0 + 30, right, BOTTOM_Y1 - below)
+        assert list(short.crop(box).getdata()) == list(long.crop(box).getdata()), "a name has crossed into the next column"
