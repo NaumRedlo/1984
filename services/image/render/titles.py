@@ -57,6 +57,7 @@ BOTTOM_Y1 = TT_H - CARD_M - 12
 BODY_Y1 = BOTTOM_Y0 - 12
 
 ROWS_PER_PAGE = 10
+BADGE_GAP = 14
 
 def _tt_tabs(lang: str = "en"):
     all_label = "ALL" if (lang or "en").lower() != "ru" else "ВСЕ"
@@ -497,9 +498,9 @@ class TitlesCardMixin:
         self._tt_desc(img, tx, mid + 11, desc, fonts, dim=not unlocked)
 
         label = t["rarity_label"].upper()
-        bw = self._text_size(draw, label, fonts["badge"])[0] + 22
-        bx1 = x + w - 112
-        bx0 = bx1 - bw
+        sxr = x + w - 16
+        lines = self._tt_status_lines(t, S, mid)
+        bx0, bx1, _ = self._tt_badge_span(draw, label, lines, fonts, sxr)
         bh = 24
         by = mid - bh // 2
         self._aa_rounded_outline(img, (bx0, by, bx1, by + bh), radius=bh // 2, outline=color, width=1)
@@ -507,15 +508,20 @@ class TitlesCardMixin:
         self._text_center(draw, (bx0 + bx1) // 2, self._tt_cy(label, fonts["badge"], by + bh // 2),
                           label, fonts["badge"], color if unlocked else _dim(color, 0.6))
 
-        sxr = x + w - 16
-        if unlocked:
-            self._text_right(draw, sxr, mid - 18, S["unlocked"], fonts["st_lbl"], COL_MUTED)
-            self._text_right(draw, sxr, mid + 1, _fmt_dt(t.get("unlocked_at")), fonts["st_val"], COL_WHITE)
-        elif t["target"] > 1:
-            self._text_right(draw, sxr, mid - 18, S["progress"], fonts["st_lbl"], COL_MUTED)
-            self._text_right(draw, sxr, mid + 1, f"{int(t['current'])} / {t['target']}", fonts["st_val"], (200, 196, 206))
-        else:
-            self._text_right(draw, sxr, mid - 8, S["locked"], fonts["st_lbl"], COL_MUTED)
+        for text, at, font, colour in lines:
+            self._text_right(draw, sxr, at, text, fonts[font], colour)
+
+    def _tt_badge_span(self, draw, label, lines, fonts, right):
+        status_left = right - max(self._text_size(draw, text, fonts[font])[0] for text, _, font, _ in lines)
+        bx1 = status_left - BADGE_GAP
+        return bx1 - (self._text_size(draw, label, fonts["badge"])[0] + 22), bx1, status_left
+
+    def _tt_status_lines(self, t, S, mid):
+        if t["unlocked"]:
+            return [(S["unlocked"], mid - 18, "st_lbl", COL_MUTED), (_fmt_dt(t.get("unlocked_at")), mid + 1, "st_val", COL_WHITE)]
+        if t["target"] > 1:
+            return [(S["progress"], mid - 18, "st_lbl", COL_MUTED), (f"{int(t['current'])} / {t['target']}", mid + 1, "st_val", (200, 196, 206))]
+        return [(S["locked"], mid - 8, "st_lbl", COL_MUTED)]
 
     def _tt_emblem(self, img, x, y, sz, color, *, unlocked):
         top = color if unlocked else _dim(color)

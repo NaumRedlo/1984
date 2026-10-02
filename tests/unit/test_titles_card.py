@@ -130,3 +130,24 @@ def test_a_dimmed_star_pill_has_its_star_and_its_number_in_one_colour():
         light = lambda box: sum(1 for px in pill.crop(box).getdata() if sum(px) / 3 > 215)
         assert light((0, 0, int(width * 0.45), 24)) >= 8, f"{token}: the star is not light"
         assert light((int(width * 0.5), 0, width, 24)) >= 8, f"{token}: the number is not as light as the star"
+
+def test_the_tier_pill_of_a_row_stops_short_of_the_progress_beside_it():
+    from PIL import Image, ImageDraw
+    from services.image.render.titles import BADGE_GAP, _tt_lang
+
+    renderer = CardRenderer()
+    fonts = renderer._tt_fonts()
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    right = 1000
+    for lang in ("ru", "en"):
+        S = _tt_lang({"lang": lang})
+        for label in ("МИФИЧЕСКИЙ", "АНОМАЛЬНЫЙ", "MYTHIC", "ANOMALY"):
+            for unlocked, current, target in ((False, 32631, 150000), (False, 4, 5), (False, 0, 1), (True, 0, 1)):
+                t = {"unlocked": unlocked, "target": target, "current": current, "unlocked_at": "2026-06-01T00:00:00"}
+                lines = renderer._tt_status_lines(t, S, 100)
+                left, edge, status_left = renderer._tt_badge_span(draw, label, lines, fonts, right)
+                assert edge + BADGE_GAP <= status_left, (label, current, target)
+                assert left < edge < right
+    wide = renderer._tt_status_lines({"unlocked": False, "target": 150000, "current": 32631}, _tt_lang({"lang": "ru"}), 100)
+    dated = renderer._tt_status_lines({"unlocked": True, "target": 1, "current": 1, "unlocked_at": "2026-06-01T00:00:00"}, _tt_lang({"lang": "ru"}), 100)
+    assert renderer._tt_badge_span(draw, "МИФИЧЕСКИЙ", wide, fonts, right)[1] < renderer._tt_badge_span(draw, "МИФИЧЕСКИЙ", dated, fonts, right)[1], "a wider progress pushes the pill further left"
