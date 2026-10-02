@@ -553,7 +553,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
             "code": code,
             "name": title_def.name_for(lang),
             "description": title_def.description_for(lang),
-            "hint": title_def.hint_for(lang),
             "target": title_def.target,
             "current": current,
             "progress_pct": pct,
@@ -562,7 +561,6 @@ async def refresh_user_titles(user: User, session, lang: str = "en") -> List[Dic
             "color": title_def.color,
             "rarity": title_def.rarity,
             "rarity_label": title_def.rarity_label_for(lang),
-            "secret": title_def.secret,
             "is_active": user.active_title_code == code,
         })
 

@@ -9,9 +9,8 @@ rule changes and `scripts/recheck_titles.py` is run on purpose.
 
 Common, Uncommon, Rare, Epic, Legendary, Mythic and Anomaly. Anomaly holds the
 coincidences and the oddities: the same score on two maps, a 1984x combo, 99.99%
-without an SS, and the titles that used to be Secret. Those six keep their
-riddles: a hidden title shows `???` and its hint until someone has earned it
-(`TitleDef.hidden`, sent to the application as `hidden`).
+without an SS, and the titles that used to be Secret. No title is hidden: every
+one shows its name and its condition from the start.
 
 ## Where a rule reads from
 

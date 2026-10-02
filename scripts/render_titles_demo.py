@@ -32,7 +32,6 @@ def _synthetic_progress():
             "color": td.color,
             "rarity": td.rarity,
             "rarity_label": td.rarity_label,
-            "secret": td.secret,
             "is_active": False,
         })
     return out

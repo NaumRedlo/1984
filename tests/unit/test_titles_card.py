@@ -9,7 +9,7 @@ def _progress(n=3):
         out.append({
             "code": f"t{i}", "name": f"Title {i}", "description": f"Do the thing {i} times.",
             "rarity": rarities[i % len(rarities)], "color": (200, 80, 80),
-            "unlocked": i % 2 == 0, "secret": rarities[i % len(rarities)] == "anomaly",
+            "unlocked": i % 2 == 0,
             "target": 10, "current": 5, "unlocked_at": "2026-06-01T00:00:00" if i % 2 == 0 else None,
             "rarity_label": rarities[i % len(rarities)].title(),
         })
@@ -46,7 +46,7 @@ def test_renders_russian():
     png = _render(_data(lang="ru"))
     assert png.startswith(b"\x89PNG") and len(png) > 2000
 
-def test_renders_with_masked_secret_and_no_next_up():
+def test_renders_without_a_next_title():
 
     data = _data(lang="ru")
     png = _render(data)
@@ -64,7 +64,7 @@ def test_renders_real_registry_titles_in_russian():
         td = TITLE_REGISTRY[code]
         progress.append({
             "code": code, "name": td.name_for("ru"), "description": td.description_for("ru"),
-            "rarity": td.rarity, "color": td.color, "unlocked": i % 2 == 0, "secret": td.secret,
+            "rarity": td.rarity, "color": td.color, "unlocked": i % 2 == 0,
             "target": td.target, "current": td.target, "unlocked_at": "2026-06-01T00:00:00",
             "rarity_label": td.rarity_label_for("ru"),
         })
@@ -103,7 +103,7 @@ def test_a_long_title_name_in_the_bottom_bar_stays_in_its_own_column():
     def bar(name, latest_name):
         td = TITLE_REGISTRY["mod_passport"]
         item = {"code": td.code, "name": name, "description": td.description, "rarity": td.rarity, "color": td.color, "unlocked": False,
-                "secret": False, "target": 5, "current": 4, "progress_pct": 80.0, "unlocked_at": None, "rarity_label": td.rarity_label}
+                "target": 5, "current": 4, "progress_pct": 80.0, "unlocked_at": None, "rarity_label": td.rarity_label}
         done = {**item, "name": latest_name, "unlocked": True, "unlocked_at": "2026-06-01T00:00:00"}
         summary = {"unlocked": 1, "total": 2, "overall_pct": 50.0, "rarest": done, "by_rarity": {r: {"unlocked": 0, "total": 0} for r in RARITY_ORDER}, "latest": done, "next_up": item}
         data = build_titles_card_data("kazaki1865", "@kazaki", "RU", [done, item], summary)

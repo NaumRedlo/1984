@@ -124,21 +124,17 @@ _TT_STRINGS = {
         "unlocked_hdr": "TITLES UNLOCKED", "rarest_hdr": "RAREST TITLE",
         "owned_by": "Owned by {pct}% of players", "none_yet": "None yet",
         "stats_hdr": "STATISTICS", "all_titles": "All titles",
-        "hidden_title": "Hidden Title", "hidden_desc": "Surfaces on its own, in time",
         "unlocked": "Unlocked", "progress": "Progress", "locked": "Locked",
         "recently_unlocked": "RECENTLY UNLOCKED", "next_reward": "NEXT REWARD",
         "all_unlocked": "All unlocked!", "progress_to_unlock": "PROGRESS TO UNLOCK",
-        "secret_badge": "SECRET",
     },
     "ru": {
         "header": "КОЛЛЕКЦИЯ ТИТУЛОВ", "subheader": "Покажи свои достижения",
         "unlocked_hdr": "ТИТУЛОВ ОТКРЫТО", "rarest_hdr": "РЕДЧАЙШИЙ ТИТУЛ",
         "owned_by": "Есть у {pct}% игроков", "none_yet": "Пока нет",
         "stats_hdr": "СТАТИСТИКА", "all_titles": "Все титулы",
-        "hidden_title": "Скрытый титул", "hidden_desc": "Откроется сам, со временем",
         "unlocked": "Открыт", "progress": "Прогресс", "locked": "Закрыт",
         "recently_unlocked": "НЕДАВНО ОТКРЫТ", "next_reward": "СЛЕДУЮЩАЯ НАГРАДА",
-        "secret_badge": "СЕКРЕТНЫЙ",
         "all_unlocked": "Всё открыто!", "progress_to_unlock": "ПРОГРЕСС ДО ОТКРЫТИЯ",
     },
 }
@@ -184,7 +180,6 @@ class TitlesCardMixin:
             "badge":     mk(b, 12, self.font_stat_label),
             "st_lbl":    mk(r, 13, self.font_small),
             "st_val":    mk(m, 16, self.font_label),
-            "emb_q":     mk(b, 26, self.font_grade),
             "bot_lbl":   mk(s, 13, self.font_stat_label),
             "bot_val":   mk(b, 22, self.font_row),
             "note":      mk(r, 14, self.font_small),
@@ -208,7 +203,7 @@ class TitlesCardMixin:
                 "stat_lbl": (mpr, 17), "stat_val": (mpb, 19),
                 "rare_name": (mpb, 20), "rare_sub": (mpr, 13),
                 "row_name": (mpb, 21), "row_desc": (mpb, 15), "pill_sr": (mpb, 13), "badge": (mpb, 12),
-                "st_lbl": (mpr, 13), "st_val": (mpb, 16), "emb_q": (mpb, 26),
+                "st_lbl": (mpr, 13), "st_val": (mpb, 16),
                 "bot_lbl": (mpr, 13), "bot_val": (mpb, 22), "note": (mpr, 14),
             }
             for key, (path, size) in sizes.items():
@@ -226,7 +221,7 @@ class TitlesCardMixin:
                 "stat_lbl": (pxr, 17), "stat_val": (pxb, 19),
                 "rare_name": (pxb, 20), "rare_sub": (pxr, 13),
                 "row_name": (pxb, 21), "row_desc": (pxs, 15), "pill_sr": (pxb, 13), "badge": (pxb, 12),
-                "st_lbl": (pxr, 13), "st_val": (pxb, 16), "emb_q": (pxb, 26),
+                "st_lbl": (pxr, 13), "st_val": (pxb, 16),
                 "bot_lbl": (pxs, 13), "bot_val": (pxb, 22), "note": (pxr, 14),
             }
             for key, (path, size) in cy_sizes.items():
@@ -348,7 +343,7 @@ class TitlesCardMixin:
         self._pf_panel(img, (cx0, y, cx1, y + rh), radius=12,
                        fill=(34, 27, 32), border=COL_PANEL_BORDER)
         if rarest:
-            self._tt_emblem(img, cx0 + 12, y + (rh - 44) // 2, 44, rarest["color"], unlocked=True, secret=False)
+            self._tt_emblem(img, cx0 + 12, y + (rh - 44) // 2, 44, rarest["color"], unlocked=True)
             draw = ImageDraw.Draw(img)
             ex = cx0 + 12 + 44 + 14
             self._draw_text(draw, (ex, y + 16), rarest["name"], fonts["rare_name"], COL_WHITE)
@@ -490,22 +485,18 @@ class TitlesCardMixin:
         sz = h - 16
         ex = x + 10
         ey = y + (h - sz) // 2
-        self._tt_emblem(img, ex, ey, sz, color, unlocked=unlocked, secret=t["secret"], fonts=fonts)
+        self._tt_emblem(img, ex, ey, sz, color, unlocked=unlocked)
         draw = ImageDraw.Draw(img)
 
         tx = ex + sz + 16
-        masked = t["secret"] and not unlocked
-        name = S["hidden_title"] if masked else t["name"]
-        desc = _no_full_stop((t.get("hint") or S["hidden_desc"]) if masked else t["description"])
+        name = t["name"]
+        desc = _no_full_stop(t["description"])
         ncol = COL_WHITE if unlocked else (150, 142, 150)
         mid = y + h // 2
         self._draw_text(draw, (tx, mid - 24), name, fonts["row_name"], ncol)
-        if masked:
-            self._draw_text(draw, (tx, self._tt_cy(desc, fonts["row_desc"], mid + 11)), desc, fonts["row_desc"], COL_MUTED)
-        else:
-            self._tt_desc(img, tx, mid + 11, desc, fonts, dim=not unlocked)
+        self._tt_desc(img, tx, mid + 11, desc, fonts, dim=not unlocked)
 
-        label = (S["secret_badge"] if masked else t["rarity_label"]).upper()
+        label = t["rarity_label"].upper()
         bw = self._text_size(draw, label, fonts["badge"])[0] + 22
         bx1 = x + w - 112
         bx0 = bx1 - bw
@@ -520,13 +511,13 @@ class TitlesCardMixin:
         if unlocked:
             self._text_right(draw, sxr, mid - 18, S["unlocked"], fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, _fmt_dt(t.get("unlocked_at")), fonts["st_val"], COL_WHITE)
-        elif t["target"] > 1 and not masked:
+        elif t["target"] > 1:
             self._text_right(draw, sxr, mid - 18, S["progress"], fonts["st_lbl"], COL_MUTED)
             self._text_right(draw, sxr, mid + 1, f"{int(t['current'])} / {t['target']}", fonts["st_val"], (200, 196, 206))
         else:
             self._text_right(draw, sxr, mid - 8, S["locked"], fonts["st_lbl"], COL_MUTED)
 
-    def _tt_emblem(self, img, x, y, sz, color, *, unlocked, secret, fonts=None):
+    def _tt_emblem(self, img, x, y, sz, color, *, unlocked):
         top = color if unlocked else _dim(color)
         bot = _mix(top, (0, 0, 0), 0.45)
         tile = Image.new("RGB", (sz, sz), top)
@@ -545,11 +536,6 @@ class TitlesCardMixin:
         self._aa_rounded_outline(img, (x, y, x + sz, y + sz), radius=12,
                                  outline=_mix(color, COL_WHITE, 0.25) if unlocked else COL_PANEL_BORDER, width=1)
 
-        if secret and not unlocked and fonts:
-            d = ImageDraw.Draw(img)
-            self._text_center(d, x + sz // 2, self._tt_cy("?", fonts["emb_q"], y + sz // 2),
-                              "?", fonts["emb_q"], (150, 142, 150))
-            return
         star = load_icon("star", int(sz * 0.5))
         if star:
             tint = (255, 255, 255, 255) if unlocked else (170, 162, 170, 255)
@@ -587,7 +573,7 @@ class TitlesCardMixin:
         x = INNER_L + 22
         self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["recently_unlocked"], fonts["bot_lbl"], COL_MUTED)
         if latest:
-            self._tt_emblem(img, x, emb_y, emb, latest["color"], unlocked=True, secret=False)
+            self._tt_emblem(img, x, emb_y, emb, latest["color"], unlocked=True)
             draw = ImageDraw.Draw(img)
             nx = x + emb + 10
             date = _fmt_dt(latest.get("unlocked_at"))
@@ -605,11 +591,9 @@ class TitlesCardMixin:
         x = zx0 + 22
         self._draw_text(draw, (x, BOTTOM_Y0 + 16), S["next_reward"], fonts["bot_lbl"], COL_MUTED)
         if nxt:
-            nmask = nxt["secret"]
-            self._tt_emblem(img, x, emb_y, emb, nxt["color"], unlocked=not nmask, secret=nmask, fonts=fonts)
+            self._tt_emblem(img, x, emb_y, emb, nxt["color"], unlocked=True)
             draw = ImageDraw.Draw(img)
-            nm = S["hidden_title"] if nmask else nxt["name"]
-            nm = self._tt_fit(draw, nm, fonts["bot_val"], zx1 - 16 - (x + emb + 10))
+            nm = self._tt_fit(draw, nxt["name"], fonts["bot_val"], zx1 - 16 - (x + emb + 10))
             self._draw_text(draw, (x + emb + 10, self._tt_cy(nm, fonts["bot_val"], emb_c)),
                             nm, fonts["bot_val"], _mix(nxt["color"], COL_WHITE, 0.2))
         else:

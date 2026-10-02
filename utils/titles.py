@@ -29,9 +29,6 @@ class TitleDef:
     rarity: str
     name_ru: str = ""
     description_ru: str = ""
-    hint: str = ""
-    hint_ru: str = ""
-    hidden: bool = False
 
     @property
     def color(self) -> tuple[int, int, int]:
@@ -50,19 +47,12 @@ class TitleDef:
     def description_for(self, lang: str = "en") -> str:
         return self.description_ru if (lang or "en").lower() == "ru" and self.description_ru else self.description
 
-    def hint_for(self, lang: str = "en") -> str:
-        return self.hint_ru if (lang or "en").lower() == "ru" and self.hint_ru else self.hint
-
-    @property
-    def secret(self) -> bool:
-        return self.hidden
-
     @property
     def rarity_order(self) -> int:
         return RARITY_ORDER.index(self.rarity)
 
-def _t(code, name, description, target, rarity, name_ru="", description_ru="", hint="", hint_ru=""):
-    return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru, hint, hint_ru, bool(hint or hint_ru))
+def _t(code, name, description, target, rarity, name_ru="", description_ru=""):
+    return code, TitleDef(code, name, description, target, rarity, name_ru, description_ru)
 
 TITLE_REGISTRY: dict[str, TitleDef] = dict([
 
@@ -210,27 +200,15 @@ TITLE_REGISTRY: dict[str, TitleDef] = dict([
        "Дыра памяти", "Получите одинаковый счёт на двух картах с разницей в год."),
 
     _t("doublethink", "Doublethink", "SS an EZ map up to 2* and pass a map from 7*.", 1, "anomaly",
-       "Двоемыслие", "Получите SS на карте с EZ до 2* и пройдите карту от 7*.",
-       "Kneel to the weak, outlast the mighty. Believe both.",
-       "Покоритесь слабому и выдержите сильного разом."),
+       "Двоемыслие", "Получите SS на карте с EZ до 2* и пройдите карту от 7*."),
     _t("repeat_15", "Stuck in a Loop", "Play one map 15 times in a row in a session.", 15, "anomaly",
-       "В круге первый", "Сыграйте одну карту 15 раз подряд за сеанс.",
-       "Fifteen returns to the same room, same session.",
-       "Одна карта, пятнадцать раз, за один вечер."),
+       "В круге первый", "Сыграйте одну карту 15 раз подряд за сеанс."),
     _t("compare_50", "Informant", "Use /cmp on others 50 times.", 50, "anomaly",
-       "Осведомитель", "Используйте /cmp на других игроках 50 раз.",
-       "Fifty files opened on others. None on yourself.",
-       "Полсотни чужих отчётов и ни одного своего."),
+       "Осведомитель", "Используйте /cmp на других игроках 50 раз."),
     _t("comeback_180d", "quit w", "Return after more than 180 days of silence.", 1, "anomaly",
-       "quit w", "Вернитесь после более чем 180 дней молчания.",
-       "Half a year of silence. Then, without warning - you.",
-       "Полгода тишины. Затем ваше возвращение…"),
+       "quit w", "Вернитесь после более чем 180 дней молчания."),
     _t("magic7", "Double Jackpot", "Land a score containing 777.777.", 1, "anomaly",
-       "Двойной джекпот", "Наберите счёт, содержащий 777.777.",
-       "Six sevens in a row. Luck stops being luck.",
-       "Шесть семёрок подряд, и это уже не совпадение."),
+       "Двойной джекпот", "Наберите счёт, содержащий 777.777."),
     _t("choke_95", "Not This Time", "Break a full combo in the last 5% at 99% accuracy or above.", 1, "anomaly",
-       "Попытка не пытка", "Сорвите комбо в последних 5% при точности 99% и выше.",
-       "Perfection sometimes vanishes at the finish, without reason.",
-       "Безупречность рушится у финиша без причины."),
+       "Попытка не пытка", "Сорвите комбо в последних 5% при точности 99% и выше."),
 ])

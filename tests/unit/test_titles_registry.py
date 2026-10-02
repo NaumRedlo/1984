@@ -56,22 +56,23 @@ def test_tt_tabs_all_rarities_translated():
     for r in RARITY_ORDER:
         assert en[r] != ru[r]
 
-def test_there_is_no_secret_tier_and_the_titles_that_were_secret_are_anomalies_that_stay_hidden():
+def test_there_is_no_secret_tier_and_no_title_is_hidden_any_more():
+    import dataclasses
+
     assert "secret" not in RARITY_ORDER and "secret" not in RARITY_META
     assert RARITY_ORDER[-1] == "anomaly"
-    hidden = {code for code, td in TITLE_REGISTRY.items() if td.secret}
-    assert hidden == {"doublethink", "repeat_15", "compare_50", "comeback_180d", "magic7", "choke_95"}
-    for code in hidden:
+    assert not {"hint", "hint_ru", "hidden"} & {field.name for field in dataclasses.fields(TITLE_REGISTRY["wysi"])}
+    for code in ("doublethink", "repeat_15", "compare_50", "comeback_180d", "magic7", "choke_95"):
         td = TITLE_REGISTRY[code]
-        assert td.rarity == "anomaly" and td.hint and td.hint_ru
+        assert td.rarity == "anomaly" and td.description and td.description_ru
 
-def test_the_catalogue_tells_which_titles_are_hidden_until_earned():
+def test_the_catalogue_shows_every_title_openly():
     from services.render_farm import community
 
     catalogue = {t["code"]: t for t in community.titles_catalogue()}
-    assert catalogue["magic7"]["hidden"] is True and catalogue["magic7"]["rarity"] == "anomaly"
-    assert catalogue["wysi"]["hidden"] is False
-    assert catalogue["dejavu"]["rarity"] == "anomaly" and catalogue["dejavu"]["hidden"] is False
+    assert "hidden" not in catalogue["magic7"] and catalogue["magic7"]["rarity"] == "anomaly"
+    assert catalogue["magic7"]["about"] and catalogue["magic7"]["about_ru"]
+    assert catalogue["dejavu"]["rarity"] == "anomaly"
 
 def test_the_rebalanced_tiers_are_the_ones_the_plan_asked_for():
     tier = {code: td.rarity for code, td in TITLE_REGISTRY.items()}
