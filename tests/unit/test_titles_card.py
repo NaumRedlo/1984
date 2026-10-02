@@ -116,3 +116,17 @@ def test_a_long_title_name_in_the_bottom_bar_stays_in_its_own_column():
     for left, right, below in ((first - 10, first + 22, 10), (second - 10, second + 22, 10), (second + 22, second + 340, 10)):
         box = (left, BOTTOM_Y0 + 30, right, BOTTOM_Y1 - below)
         assert list(short.crop(box).getdata()) == list(long.crop(box).getdata()), "a name has crossed into the next column"
+
+def test_a_dimmed_star_pill_has_its_star_and_its_number_in_one_colour():
+    from PIL import Image
+
+    renderer = CardRenderer()
+    fonts = renderer._tt_fonts()
+    for token in ("2*", "5*+", "7*"):
+        img = Image.new("RGB", (160, 60), (28, 24, 29))
+        end = renderer._tt_sr_pill(img, 10, 30, token, fonts, dim=True)
+        pill = img.crop((10, 18, end, 42))
+        width = pill.width
+        light = lambda box: sum(1 for px in pill.crop(box).getdata() if sum(px) / 3 > 215)
+        assert light((0, 0, int(width * 0.45), 24)) >= 8, f"{token}: the star is not light"
+        assert light((int(width * 0.5), 0, width, 24)) >= 8, f"{token}: the number is not as light as the star"

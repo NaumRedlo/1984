@@ -419,7 +419,7 @@ class TitlesCardMixin:
         outline = _mix(fill, COL_WHITE, 0.40) if _lum(fill) < 95 else None
         if dim:
             fill = _mix(fill, COL_PANEL, 0.45)
-            ink = _mix(ink, (120, 116, 120), 0.35)
+            ink = _ink_for(fill)
 
         font = fonts["pill_sr"]
         label = f"{body[:-1]}{plus}"
