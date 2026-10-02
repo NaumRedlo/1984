@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 
 from db.models.best_score import UserBestScore
+from db.models.local_score import LocalScore
 from db.models.map_attempt import UserMapAttempt
 from db.models.player import Player
 from db.models.witness_session import WitnessSession
+from services.render_farm.witnessed import accuracy_of, grade_of, mods_said
 
 SS_RANKS = ("X", "XH")
 S_OR_BETTER = ("S", "SH", "X", "XH")
@@ -111,6 +113,30 @@ def _play(row, table: str) -> Play:
         ranked_date=row.ranked_date,
     )
 
+def _local_play(row) -> Play:
+    bits = row.mods or 0
+    base = float(row.base_star_rating or row.star_rating or 0.0)
+    return Play(
+        table="local",
+        beatmap_id=row.beatmap_id,
+        played_at=row.played_at,
+        passed=True,
+        failed=False,
+        rank=grade_of(row.count_300, row.count_100, row.count_50, row.count_miss, bits, True),
+        score=int(row.score or 0),
+        accuracy=accuracy_of(row.count_300, row.count_100, row.count_50, row.count_miss),
+        max_combo=row.max_combo,
+        fc=bool(row.perfect),
+        mods=frozenset(mods_said(bits)),
+        base_sr=base,
+        sr=float(row.star_rating or base),
+        bpm=float(row.bpm or 0.0),
+        ar=row.ar,
+        length=int(row.length or 0),
+        status=(row.status or "").lower(),
+        ranked_date=None,
+    )
+
 @dataclass(frozen=True)
 class Span:
     started: datetime
@@ -135,13 +161,14 @@ class History:
     attempts: List[Play] = field(default_factory=list)
     undated: List[Play] = field(default_factory=list)
     bests: List[Play] = field(default_factory=list)
+    local_scores: List[Play] = field(default_factory=list)
     spans: List[Span] = field(default_factory=list)
     zone: object = timezone.utc
     _sessions: Optional[List[List[Play]]] = None
 
     @property
     def plays(self) -> List[Play]:
-        return self.attempts + self.undated + self.bests
+        return self.attempts + self.undated + self.bests + self.local_scores
 
     def local(self, moment: datetime) -> datetime:
         return moment.replace(tzinfo=timezone.utc).astimezone(self.zone).replace(tzinfo=None)
@@ -198,11 +225,13 @@ async def load_history(session, player_id: int) -> History:
     spans = (await session.execute(
         select(WitnessSession).where(WitnessSession.player_id == player_id).order_by(WitnessSession.started_at)
     )).scalars().all()
+    locals_ = (await session.execute(select(LocalScore).where(LocalScore.player_id == player_id).order_by(LocalScore.played_at))).scalars().all()
     player = await session.get(Player, player_id)
     history = History(
         attempts=[_play(row, "attempt") for row in attempts if row.played_at is not None],
         undated=[_play(row, "attempt") for row in attempts if row.played_at is None],
         bests=[_play(row, "best") for row in bests],
+        local_scores=[_local_play(row) for row in locals_],
         spans=[Span(row.started_at, row.ended_at, row.play_seconds or 0) for row in spans],
         zone=zone_named(player.time_zone if player is not None else None),
     )

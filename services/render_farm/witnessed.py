@@ -74,6 +74,32 @@ def _words(said: dict, key: str) -> str:
     value = said.get(key)
     return value.strip()[:WORDS_MOST] if isinstance(value, str) else ""
 
+STATUSES = ("ranked", "approved", "qualified", "loved", "pending", "unsubmitted")
+STARS_MOST = 30.0
+BPM_MOST = 2000.0
+LENGTH_MOST = 86_400
+
+def _number(said: Any, most: float) -> Optional[float]:
+    if isinstance(said, bool) or not isinstance(said, (int, float)):
+        return None
+    value = float(said)
+    return value if 0.0 < value <= most else None
+
+def facts_told(said: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(said, dict):
+        return None
+    stars = _number(said.get("stars"), STARS_MOST)
+    bpm = _number(said.get("bpm"), BPM_MOST)
+    length = _number(said.get("length"), LENGTH_MOST)
+    status = said.get("status")
+    told = {
+        "stars": round(stars, 2) if stars is not None else None,
+        "bpm": round(bpm, 2) if bpm is not None else None,
+        "length": int(length) if length is not None else None,
+        "status": status if status in STATUSES else None,
+    }
+    return told if any(value is not None for value in told.values()) else None
+
 def read(said: dict, now: datetime) -> Optional[dict[str, Any]]:
     md5 = str(said.get("md5") or "").lower()
     replay = str(said.get("replay") or "").lower()
@@ -101,6 +127,7 @@ def read(said: dict, now: datetime) -> Optional[dict[str, Any]]:
         "md5": md5, "replay": replay, "score": score, "bits": bits, "beatmap": beatmap or None, "set": beatmapset or None,
         "passed": said.get("passed") is True, "played": played,
         "artist": _words(said, "artist"), "title": _words(said, "title"), "version": _words(said, "version"), "creator": _words(said, "creator"),
+        "facts": facts_told(said.get("facts")),
         **numbers,
     }
 
@@ -173,6 +200,8 @@ async def keep(session, player_id: int, said: dict, *, now: Optional[datetime] =
         played_at=told["played"],
         created_at=now,
     )
+    known = told["facts"] or {}
+    row.star_rating, row.bpm, row.length, row.status = known.get("stars"), known.get("bpm"), known.get("length"), known.get("status")
     session.add(row)
     await session.execute(delete(WitnessedPlay).where(WitnessedPlay.player_id == player_id, WitnessedPlay.created_at < now - KEPT_FOR))
     await session.commit()

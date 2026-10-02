@@ -88,6 +88,33 @@ async def test_a_play_is_kept_once_and_its_map_learnt_afterwards(factory):
         row = await s.get(WitnessedPlay, play)
         assert (row.star_rating, row.bpm, row.length, row.map_max_combo, row.status) == (7.07, 200.0, 250, 650, "ranked")
 
+def test_what_the_client_knows_of_a_map_is_believed_only_when_it_could_be_true():
+    told = witnessed.facts_told({"stars": 6.254, "bpm": 180.0, "length": 120, "status": "ranked", "ar": 9})
+    assert told == {"stars": 6.25, "bpm": 180.0, "length": 120, "status": "ranked"}
+    assert witnessed.facts_told({"stars": 0, "bpm": -3, "length": 10 ** 9, "status": "frozen"}) is None
+    assert witnessed.facts_told({"stars": True, "bpm": "fast"}) is None
+    assert witnessed.facts_told(None) is None and witnessed.facts_told([1]) is None
+    assert witnessed.facts_told({"stars": 5.0, "status": "frozen"}) == {"stars": 5.0, "bpm": None, "length": None, "status": None}
+    assert witnessed.read(_told(facts={"stars": 7.07, "length": 250}), NOW)["facts"] == {"stars": 7.07, "bpm": None, "length": 250, "status": None}
+
+async def test_a_play_told_with_the_clients_own_numbers_has_them_until_osu_says_better(factory):
+    naum, _, _ = await _seed(factory)
+    player = await _player(factory, naum)
+    async with factory() as s:
+        _, row = await witnessed.keep(s, player, _told(id=0, facts={"stars": 4.2, "bpm": 150.0, "length": 99, "status": "unsubmitted"}), now=NOW)
+        play = row.id
+        assert (row.star_rating, row.bpm, row.length, row.status) == (4.2, 150.0, 99, "unsubmitted")
+    async with factory() as s:
+        assert await witnessed.learn(s, _Osu(), play) is False, "a map osu! does not know teaches nothing"
+        assert (await s.get(WitnessedPlay, play)).star_rating == 4.2
+    async with factory() as s:
+        _, other = await witnessed.keep(s, player, _told(replay="c" * 32, facts={"stars": 4.2, "bpm": 150.0, "length": 99, "status": "ranked"}), now=NOW + timedelta(minutes=1))
+        other_id = other.id
+    async with factory() as s:
+        assert await witnessed.learn(s, _Osu(), other_id) is True
+        row = await s.get(WitnessedPlay, other_id)
+        assert (row.star_rating, row.bpm, row.length) == (7.07, 200.0, 250), "what osu! says replaces what the client said"
+
 async def test_a_map_that_is_not_the_one_named_teaches_nothing(factory):
     naum, _, _ = await _seed(factory)
     player = await _player(factory, naum)

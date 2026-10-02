@@ -16,7 +16,8 @@ from db.models.shared_video import SharedVideo, VideoDelivery
 from db.models.shared_replay import SharedReplay
 from db.models.witnessed_play import WitnessedPlay
 from db.models.witness_session import WitnessSession
+from db.models.local_score import LocalScore
 from db.models.left_member import LeftMember
 import db.player_sync
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LeftMember"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember"]

@@ -11,7 +11,7 @@ from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from utils.timeutils import utcnow
 from utils.title_history import UNRANKED_MODS, forget_history, load_history, mod_set
-from utils.title_rules import RULES
+from utils.title_rules import RULES, fits
 from utils.titles import RARITY_ORDER, TITLE_REGISTRY, TitleDef
 
 S_OR_BETTER = ("S", "SH", "X", "XH")
@@ -391,7 +391,9 @@ def _account_age_ok(u) -> int:
 
 def _crit_calc(crit):
     async def _c(u, uid, s):
-        return await _exists_best(s, uid, **crit)
+        if await _exists_best(s, uid, **crit):
+            return 1
+        return 1 if any(fits(play, crit) for play in (await load_history(s, uid)).local_scores) else 0
     return _c
 
 _CALCULATORS = {code: _crit_calc(crit) for code, crit in TITLE_CRITERIA.items()}

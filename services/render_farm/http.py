@@ -769,6 +769,28 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "not a session"}, status=400)
         return web.json_response({"kept": True}, status=200)
 
+    async def local_history(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = await _json_object(request)
+        from db.database import AsyncSessionFactory
+        from services.render_farm import local_scores
+
+        async with AsyncSessionFactory() as session:
+            player = await videos.player_of(session, owner)
+            if player is None:
+                return web.json_response({"error": "not registered"}, status=404)
+            verdict, kept = await local_scores.keep(session, player.id, said)
+        if verdict == local_scores.BAD:
+            return web.json_response({"error": "not scores"}, status=400)
+        if verdict == local_scores.TOO_MANY:
+            return web.json_response({"error": verdict}, status=429)
+        return web.json_response({"kept": kept}, status=200)
+
     async def wear_title(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -1299,6 +1321,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/me/played", played),
         web.post("/render/me/play", witnessed_play),
         web.post("/render/me/session", witness_session),
+        web.post("/render/me/history", local_history),
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),

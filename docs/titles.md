@@ -47,6 +47,19 @@ suggest and what Witness counted.
 Plays Witness saw are not read by titles; they enter the bot's tables only when
 osu! confirms them.
 
+With the person's consent the application also tells the scores in the client's
+own `scores.db` at `POST /render/me/history`, each tied to its map through the
+client's `osu!.db`: the map's id and set, status, AR, CS, OD, HP, BPM, length,
+objects and the stars for the mods the score was played with. They are kept in
+`local_scores`, one row for a play, and read into `History.local_scores`. Every
+rule that asks whether a play of some kind ever happened (an FC, an SS, a pass of
+a hard map, the mods passport, the same score on two maps, 1984x, 99.99%) sees
+them with the other plays, and so do the criteria titles; the days of
+`approved_record` and `perfect_week` take their local scores too. Runs, sessions
+and fails do not, because the file holds passes only and its plays are also in
+the attempts when the bot saw them; the rules about the age of a ranking do not,
+because the library does not say when a map was ranked.
+
 ## Changing a rule
 
 Add the rule and its test, then run

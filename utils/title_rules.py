@@ -17,6 +17,31 @@ def _naive(moment: Optional[datetime]) -> Optional[datetime]:
         return moment.astimezone(timezone.utc).replace(tzinfo=None)
     return moment
 
+def fits(p: Play, crit: dict) -> bool:
+    if not (p.passed and p.counts):
+        return False
+    if crit.get("min_sr") is not None and not (p.base_sr and p.base_sr >= crit["min_sr"]):
+        return False
+    if crit.get("max_sr") is not None and not (p.base_sr and p.base_sr <= crit["max_sr"]):
+        return False
+    if crit.get("ranks") is not None and p.rank not in crit["ranks"]:
+        return False
+    if crit.get("min_acc") is not None and (p.accuracy or 0.0) < crit["min_acc"]:
+        return False
+    if any(m not in p.mods for m in (crit.get("mods_all") or [])):
+        return False
+    if crit.get("mods_any") and not any(m in p.mods for m in crit["mods_any"]):
+        return False
+    if crit.get("min_bpm") is not None and p.bpm < crit["min_bpm"]:
+        return False
+    if crit.get("min_length") is not None and p.length < crit["min_length"]:
+        return False
+    if crit.get("max_length") is not None and not (0 < p.length <= crit["max_length"]):
+        return False
+    if crit.get("fc") and not p.fc:
+        return False
+    return True
+
 def daily_report(h: History, user) -> int:
     per_day = Counter(h.day(p.played_at) for p in h.attempts if p.ranked)
     return max(per_day.values(), default=0)
@@ -25,7 +50,7 @@ def approved_record(h: History, user) -> int:
     since = _naive(getattr(user, "created_at", None))
     if since is None:
         return 0
-    return 1 if any(p.passed and p.fc and p.counts and p.played_at >= since for p in h.attempts) else 0
+    return 1 if any(p.passed and p.fc and p.counts and p.played_at >= since for p in [*h.attempts, *h.local_scores]) else 0
 
 def fresh_ink(h: History, user) -> int:
     for p in h.attempts:
@@ -147,7 +172,7 @@ def inner_party(h: History, user) -> int:
     return best
 
 def perfect_week(h: History, user) -> int:
-    days = sorted({h.day(p.played_at) for p in h.attempts if p.passed and p.counts and p.rank in SS_RANKS})
+    days = sorted({h.day(p.played_at) for p in [*h.attempts, *h.local_scores] if p.passed and p.counts and p.rank in SS_RANKS})
     best = run = 0
     previous: Optional[date] = None
     for day in days:
