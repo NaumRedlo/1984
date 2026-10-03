@@ -29,6 +29,8 @@ def test_a_time_zone_is_believed_only_when_it_names_a_real_one():
 
 def test_a_session_is_read_only_when_it_could_have_happened():
     assert sessions.read(_told(), NOW) is not None
+    assert sessions.read(_told(started_at=_unix(NOW - timedelta(days=10, hours=1)), ended_at=_unix(NOW - timedelta(days=10))), NOW) is not None
+    assert sessions.read(_told(started_at=_unix(NOW - timedelta(days=17, hours=1)), ended_at=_unix(NOW - timedelta(days=17))), NOW) is None
     assert sessions.read(_told(ended_at=_unix(NOW - timedelta(hours=3))), NOW) is None
     assert sessions.read(_told(ended_at=_unix(NOW + timedelta(hours=1))), NOW) is None
     assert sessions.read(_told(started_at=_unix(NOW - timedelta(days=9)), ended_at=_unix(NOW)), NOW) is None

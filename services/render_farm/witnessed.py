@@ -16,7 +16,7 @@ DAILY = 600
 KEPT_FOR = timedelta(days=14)
 SAME_PLAY = timedelta(minutes=15)
 CLOCK_SLACK = timedelta(minutes=5)
-OLDEST = timedelta(hours=6)
+OLDEST = timedelta(days=14)
 COUNT_MOST = 100_000
 SCORE_MOST = 2_147_483_647
 WORDS_MOST = 255

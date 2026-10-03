@@ -14,7 +14,7 @@ logger = get_logger("render_farm.witness_sessions")
 KEPT, BAD = "kept", "bad"
 
 LONGEST = timedelta(hours=36)
-OLDEST = timedelta(days=3)
+OLDEST = timedelta(days=14)
 CLOCK_SLACK = timedelta(minutes=5)
 PLAYS_MOST = 5000
 ZONE_WORDS = re.compile(r"^[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+){0,2}$")

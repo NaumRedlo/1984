@@ -58,10 +58,11 @@ def test_what_is_not_a_play_is_refused():
     assert witnessed.read(_told(mods=8 | 2048), NOW) is None
     assert witnessed.read(_told(mods=4194304), NOW) is None
 
-def test_the_time_of_a_play_is_believed_only_near_now():
+def test_the_time_of_a_play_survives_a_delivery_backlog():
     near = int((NOW - timedelta(minutes=2)).replace(tzinfo=timezone.utc).timestamp())
     assert witnessed.read(_told(ended=near), NOW)["played"] == NOW - timedelta(minutes=2)
-    assert witnessed.read(_told(ended=near - 86_400 * 3), NOW)["played"] == NOW
+    assert witnessed.read(_told(ended=near - 86_400 * 3), NOW)["played"] == NOW - timedelta(days=3, minutes=2)
+    assert witnessed.read(_told(ended=near - 86_400 * 15), NOW)["played"] == NOW
     assert witnessed.read(_told(ended=near + 86_400), NOW)["played"] == NOW
     assert witnessed.read(_told(ended="soon"), NOW)["played"] == NOW
 
