@@ -121,6 +121,8 @@ def read(said: dict, now: datetime) -> Optional[dict[str, Any]]:
             told = datetime.fromtimestamp(ended, tz=timezone.utc).replace(tzinfo=None)
         except (OverflowError, OSError, ValueError):
             told = now
+        if told < now - OLDEST:
+            return None
         if now - OLDEST <= told <= now + CLOCK_SLACK:
             played = min(told, now)
     return {
