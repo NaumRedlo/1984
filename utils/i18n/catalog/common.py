@@ -1,4 +1,12 @@
 CATALOG = {
+    "common.command_running": {
+        "en": "Your previous request is still running. Wait for the result.",
+        "ru": "Предыдущий запрос ещё выполняется. Дождитесь результата.",
+    },
+    "common.commands_too_fast": {
+        "en": "Commands are being sent too quickly. Wait a few seconds.",
+        "ru": "Команды отправляются слишком часто. Подождите несколько секунд.",
+    },
     "common.api_not_ready": {
         "en": "Error: API client is not initialised.",
         "ru": "Ошибка: API-клиент не инициализирован.",
