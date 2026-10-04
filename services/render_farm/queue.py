@@ -41,6 +41,10 @@ class Job:
     payload: Optional[dict[str, Any]] = None
     withdrawn: bool = False
     reason: str = ""
+    video_id: Optional[int] = None
+    settings: Optional[dict[str, Any]] = None
+    in_app: bool = False
+    video_meta: Optional[dict[str, Any]] = None
 
     def handed(self) -> dict[str, Any]:
         skin = None
@@ -51,7 +55,7 @@ class Job:
             "title": self.title,
             "beatmap_md5": self.beatmap_md5,
             "beatmapset_id": self.beatmapset_id,
-            "settings": dict(STANDARD),
+            "settings": dict(self.settings or STANDARD),
             "skin": skin,
             "lease_seconds": LEASE_SECONDS,
         }
@@ -62,7 +66,9 @@ class RenderQueue:
 
     def offer(self, replay_path: str, title: str, *, beatmap_md5: str, beatmapset_id: Optional[int] = None,
               skin: Optional[dict[str, Any]] = None, requester: int = 0, chat_id: int = 0,
-              now: Optional[float] = None) -> Job:
+              now: Optional[float] = None, video_id: Optional[int] = None,
+              settings: Optional[dict[str, Any]] = None, in_app: bool = False,
+              video_meta: Optional[dict[str, Any]] = None) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:16],
             replay_path=replay_path,
@@ -73,6 +79,10 @@ class RenderQueue:
             requester=requester,
             chat_id=chat_id,
             created=now if now is not None else monotonic(),
+            video_id=video_id,
+            settings=dict(settings) if settings else None,
+            in_app=in_app,
+            video_meta=dict(video_meta) if video_meta else None,
         )
         self._jobs[job.id] = job
         logger.info("job %s offered: %s", job.id, title)
@@ -156,6 +166,10 @@ class RenderQueue:
 
     def get(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
+
+    def for_video(self, video_id: int) -> Optional[Job]:
+        self.sweep()
+        return next((job for job in self._jobs.values() if job.video_id == video_id), None)
 
     def _back_in_line(self, job: Job, reason: str) -> None:
         job.state = State.WAITING

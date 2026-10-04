@@ -9,6 +9,7 @@ class SharedVideo(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     owner = Column(BigInteger, nullable=False, index=True)
+    owner_player_id = Column(Integer, nullable=True, index=True)
 
     kind = Column(String(16), nullable=True)
     file_id = Column(String(255), nullable=False)
@@ -25,7 +26,12 @@ class SharedVideo(Base):
     mods = Column(String(64), nullable=True)
     map_hash = Column(String(32), nullable=True)
     replay_hash = Column(String(32), nullable=True)
+    replay_sha256 = Column(String(64), nullable=True)
     settings = Column(Text, nullable=True)
+    storage_hash = Column(String(64), nullable=True)
+    stored_until = Column(DateTime, nullable=True, index=True)
+    skin_name = Column(String(128), nullable=True)
+    skin_hash = Column(String(64), nullable=True)
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 

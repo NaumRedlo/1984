@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
@@ -8,6 +9,7 @@ from sqlalchemy import delete, func, select
 from db.models.chat_member import ChatMember
 from db.models.player import Player
 from db.models.shared_video import SharedVideo, VideoDelivery
+from services.render_farm import app_storage
 from services.render_farm.community import naive, stamp
 from utils.timeutils import utcnow
 
@@ -105,15 +107,33 @@ async def keep(session, owner: int, kind: str, media: Any, meta: dict) -> int:
     await session.commit()
     return video.id
 
-async def owned(session, telegram_id: int, video_id: int) -> Optional[SharedVideo]:
-    video = await session.get(SharedVideo, video_id)
-    return video if video is not None and video.owner == telegram_id else None
+async def keep_app(session, who, meta: dict, size: int, skin: Optional[dict] = None) -> SharedVideo:
+    video = SharedVideo(owner=who.telegram_id, owner_player_id=who.player_id, kind="app", file_id="", size=size)
+    for name, maximum in (("duration", 86_400), ("width", 3840), ("height", 2160)):
+        value = meta.get(name)
+        setattr(video, name, min(maximum, max(0, int(value))) if type(value) in (int, float) and math.isfinite(value) else 0)
+    video.skin_name = skin.get("name") if skin else None
+    video.skin_hash = skin.get("hash") if skin else None
+    for name, value in described(meta).items():
+        setattr(video, name, value)
+    session.add(video)
+    await session.commit()
+    return video
 
-async def attach_replay(session, telegram_id: int, video_id: int, replay_hash: str) -> bool:
-    video = await owned(session, telegram_id, video_id)
+async def owned(session, who, video_id: int) -> Optional[SharedVideo]:
+    video = await session.get(SharedVideo, video_id)
+    if video is None:
+        return None
+    if video.kind == "app":
+        return video if video.owner_player_id == getattr(who, "player_id", None) else None
+    return video if video.owner == getattr(who, "telegram_id", who) else None
+
+async def attach_replay(session, who, video_id: int, replay_hash: str, replay_sha256: Optional[str] = None) -> bool:
+    video = await owned(session, who, video_id)
     if video is None:
         return False
     video.replay_hash = replay_hash
+    video.replay_sha256 = replay_sha256
     await session.commit()
     return True
 
@@ -150,11 +170,11 @@ async def receivers(session, who, linked: Iterable[int], signed: Iterable[int] =
     found.sort(key=lambda face: (not face["shared"], face["name"].lower()))
     return found
 
-async def share(session, telegram_id: int, video_id: int, to: list[int], linked: Iterable[int], signed: Iterable[int] = (), *,
+async def share(session, who, video_id: int, to: list[int], linked: Iterable[int], signed: Iterable[int] = (), *,
                 now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     moment = naive(now) or utcnow()
-    me = await player_of(session, telegram_id)
-    video = await owned(session, telegram_id, video_id)
+    me = await player_of(session, who)
+    video = await owned(session, who, video_id)
     if me is None or video is None:
         return None
     here, known = set(linked), set(signed)
@@ -218,7 +238,10 @@ def _row(delivery: VideoDelivery, video: SharedVideo, sender: Optional[Player]) 
         "width": int(video.width or 0),
         "height": int(video.height or 0),
         "thumb": bool(video.thumb_id),
-        "replay": bool(video.replay_hash),
+        "replay": bool(video.replay_sha256 or video.replay_hash),
+        "storage": "app" if video.kind == "app" else "telegram",
+        "available": app_storage.available(video) if video.kind == "app" else True,
+        "expires_at": stamp(naive(video.stored_until)) if video.kind == "app" and video.stored_until else None,
         "settings": settings,
         "sent_at": stamp(naive(delivery.sent_at)),
         "seen": delivery.seen_at is not None,
