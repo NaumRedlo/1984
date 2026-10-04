@@ -6,6 +6,8 @@ from sqlalchemy import select
 
 from db.database import get_db_session
 from db.models.best_score import UserBestScore
+from db.models.user import User
+from services.command_refresh import RefreshBusy, RefreshCooldown, requests as refresh_requests
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
@@ -306,15 +308,30 @@ async def refresh_profile(message: types.Message, osu_api_client, trigger_args: 
 
             wait_msg = await message.answer(t("rf.loading", lang), parse_mode="HTML")
 
-            ok = await refresh_user(user, session, osu_api_client, mode="full")
+            user_id = user.id
+
+            async def refresh():
+                async with get_db_session() as updating:
+                    subject = await updating.get(User, user_id)
+                    if subject is None:
+                        return False
+                    ok = await refresh_user(subject, updating, osu_api_client, mode="full")
+                    if ok:
+                        await updating.commit()
+                    return ok
+
+            scope = ("profile", user.osu_user_id or ("user", user_id))
+            ok = await refresh_requests.run(scope + (user_id,), refresh, scope=scope)
 
             if ok:
-                await session.commit()
-                await session.refresh(user)
                 await wait_msg.edit_text(t("rf.success", lang), parse_mode="HTML")
             else:
                 await wait_msg.edit_text(t("rf.failed", lang), parse_mode="HTML")
 
+        except RefreshCooldown as exc:
+            await wait_msg.edit_text(t("common.refresh_wait", lang, seconds=exc.seconds))
+        except RefreshBusy:
+            await wait_msg.edit_text(t("common.command_running", lang))
         except Exception as e:
             logger.error(f"Unhandled exception in /refresh for {tg_id}: {e}", exc_info=True)
             error_text = t("rf.error", lang)

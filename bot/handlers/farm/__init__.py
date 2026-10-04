@@ -8,7 +8,7 @@ router = Router(name="farm")
 def _a_replay(name) -> bool:
     return bool(name) and str(name).lower().endswith(".osr")
 
-@router.message(F.document.file_name.func(_a_replay))
+@router.message(F.document.file_name.func(_a_replay), flags={"rate_limit": "upload"})
 async def on_replay(message: types.Message, osu_api_client=None, **_) -> None:
     lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     await orders.take(message.bot, message, lang, osu_api_client)
@@ -16,7 +16,7 @@ async def on_replay(message: types.Message, osu_api_client=None, **_) -> None:
 def _a_skin(name) -> bool:
     return bool(name) and str(name).lower().endswith((".osk", ".zip"))
 
-@router.message(F.document.file_name.func(_a_skin))
+@router.message(F.document.file_name.func(_a_skin), flags={"rate_limit": "upload"})
 async def on_skin(message: types.Message, **_) -> None:
     lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     await skin_upload.take(message.bot, message, lang)

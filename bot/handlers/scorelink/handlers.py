@@ -36,7 +36,7 @@ async def _resolve_score_owner(osu_api_client, raw_score: dict) -> tuple[str, in
         return data.get("username") or username or "???", user_id, data.get("cover_url") or cover_url or ""
     return username or "???", user_id, cover_url or ""
 
-@router.message(_LINK_FILTER, F.chat.type.in_({"private", "group", "supergroup"}))
+@router.message(_LINK_FILTER, F.chat.type.in_({"private", "group", "supergroup"}), flags={"rate_limit": "heavy"})
 async def on_score_link(message: types.Message, osu_api_client):
     text = message.text or ""
     if text.lstrip().startswith("/"):

@@ -7,6 +7,7 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.profile.targets import resolve_target, token_for
 from db.database import get_db_session
 from services import tracking
+from services.command_refresh import RefreshBusy, RefreshCooldown, requests as refresh_requests
 from services.image import card_renderer
 from utils.formatting.text import escape_html, format_error
 from utils.i18n import t
@@ -60,6 +61,19 @@ async def _stars(client, row: dict, raw: dict, ruleset: int) -> None:
         row["eff_sr"] = rating
 
 
+async def _collect_update(osu_id, ruleset, token, client, user_data):
+    best = await client.get_user_best_scores(osu_id, limit=100, oauth_token=token,
+                                             mode=rulesets.RULESETS[ruleset])
+    now = tracking.Standing.of(user_data, best)
+    async with get_db_session() as session:
+        kept = await tracking.load(session, osu_id, ruleset)
+        changes = tracking.compare(tracking.standing_of(kept), now, best,
+                                   since=kept.taken_at if kept else None)
+        await tracking.save(session, kept, osu_id, ruleset, now)
+        await session.commit()
+    return changes, best, now
+
+
 @router.message(TextTriggerFilter("update", "upd"))
 async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):
     lang = (await get_language(message.from_user.id)).lower()
@@ -81,16 +95,12 @@ async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_
             return
         if ruleset is None:
             ruleset = {v: k for k, v in rulesets.RULESETS.items()}.get(user_data.get("playmode"), 0)
-        best = await osu_api_client.get_user_best_scores(target.osu_id, limit=100, oauth_token=token,
-                                                          mode=rulesets.RULESETS[ruleset])
-        now = tracking.Standing.of(user_data, best)
-        async with get_db_session() as session:
-            kept = await tracking.load(session, target.osu_id, ruleset)
-            changes = tracking.compare(tracking.standing_of(kept), now, best,
-                                       since=kept.taken_at if kept else None)
-            await tracking.save(session, kept, target.osu_id, ruleset, now)
-            await session.commit()
-
+        scope = ("changes", target.osu_id, ruleset)
+        changes, best, now = await refresh_requests.run(
+            scope + (token,),
+            lambda: _collect_update(target.osu_id, ruleset, token, osu_api_client, user_data),
+            scope=scope,
+        )
         shown = changes.new_scores[:ROWS_SHOWN]
         rows = [_row(pos, raw) for pos, raw in shown]
         await asyncio.gather(*(_stars(osu_api_client, row, raw, ruleset) for row, (_, raw) in zip(rows, shown)))
@@ -108,6 +118,10 @@ async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_
         buf = await card_renderer.generate_update_card_async(data)
         await wait.delete()
         await message.answer_photo(photo=BufferedInputFile(buf.read(), filename="update.png"))
+    except RefreshCooldown as exc:
+        await wait.edit_text(t("common.refresh_wait", lang, seconds=exc.seconds))
+    except RefreshBusy:
+        await wait.edit_text(t("common.command_running", lang))
     except Exception as exc:
         logger.error(f"update of {target.osu_id} failed: {exc}", exc_info=True)
         await wait.edit_text(format_error(t("upd.failed", lang), lang), parse_mode="HTML")

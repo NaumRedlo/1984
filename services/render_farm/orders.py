@@ -2,6 +2,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+from collections import Counter
 from time import monotonic
 from typing import Any, Optional
 
@@ -22,6 +23,7 @@ logger = get_logger("services.render_farm.orders")
 
 TICK = 2.0
 EDIT_EVERY = 4.0
+_receiving = Counter()
 
 def _clock(seconds: float) -> str:
     seconds = max(0, int(round(seconds)))
@@ -58,6 +60,21 @@ def status_of(job: Job, lang: str) -> str:
     return t("farm.waiting", lang, title=job.title, ahead=queue.ahead_of(job), workers=workers)
 
 async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
+    person = message.from_user
+    if person is None or message.document is None:
+        return
+    if queue.open_for(person.id) + _receiving[person.id] >= settings.RENDER_ORDERS_EACH:
+        await message.reply(t("farm.too_many", lang, n=settings.RENDER_ORDERS_EACH))
+        return
+    _receiving[person.id] += 1
+    try:
+        await _take(bot, message, lang, osu_api_client)
+    finally:
+        _receiving[person.id] -= 1
+        if not _receiving[person.id]:
+            del _receiving[person.id]
+
+async def _take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
     document = message.document
     person = message.from_user
     if document is None or person is None:
@@ -71,43 +88,46 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
     if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
         await message.reply(t("farm.too_big", lang))
         return
-    if queue.open_for(person.id) >= settings.RENDER_ORDERS_EACH:
-        await message.reply(t("farm.too_many", lang, n=settings.RENDER_ORDERS_EACH))
-        return
     workdir = tempfile.mkdtemp(prefix="order-")
-    path = os.path.join(workdir, "replay.osr")
+    job = None
+    handed = False
     try:
-        await bot.download(document, destination=path)
-        with open(path, "rb") as source:
-            head = header(source.read())
-    except Exception as exc:
-        logger.warning("could not take a replay from %s: %s", person.id, exc)
-        shutil.rmtree(workdir, ignore_errors=True)
-        await message.reply(t("farm.unreadable", lang))
-        return
-    if head is None:
-        shutil.rmtree(workdir, ignore_errors=True)
-        await message.reply(t("farm.unreadable", lang))
-        return
-    if head.mode != 0:
-        shutil.rmtree(workdir, ignore_errors=True)
-        await message.reply(t("farm.standard_only", lang))
-        return
-    beatmap = None
-    if osu_api_client is not None:
+        path = os.path.join(workdir, "replay.osr")
         try:
-            beatmap = await osu_api_client.lookup_beatmap_by_checksum(head.beatmap_md5)
+            await bot.download(document, destination=path)
+            with open(path, "rb") as source:
+                head = header(source.read())
         except Exception as exc:
-            logger.info("no beatmap for %s: %s", head.beatmap_md5, exc)
-    title, set_id = title_of(head, beatmap)
-    skin = await skins.chosen_for(person.id)
-    beatmapset = (beatmap or {}).get("beatmapset") or {}
-    song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
-    meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
-    job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                      requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta)
-    status = await message.reply(status_of(job, lang))
-    asyncio.create_task(follow(bot, job, message, status, lang, workdir))
+            logger.warning("could not take a replay from %s: %s", person.id, exc)
+            await message.reply(t("farm.unreadable", lang))
+            return
+        if head is None:
+            await message.reply(t("farm.unreadable", lang))
+            return
+        if head.mode != 0:
+            await message.reply(t("farm.standard_only", lang))
+            return
+        beatmap = None
+        if osu_api_client is not None:
+            try:
+                beatmap = await osu_api_client.lookup_beatmap_by_checksum(head.beatmap_md5)
+            except Exception as exc:
+                logger.info("no beatmap for %s: %s", head.beatmap_md5, exc)
+        title, set_id = title_of(head, beatmap)
+        skin = await skins.chosen_for(person.id)
+        beatmapset = (beatmap or {}).get("beatmapset") or {}
+        song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
+        meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
+        job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
+                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta)
+        status = await message.reply(status_of(job, lang))
+        asyncio.create_task(follow(bot, job, message, status, lang, workdir))
+        handed = True
+    finally:
+        if not handed:
+            if job is not None:
+                queue.withdraw(job.id, "submission_failed")
+            shutil.rmtree(workdir, ignore_errors=True)
 
 async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message, lang: str, workdir: str) -> None:
     said = status.text or ""

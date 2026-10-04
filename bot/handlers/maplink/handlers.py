@@ -19,7 +19,7 @@ _LINK_FILTER = F.text.func(lambda t: bool(t) and bool(LINK_HINT_RE.search(t)))
 
 _DEFAULT_ACCURACY = 100.0
 
-@router.message(_LINK_FILTER, F.chat.type.in_({"private", "group", "supergroup"}))
+@router.message(_LINK_FILTER, F.chat.type.in_({"private", "group", "supergroup"}), flags={"rate_limit": "heavy"})
 async def on_beatmap_link(message: types.Message, osu_api_client):
     text = message.text or ""
     if text.lstrip().startswith("/"):

@@ -1,4 +1,16 @@
 CATALOG = {
+    "common.commands_wait": {
+        "en": "Try again in {seconds} s.",
+        "ru": "Можно повторить через {seconds} с.",
+    },
+    "common.server_busy": {
+        "en": "The bot is busy. Try again in {seconds} s. Menus are still available.",
+        "ru": "Бот занят. Повторите через {seconds} с. Меню остаются доступны.",
+    },
+    "common.refresh_wait": {
+        "en": "This player was just updated. Try again in {seconds} s.",
+        "ru": "Игрок недавно обновлён. Можно повторить через {seconds} с.",
+    },
     "common.command_running": {
         "en": "Your previous request is still running. Wait for the result.",
         "ru": "Предыдущий запрос ещё выполняется. Дождитесь результата.",

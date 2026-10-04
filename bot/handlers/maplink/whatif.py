@@ -176,7 +176,7 @@ def _whatif_keyboard(beatmap_id: int, accuracy: float, mods_str: str, url: str,
 async def cmd_whatif_keyword(message: types.Message, trigger_args: TriggerArgs, osu_api_client):
     await _handle_whatif(message, trigger_args.args or "", osu_api_client)
 
-@router.message(WhatifReplyFilter())
+@router.message(WhatifReplyFilter(), flags={"rate_limit": "heavy"})
 async def cmd_whatif_bare(message: types.Message, whatif_text: str, osu_api_client):
     await _handle_whatif(message, whatif_text, osu_api_client)
 

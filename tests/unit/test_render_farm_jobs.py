@@ -1,9 +1,11 @@
 import asyncio
 import struct
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -264,3 +266,103 @@ def test_the_status_says_where_the_job_stands(monkeypatch):
     assert "готовит карту" in orders.status_of(job, "ru")
     line.heartbeat(job.id, "k", {"stage": "drawing", "done": 25, "total": 100, "seconds_left": 75})
     assert "25%" in orders.status_of(job, "ru") and "1:15" in orders.status_of(job, "ru")
+
+
+@pytest_asyncio.fixture
+async def replay_sender(monkeypatch):
+    @asynccontextmanager
+    async def session():
+        result = SimpleNamespace(scalar_one_or_none=lambda: None)
+        yield SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    line = RenderQueue()
+    paths = []
+
+    async def download(document, destination):
+        paths.append(destination)
+        Path(destination).write_bytes(an_osr())
+
+    monkeypatch.setattr(orders, "AsyncSessionFactory", session)
+    monkeypatch.setattr(orders, "queue", line)
+    monkeypatch.setattr(orders, "follow", AsyncMock())
+    monkeypatch.setattr(orders.settings, "RENDER_ORDERS_EACH", 2)
+    monkeypatch.setattr(skins, "chosen_for", AsyncMock(return_value=None))
+    bot = SimpleNamespace(download=AsyncMock(side_effect=download))
+    status = SimpleNamespace(text="queued")
+    message = SimpleNamespace(document=SimpleNamespace(file_size=100), from_user=SimpleNamespace(id=777),
+                              chat=SimpleNamespace(id=-10055, type="supergroup"), reply=AsyncMock(return_value=status))
+    try:
+        yield bot, message, line, paths
+    finally:
+        await asyncio.sleep(0)
+        for path in paths:
+            shutil.rmtree(Path(path).parent, ignore_errors=True)
+        assert not orders._receiving
+
+
+async def test_simultaneous_uploads_reserve_capacity_before_download(replay_sender):
+    bot, message, line, paths = replay_sender
+    started, release = asyncio.Event(), asyncio.Event()
+    original = bot.download.side_effect
+
+    async def download(document, destination):
+        await original(document, destination)
+        if len(paths) == 2:
+            started.set()
+        await release.wait()
+
+    bot.download.side_effect = download
+    first = asyncio.create_task(orders.take(bot, message, "ru"))
+    second = asyncio.create_task(orders.take(bot, message, "ru"))
+    await started.wait()
+    try:
+        await orders.take(bot, message, "ru")
+        assert bot.download.await_count == 2
+        assert orders._receiving[777] == 2
+        assert "2" in message.reply.call_args.args[0]
+    finally:
+        release.set()
+        await asyncio.gather(first, second)
+    assert line.open_for(777) == 2
+    assert not orders._receiving
+
+
+@pytest.mark.parametrize("error", [OSError("failed"), asyncio.CancelledError()])
+async def test_failed_download_frees_reservation_and_removes_temporary_file(replay_sender, error):
+    bot, message, line, paths = replay_sender
+    original = bot.download.side_effect
+
+    async def broken(document, destination):
+        await original(document, destination)
+        raise error
+
+    bot.download.side_effect = broken
+    if isinstance(error, asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError):
+            await orders.take(bot, message, "ru")
+    else:
+        await orders.take(bot, message, "ru")
+    assert not orders._receiving and line.open_for(777) == 0
+    assert not Path(paths[0]).parent.exists()
+    bot.download.side_effect = original
+    await orders.take(bot, message, "ru")
+    assert line.open_for(777) == 1
+
+
+async def test_failed_status_message_withdraws_job_and_cleans_up(replay_sender):
+    bot, message, line, paths = replay_sender
+    message.reply.side_effect = RuntimeError("Telegram unavailable")
+    with pytest.raises(RuntimeError):
+        await orders.take(bot, message, "ru")
+    assert not orders._receiving and line.open_for(777) == 0
+    assert not Path(paths[0]).parent.exists()
+    orders.follow.assert_not_awaited()
+
+
+async def test_failure_after_download_frees_reservation_and_cleans_up(replay_sender, monkeypatch):
+    bot, message, line, paths = replay_sender
+    monkeypatch.setattr(skins, "chosen_for", AsyncMock(side_effect=RuntimeError("skin unavailable")))
+    with pytest.raises(RuntimeError):
+        await orders.take(bot, message, "ru")
+    assert not orders._receiving and line.open_for(777) == 0
+    assert not Path(paths[0]).parent.exists()

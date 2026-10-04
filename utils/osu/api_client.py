@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
+from utils.singleflight import SingleFlight
 
 logger = get_logger("client.osu")
 
@@ -128,6 +129,7 @@ class OsuApiClient:
         self.session: Optional[aiohttp.ClientSession] = None
         self._last_request_time: float = 0
         self._request_lock = asyncio.Lock()
+        self._requests = SingleFlight()
 
     async def initialize(self):
         if not self.session or self.session.closed:
@@ -171,8 +173,21 @@ class OsuApiClient:
                 await asyncio.sleep(self.RATE_LIMIT_DELAY - elapsed)
             self._last_request_time = asyncio.get_running_loop().time()
 
-    @with_retry(max_retries=3, base_delay=1.0)
     async def _make_request(
+        self, method: str, endpoint: str, params: Dict = None, json: Optional[Dict] = None,
+        retry_on_429: bool = True, bearer_token: Optional[str] = None, strict: bool = False,
+    ) -> Any:
+        async def request():
+            return await self._perform_request(method, endpoint, params=params, json=json,
+                                               retry_on_429=retry_on_429, bearer_token=bearer_token, strict=strict)
+        if method.upper() != "GET":
+            return await request()
+        key = (endpoint, tuple(sorted((str(k), repr(v)) for k, v in (params or {}).items())),
+               repr(json), bearer_token, retry_on_429, strict)
+        return await self._requests.run(key, request)
+
+    @with_retry(max_retries=3, base_delay=1.0)
+    async def _perform_request(
         self,
         method: str,
         endpoint: str,
@@ -911,6 +926,7 @@ class OsuApiClient:
             return None
 
     async def close(self):
+        await self._requests.close()
         if self.session and not self.session.closed:
             await self.session.close()
 
