@@ -1,8 +1,9 @@
 import asyncio
 import time
+from datetime import timedelta
 from typing import Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from db.models.user import User
 from utils.logger import get_logger
@@ -15,6 +16,7 @@ ROUND_MOST = 10
 RECENT_LIMIT = 20
 NUDGE_AFTER = (5.0, 30.0)
 CONCURRENT = 3
+MATCH_WITHIN = timedelta(seconds=10)
 
 
 class LiveTracker:
@@ -31,7 +33,11 @@ class LiveTracker:
     def due(self, known: list[int]) -> list[int]:
         now = self.clock()
         picked: list[int] = []
+        allowed = set(known)
         for osu_user_id, times in list(self.nudged.items()):
+            if osu_user_id not in allowed:
+                self.nudged.pop(osu_user_id, None)
+                continue
             if times and times[0] <= now:
                 picked.append(osu_user_id)
                 self.nudged[osu_user_id] = [at for at in times if at > now]
@@ -57,16 +63,50 @@ class LiveTracker:
             if signed:
                 alone = await session.execute(select(Player.osu_user_id).where(Player.id.in_(signed)))
                 known += [row[0] for row in alone.all() if row[0] not in known]
-            return known
+        active = await self.active()
+        for osu_user_id in active:
+            self.asked.pop(osu_user_id, None)
+        return [osu_user_id for osu_user_id in known if osu_user_id not in active]
+
+    async def active(self, session=None) -> set[int]:
+        from db.database import AsyncSessionFactory
+        from db.models.player import Player
+        from services.render_farm import invites
+
+        owners = invites.present()
+        players = {owner.player_id for owner in owners if owner.player_id is not None}
+        telegram = {owner.telegram_id for owner in owners if owner.telegram_id}
+        if not players and not telegram:
+            return set()
+        async def read(session):
+            found = await session.execute(select(Player.osu_user_id).where(or_(Player.id.in_(players), Player.telegram_id.in_(telegram))))
+            active = {row[0] for row in found.all() if row[0] is not None}
+            if telegram:
+                legacy = await session.execute(select(User.osu_user_id).where(User.telegram_id.in_(telegram)))
+                active.update(row[0] for row in legacy.all() if row[0] is not None)
+            return active
+        if session is not None:
+            return await read(session)
+        async with AsyncSessionFactory() as current:
+            return await read(current)
+
+    async def absent(self, osu_user_id: int, session=None) -> bool:
+        if osu_user_id not in await self.active(session):
+            return True
+        self.asked.pop(osu_user_id, None)
+        self.nudged.pop(osu_user_id, None)
+        return False
 
     async def catch(self, osu_user_id: int) -> int:
         from bot.handlers.profile.recent import _play_from_score
         from db.database import AsyncSessionFactory
         from utils.title_progress import evaluate_recent_plays
 
+        if not await self.absent(osu_user_id):
+            return 0
         self.asked[osu_user_id] = self.clock()
         scores = await self.api_client.get_user_recent_scores(osu_user_id, limit=RECENT_LIMIT, mode="osu")
-        if not scores:
+        if not scores or not await self.absent(osu_user_id):
             return 0
         synced = 0
         async with AsyncSessionFactory() as session:
@@ -75,14 +115,20 @@ class LiveTracker:
                 from db.models.player import Player
 
                 users = (await session.execute(select(Player).where(Player.osu_user_id == osu_user_id))).scalars().all()
-            plays = [_play_from_score(score) for score in scores]
             done: set[int] = set()
             for user in users:
                 if user.player_id is not None and user.player_id in done:
                     continue
                 done.add(user.player_id)
-                synced += await self.api_client.sync_user_map_attempts(user, session, scores)
+                fresh = await unseen(session, user.player_id, scores)
+                if not fresh:
+                    continue
+                plays = [_play_from_score(score) for score in fresh]
+                synced += await self.api_client.sync_user_map_attempts(user, session, fresh)
                 await evaluate_recent_plays(user, plays, session)
+            if not await self.absent(osu_user_id, session):
+                await session.rollback()
+                return 0
             await session.commit()
         return synced
 
@@ -118,6 +164,47 @@ class LiveTracker:
 
 
 _current: Optional[LiveTracker] = None
+
+
+async def unseen(session, player_id: int, scores: list) -> list:
+    from types import SimpleNamespace
+
+    from db.models.witnessed_play import WitnessedPlay
+    from services.render_farm.witnessed import same_play
+    from utils.osu.api_client import _parse_played_at, _pick_stat
+
+    timed = [(raw, _parse_played_at(raw)) for raw in scores]
+    dates = [at for _, at in timed if at is not None]
+    if not dates or player_id is None:
+        return scores
+    witnessed = (await session.execute(select(WitnessedPlay).where(
+        WitnessedPlay.player_id == player_id,
+        WitnessedPlay.played_at >= min(dates) - MATCH_WITHIN,
+        WitnessedPlay.played_at <= max(dates) + MATCH_WITHIN,
+    ))).scalars().all()
+    if not witnessed:
+        return scores
+
+    def mods(values):
+        return {value for value in values if value and value != "CL"}
+
+    fresh = []
+    for raw, at in timed:
+        stats = raw.get("statistics") or {}
+        played = SimpleNamespace(
+            player_id=player_id, beatmap_id=(raw.get("beatmap") or {}).get("id"),
+            played_at=at, created_at=None,
+            score=raw.get("legacy_total_score") or raw.get("total_score") or raw.get("score"),
+            count_100=_pick_stat(stats, "count_100", "ok"), count_50=_pick_stat(stats, "count_50", "meh"),
+            count_miss=_pick_stat(stats, "count_miss", "miss"), max_combo=raw.get("max_combo"),
+        )
+        picked = mods(value.get("acronym") if isinstance(value, dict) else str(value) for value in raw.get("mods") or [])
+        if not any(at is not None and abs(at - row.played_at.replace(tzinfo=None)) <= MATCH_WITHIN
+                   and played.beatmap_id is not None and played.beatmap_id == row.beatmap_id
+                   and same_play(row, played) and picked == mods((row.mods or "").split(","))
+                   and (raw.get("passed") is None or bool(raw["passed"]) == bool(row.passed)) for row in witnessed):
+            fresh.append(raw)
+    return fresh
 
 
 def set_current(tracker: Optional[LiveTracker]) -> None:

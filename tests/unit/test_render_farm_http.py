@@ -89,6 +89,24 @@ async def test_the_shared_secret_belongs_to_no_one(farm):
     client = farm
     assert (await client.get("/render/me", headers=MINE)).status == 404
 
+async def test_presence_requires_an_enrolled_person_and_refreshes_a_short_lease(linked, monkeypatch):
+    from services.render_farm import invites
+
+    client, token, _ = linked
+    monkeypatch.setattr(invites, "_seen", {})
+    monkeypatch.setattr(invites, "monotonic", lambda: 100)
+    assert (await client.post("/render/me/presence")).status == 401
+    assert (await client.post("/render/me/presence", headers=MINE)).status == 404
+    mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
+    assert (await client.post("/render/me/presence", headers={"Authorization": f"Bearer {token}"})).status == 400
+    reply = await client.post("/render/me/presence", headers=mine)
+    assert reply.status == 204
+    assert await reply.read() == b""
+    assert invites.present(now=129) == [invites.owner(token)]
+    assert invites.present(now=130) == []
+    assert (await client.get("/render/me", headers=mine)).status == 200
+    assert invites.present(now=279) == [invites.owner(token)]
+
 async def test_a_video_goes_to_the_person_who_linked_the_machine(linked):
     client, token, bot = linked
     mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac",

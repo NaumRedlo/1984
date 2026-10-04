@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from time import monotonic
 from typing import NamedTuple, Optional
 
 from utils.logger import get_logger
@@ -10,6 +11,8 @@ ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
 CODE_LENGTH = 8
 
 GOOD_FOR = 600.0
+PRESENT_FOR = 180.0
+PRESENCE_BEAT_FOR = 30.0
 
 class Invite(NamedTuple):
 
@@ -26,6 +29,7 @@ class Owner(NamedTuple):
 
 _good: set[str] = set()
 _owners: dict[str, Owner] = {}
+_seen: dict[str, tuple[float, float]] = {}
 
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -44,6 +48,23 @@ def remember(token: str, owner: Optional[Owner] = None) -> None:
 def forget(token_digest: str) -> None:
     _good.discard(token_digest)
     _owners.pop(token_digest, None)
+    _seen.pop(token_digest, None)
+
+def touch(token: str, *, now: Optional[float] = None, keep: Optional[float] = None) -> None:
+    key = digest(token)
+    if key in _good and key in _owners:
+        span = keep if keep is not None else _seen.get(key, (0, PRESENT_FOR))[1]
+        _seen[key] = (monotonic() if now is None else now, span)
+
+def present(*, now: Optional[float] = None) -> list[Owner]:
+    now = monotonic() if now is None else now
+    here = []
+    for key, (at, span) in list(_seen.items()):
+        if key not in _good or key not in _owners or now - at >= span:
+            _seen.pop(key, None)
+        else:
+            here.append(_owners[key])
+    return here
 
 def known(token: str) -> bool:
     return digest(token) in _good
@@ -76,6 +97,7 @@ async def load() -> int:
             )
             _good.clear()
             _owners.clear()
+            _seen.clear()
             for row in rows.all():
                 _good.add(row[0])
                 if row[1] is not None or row[3] is not None:

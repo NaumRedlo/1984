@@ -242,6 +242,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "unauthorised"}, status=401)
         if not _worker(request):
             return web.json_response({"error": "no worker name"}, status=400)
+        invites.touch(_token(request))
         return None
 
     def _seen(request: web.Request, *, build: Optional[str] = None, take: Optional[bool] = None) -> str:
@@ -509,6 +510,16 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             except Exception as exc:
                 logger.warning("cannot describe %s: %s", owner.telegram_id, exc)
         return web.json_response(body)
+
+    async def presence(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        token = _token(request)
+        if invites.owner(token) is None:
+            return web.json_response({"error": "no one"}, status=404)
+        invites.touch(token, keep=invites.PRESENCE_BEAT_FOR)
+        return web.Response(status=204)
 
     async def me_avatar(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -1531,6 +1542,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/me/profile", share_card),
         web.post("/render/me/title", wear_title),
         web.post("/render/me/played", played),
+        web.post("/render/me/presence", presence),
         web.post("/render/me/play", witnessed_play),
         web.post("/render/me/session", witness_session),
         web.post("/render/me/history", local_history),
