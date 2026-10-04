@@ -11,7 +11,7 @@ from sqlalchemy import select
 from config import settings
 from db.database import AsyncSessionFactory
 from db.models.player import Player
-from services.render_farm import members, skins
+from services.render_farm import invites, members, skins
 from services.render_farm.queue import STANDARD, Job, State, queue
 from services.render_farm.roster import roster
 from utils.i18n import t
@@ -67,9 +67,7 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
         return
     async with AsyncSessionFactory() as session:
         player = (await session.execute(select(Player.id).where(Player.telegram_id == person.id))).scalar_one_or_none()
-    if player is None:
-        await message.reply(t("farm.app_required", lang))
-        return
+    in_app = player is not None and (person.id in invites.linked() or player in invites.linked_players())
     if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
         await message.reply(t("farm.too_big", lang))
         return
@@ -107,7 +105,7 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
     song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
     meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
     job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                      requester=person.id, chat_id=message.chat.id, in_app=True, video_meta=meta)
+                      requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta)
     status = await message.reply(status_of(job, lang))
     asyncio.create_task(follow(bot, job, message, status, lang, workdir))
 

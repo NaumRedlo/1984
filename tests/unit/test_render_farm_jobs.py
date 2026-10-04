@@ -1,12 +1,23 @@
+import asyncio
 import struct
+from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from aiogram import types
+from aiogram.methods import SendVideo
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+import db.models
+from db.database import Base
+from db.models.player import Player
 from services.render_farm import http as farm_http
-from services.render_farm import orders, skins
+from services.render_farm import invites, orders, skins
 from services.render_farm.queue import MAX_ATTEMPTS, RenderQueue, State
 from services.render_farm.roster import Roster
 from utils.osr import header
@@ -82,6 +93,71 @@ def test_the_title_names_the_player_and_the_map():
     beatmap = {"version": "Grace", "beatmapset_id": 39804, "beatmapset": {"artist": "yaseta", "title": "Bluenation"}}
     assert orders.title_of(head, beatmap) == ("NaumRedlo — yaseta - Bluenation [Grace]", 39804)
     assert orders.title_of(head, None) == ("NaumRedlo", None)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("account", ["none", "bot", "legacy", "app", "revoked"])
+async def test_replays_use_telegram_unless_the_sender_has_an_authorised_app(account, monkeypatch, tmp_path):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    if account != "none":
+        async with factory() as session:
+            player = Player(osu_user_id=700, telegram_id=7, osu_username="NaumRedlo")
+            session.add(player)
+            await session.commit()
+        if account in ("legacy", "app", "revoked"):
+            owner = invites.Owner(7, "NaumRedlo") if account == "legacy" else invites.Owner(0, "NaumRedlo", player.id)
+            invites.remember("sender-app", owner)
+            if account == "revoked":
+                invites.forget(invites.digest("sender-app"))
+    invites.remember("another-app", invites.Owner(99, "Other", 999))
+    line = RenderQueue()
+    follow = AsyncMock()
+    monkeypatch.setattr(orders, "AsyncSessionFactory", factory)
+    monkeypatch.setattr(orders, "queue", line)
+    monkeypatch.setattr(orders, "follow", follow)
+    monkeypatch.setattr(orders.tempfile, "mkdtemp", lambda **kwargs: str(tmp_path))
+    skin = {"name": "Personal", "hash": "ab" * 32, "path": "/skin.osk"}
+    monkeypatch.setattr(skins, "chosen_for", AsyncMock(return_value=skin))
+    async def download(document, destination):
+        Path(destination).write_bytes(an_osr())
+    bot = SimpleNamespace(download=download)
+    status = SimpleNamespace(text="queued")
+    message = SimpleNamespace(document=SimpleNamespace(file_size=100), from_user=SimpleNamespace(id=7),
+                              chat=SimpleNamespace(id=-10055, type="supergroup"), reply=AsyncMock(return_value=status))
+    try:
+        await orders.take(bot, message, "ru")
+        await asyncio.sleep(0)
+        job, = line.waiting()
+        assert job.in_app is (account in ("legacy", "app"))
+        assert (job.requester, job.chat_id, job.skin) == (7, -10055, skin)
+        assert Path(job.replay_path).read_bytes() == an_osr()
+        follow.assert_awaited_once_with(bot, job, message, status, "ru", str(tmp_path))
+    finally:
+        invites.forget(invites.digest("sender-app"))
+        invites.forget(invites.digest("another-app"))
+        await engine.dispose()
+
+@pytest.mark.asyncio
+async def test_telegram_video_replies_to_the_original_message_in_the_original_topic(tmp_path):
+    bot = AsyncMock()
+    asked = types.Message(message_id=81, date=datetime.now(timezone.utc),
+                          chat=types.Chat(id=-10055, type="supergroup"),
+                          message_thread_id=17, is_topic_message=True).as_(bot)
+    status = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    path = tmp_path / "video.mp4"
+    path.write_bytes(VIDEO)
+    job = RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=-10055)
+    job.payload = {"path": str(path), "meta": {"duration": 95}}
+    await orders.deliver(bot, job, asked, status, "ru")
+    sent = bot.await_args.args[0]
+    assert isinstance(sent, SendVideo)
+    assert (sent.chat_id, sent.message_thread_id, sent.reply_parameters.message_id) == (-10055, 17, 81)
+    assert sent.duration == 95
+    status.delete.assert_awaited_once()
+    status.edit_text.assert_not_awaited()
+    assert not path.exists()
 
 def test_a_skin_on_the_server_is_described_by_its_hash(tmp_path, monkeypatch):
     monkeypatch.setattr(skins.settings, "RENDER_SKINS_DIR", str(tmp_path))
