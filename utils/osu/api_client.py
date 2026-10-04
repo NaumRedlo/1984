@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 from functools import wraps
 from urllib.parse import quote
+from collections.abc import Mapping
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
 from utils.singleflight import SingleFlight
 
 logger = get_logger("client.osu")
+QueryParams = Union[Dict, List[tuple[str, Any]], tuple[tuple[str, Any], ...]]
 
 def _pick_stat(stats, *keys):
     for k in keys:
@@ -174,7 +176,7 @@ class OsuApiClient:
             self._last_request_time = asyncio.get_running_loop().time()
 
     async def _make_request(
-        self, method: str, endpoint: str, params: Dict = None, json: Optional[Dict] = None,
+        self, method: str, endpoint: str, params: Optional[QueryParams] = None, json: Optional[Dict] = None,
         retry_on_429: bool = True, bearer_token: Optional[str] = None, strict: bool = False,
     ) -> Any:
         async def request():
@@ -182,7 +184,11 @@ class OsuApiClient:
                                                retry_on_429=retry_on_429, bearer_token=bearer_token, strict=strict)
         if method.upper() != "GET":
             return await request()
-        key = (endpoint, tuple(sorted((str(k), repr(v)) for k, v in (params or {}).items())),
+        if isinstance(params, Mapping):
+            pairs = tuple(sorted((str(k), repr(v)) for k, v in params.items()))
+        else:
+            pairs = tuple((str(k), repr(v)) for k, v in (params or ()))
+        key = (endpoint, pairs,
                repr(json), bearer_token, retry_on_429, strict)
         return await self._requests.run(key, request)
 
@@ -191,7 +197,7 @@ class OsuApiClient:
         self,
         method: str,
         endpoint: str,
-        params: Dict = None,
+        params: Optional[QueryParams] = None,
         json: Optional[Dict] = None,
         retry_on_429: bool = True,
         bearer_token: Optional[str] = None,

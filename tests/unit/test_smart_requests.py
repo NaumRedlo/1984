@@ -172,3 +172,49 @@ async def test_refresh_scope_prevents_cross_token_races_without_sharing_private_
     with pytest.raises(refresh.RefreshCooldown):
         await requests.run(("player", "token-b"), AsyncMock(), scope="player")
     assert not requests._active
+
+
+async def test_ranked_dates_keep_repeated_query_parameters_through_the_real_request_wrapper(monkeypatch):
+    from utils.osu import api_client as api
+    from datetime import datetime
+
+    monkeypatch.setattr(api, "_RANKED_DATES", {})
+    client = OsuApiClient()
+    perform = AsyncMock(return_value={"beatmaps": [
+        {"id": 75, "beatmapset": {"ranked_date": "2008-03-01T00:00:00Z"}},
+        {"id": 4000000, "beatmapset": {"ranked_date": "2025-01-01T00:00:00Z"}},
+    ]})
+    monkeypatch.setattr(client, "_perform_request", perform)
+    assert await client.ranked_dates([75, 4000000, 75]) == {
+        75: datetime(2008, 3, 1), 4000000: datetime(2025, 1, 1),
+    }
+    assert perform.call_args.kwargs["params"] == [("ids[]", 75), ("ids[]", 4000000)]
+    await client.ranked_dates([75, 4000000])
+    perform.assert_awaited_once()
+    await client.close()
+
+
+async def test_repeated_parameters_merge_identical_reads_without_merging_different_id_sets(monkeypatch):
+    client = OsuApiClient()
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def load(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {"beatmaps": []}
+
+    perform = AsyncMock(side_effect=load)
+    monkeypatch.setattr(client, "_perform_request", perform)
+    calls = [
+        client._make_request("GET", "beatmaps", params=[("ids[]", 1), ("ids[]", 2)]),
+        client._make_request("GET", "beatmaps", params=[("ids[]", 1), ("ids[]", 2)]),
+        client._make_request("GET", "beatmaps", params=[("ids[]", 1), ("ids[]", 3)]),
+        client._make_request("GET", "beatmaps", params=[("ids[]", 2), ("ids[]", 1)]),
+    ]
+    tasks = [asyncio.create_task(call) for call in calls]
+    await started.wait()
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(*tasks)
+    assert perform.await_count == 3
+    await client.close()
