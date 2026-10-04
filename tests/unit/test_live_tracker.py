@@ -15,6 +15,7 @@ from sqlalchemy import select
 from tasks import live_tracker
 from tasks.live_tracker import EACH_SECONDS, LiveTracker, ROUND_MOST
 from services.render_farm import invites
+from services import recent_plays
 
 
 @pytest.fixture(autouse=True)
@@ -227,7 +228,7 @@ async def test_offline_fallback_does_not_copy_witness_results_but_keeps_other_pl
     assert await tracker.catch(70) == len(others)
     assert len(evaluate.await_args.args[1]) == len(others)
     async with database() as session:
-        assert await live_tracker.unseen(session, user.player_id, [raw] + others) == others
+        assert await recent_plays.unseen(session, user.player_id, [raw] + others) == others
     client.scores = [raw]
     client.synced.clear()
     evaluate.reset_mock()

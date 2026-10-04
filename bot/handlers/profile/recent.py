@@ -6,6 +6,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboar
 
 from db.database import get_db_session
 from services.image import card_renderer
+from services import recent_plays
 from utils.logger import get_logger
 from utils.formatting.text import escape_html, format_error
 from utils.i18n import t
@@ -181,7 +182,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         registered_user = None
         newly_titles = []
         player_cover_url = ""
-        async with get_db_session() as session:
+        async with recent_plays.serial(target_id), get_db_session() as session:
             registered_user = await get_registered_user_by_osu(session, tenant_chat_id, osu_user_id=target_id)
             if registered_user:
                 player_cover_url = registered_user.cover_url or ""
@@ -189,9 +190,14 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     target_tg_id = registered_user.telegram_id
                 try:
 
-                    synced = await osu_api_client.sync_user_map_attempts(registered_user, session, recent_scores)
-                    plays = [_play_from_score(rs) for rs in recent_scores]
-                    newly_titles = await evaluate_recent_plays(registered_user, plays, session)
+                    fresh = recent_scores
+                    if recent_plays.is_linked(registered_user):
+                        fresh = await recent_plays.unseen(session, registered_user.player_id, fresh, stored=True)
+                    synced = 0
+                    if fresh:
+                        synced = await osu_api_client.sync_user_map_attempts(registered_user, session, fresh)
+                        plays = [_play_from_score(rs) for rs in fresh]
+                        newly_titles = await evaluate_recent_plays(registered_user, plays, session)
                     if synced or newly_titles:
                         await session.commit()
                 except Exception as e:
