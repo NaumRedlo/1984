@@ -96,6 +96,14 @@ CATALOG = {
         "en": "Renders are for members of the groups I am in. Join one of them and send the replay again.",
         "ru": "Рендер доступен участникам групп, где есть я. Вступи в одну из них и пришли реплей снова.",
     },
+    "farm.app_required": {
+        "en": "Link your osu! account to Dossier before sending a replay. The finished video appears in the app.",
+        "ru": "Привяжи osu! к Dossier перед отправкой реплея. Готовое видео появится в приложении.",
+    },
+    "farm.in_app": {
+        "en": "🎬 {title}\nThe video is ready in Dossier. It will be available for 3 days.",
+        "ru": "🎬 {title}\nВидео готово в Dossier и доступно для скачивания 3 дня.",
+    },
     "farm.too_big": {
         "en": "That file is too large to be a replay.",
         "ru": "Этот файл слишком большой для реплея.",

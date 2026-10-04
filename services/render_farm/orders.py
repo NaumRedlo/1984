@@ -6,8 +6,11 @@ from time import monotonic
 from typing import Any, Optional
 
 from aiogram import Bot, types
+from sqlalchemy import select
 
 from config import settings
+from db.database import AsyncSessionFactory
+from db.models.player import Player
 from services.render_farm import members, skins
 from services.render_farm.queue import STANDARD, Job, State, queue
 from services.render_farm.roster import roster
@@ -62,6 +65,11 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
     if message.chat.type == "private" and not await members.shares_a_group(bot, person.id):
         await message.reply(t("farm.members_only", lang))
         return
+    async with AsyncSessionFactory() as session:
+        player = (await session.execute(select(Player.id).where(Player.telegram_id == person.id))).scalar_one_or_none()
+    if player is None:
+        await message.reply(t("farm.app_required", lang))
+        return
     if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
         await message.reply(t("farm.too_big", lang))
         return
@@ -95,8 +103,11 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
             logger.info("no beatmap for %s: %s", head.beatmap_md5, exc)
     title, set_id = title_of(head, beatmap)
     skin = await skins.chosen_for(person.id)
+    beatmapset = (beatmap or {}).get("beatmapset") or {}
+    song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
+    meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
     job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                      requester=person.id, chat_id=message.chat.id)
+                      requester=person.id, chat_id=message.chat.id, in_app=True, video_meta=meta)
     status = await message.reply(status_of(job, lang))
     asyncio.create_task(follow(bot, job, message, status, lang, workdir))
 
@@ -139,6 +150,13 @@ async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message
 
 async def deliver(bot: Bot, job: Job, asked: types.Message, status: types.Message, lang: str) -> None:
     payload = job.payload or {}
+    if job.in_app:
+        try:
+            await status.edit_text(t("farm.in_app", lang, title=job.title))
+        except Exception as exc:
+            logger.warning("could not update app delivery status for job %s: %s", job.id, exc)
+        logger.info("job %s appeared in the app for %s", job.id, job.requester)
+        return
     path = payload.get("path")
     meta = payload.get("meta") or {}
     duration = meta.get("duration")

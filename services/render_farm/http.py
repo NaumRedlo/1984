@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
 import secrets
 import tempfile
@@ -9,9 +10,9 @@ from typing import Optional
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, donated, invites, members, pairing, players, replays, videos
-from services.render_farm.queue import RenderQueue, queue as default_queue
+from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
+from services.render_farm import app_storage, community as gathered, donated, invites, members, pairing, players, replays, skins, videos
+from services.render_farm.queue import STANDARD, RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 from utils.ttl_cache import TTLCache
@@ -276,7 +277,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if job is None:
             return web.Response(status=204)
         handed = job.handed()
-        handed["most"] = _max_send_bytes()
+        handed["most"] = APP_VIDEO_MOST if job.video_id is not None or job.in_app else _max_send_bytes()
         return web.json_response(handed)
 
     async def job_replay(request: web.Request) -> web.Response:
@@ -320,14 +321,73 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         job_id = request.match_info["job_id"]
         if not line.heartbeat(job_id, key):
             return web.json_response({"error": "not yours"}, status=409)
+        job = line.get(job_id)
+        maximum = APP_VIDEO_MOST if job is not None and (job.video_id is not None or job.in_app) else _max_send_bytes()
         try:
-            path, written = await _spool(request, _max_send_bytes(), "render-result-")
+            path, written = await _spool(request, maximum, "render-result-")
         except ValueError:
             line.give_back(job_id, key, "the video was too large to send")
             who.handed_back(key)
-            return web.json_response({"error": "too large", "most": _max_send_bytes()}, status=413)
+            return web.json_response({"error": "too large", "most": maximum}, status=413)
         except OSError as exc:
             return web.json_response({"error": str(exc)}, status=500)
+        if job is not None and (job.video_id is not None or job.in_app):
+            with open(path, "rb") as source:
+                header = source.read(12)
+            if written < 12 or header[4:8] != b"ftyp":
+                os.unlink(path)
+                line.give_back(job_id, key, "worker returned an invalid video")
+                return web.json_response({"error": "not mp4"}, status=400)
+            from db.database import AsyncSessionFactory
+            from db.models.player import Player
+            from db.models.shared_video import SharedVideo
+            from sqlalchemy import select
+
+            try:
+                async with AsyncSessionFactory() as session:
+                    await app_storage.purge(session)
+                    if job.video_id is not None:
+                        video = await session.get(SharedVideo, job.video_id)
+                    else:
+                        player = (await session.execute(select(Player).where(Player.telegram_id == job.requester))).scalar_one_or_none()
+                        if player is None or not os.path.isfile(job.replay_path):
+                            os.unlink(path)
+                            line.give_back(job_id, key, "render source unavailable")
+                            return web.json_response({"error": "render source unavailable"}, status=410)
+                        with open(job.replay_path, "rb") as source:
+                            replay_data = source.read()
+                        replay_key = await app_storage.keep_replay(replay_data, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST)
+                        if replay_key is None:
+                            os.unlink(path)
+                            line.give_back(job_id, key, "replay storage is full")
+                            return web.json_response({"error": "replay storage is full"}, status=507)
+                        owner = invites.Owner(job.requester, player.osu_username, player.id)
+                        meta = dict(job.video_meta or {})
+                        meta.update(_meta(request))
+                        meta["map_hash"] = job.beatmap_md5
+                        meta["settings"] = job.settings or STANDARD
+                        video = await videos.keep_app(session, owner, meta, written, job.skin)
+                        video.replay_sha256 = replay_key
+                        from db.models.shared_video import VideoDelivery
+
+                        session.add(VideoDelivery(video_id=video.id, sender_id=player.id, recipient_id=player.id))
+                    if video is None or video.kind != "app" or not await app_storage.store(session, video, path, written):
+                        os.unlink(path)
+                        if job.in_app and video is not None:
+                            await session.rollback()
+                            await session.delete(video)
+                            await session.commit()
+                        line.give_back(job_id, key, "video storage is full")
+                        return web.json_response({"error": "video storage is full"}, status=507)
+            except Exception as exc:
+                if os.path.exists(path):
+                    os.unlink(path)
+                logger.warning("app video result could not be stored: %s", exc)
+                return web.json_response({"error": "video storage failed"}, status=500)
+            if not line.finish(job_id, key, {"bytes": written, "video": video.id}):
+                return web.json_response({"error": "not yours"}, status=409)
+            who.delivered(key)
+            return web.json_response({"ok": True})
         if not line.finish(job_id, key, {"path": path, "meta": _meta(request), "bytes": written}):
             os.unlink(path)
             return web.json_response({"error": "not yours"}, status=409)
@@ -1013,6 +1073,49 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 logger.warning("the video sent to %s was not remembered: %s", where, exc)
         return web.json_response(body)
 
+    async def app_video(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        if owner.player_id is None:
+            return web.json_response({"error": "not registered"}, status=403)
+        meta = _meta(request)
+        if not videos.described(meta)["map_hash"]:
+            return web.json_response({"error": "no map hash"}, status=400)
+        try:
+            path, written = await _spool(request, APP_VIDEO_MOST, "app-video-")
+        except ValueError:
+            return web.json_response({"error": "too large", "most": APP_VIDEO_MOST}, status=413)
+        except OSError as exc:
+            return web.json_response({"error": str(exc)}, status=500)
+        if written < 12:
+            os.unlink(path)
+            return web.json_response({"error": "empty video"}, status=400)
+        with open(path, "rb") as source:
+            header = source.read(12)
+        if header[4:8] != b"ftyp":
+            os.unlink(path)
+            return web.json_response({"error": "not mp4"}, status=400)
+        from db.database import AsyncSessionFactory
+        from db.models.shared_video import SharedVideo
+
+        try:
+            skin = await skins.chosen_for(owner.telegram_id) if owner.telegram_id else None
+            async with AsyncSessionFactory() as session:
+                await app_storage.purge(session)
+                video = await videos.keep_app(session, owner, meta, written, skin)
+                if not await app_storage.store(session, video, path, written):
+                    await session.delete(video)
+                    await session.commit()
+                    os.unlink(path)
+                    return web.json_response({"error": "video storage is full"}, status=507)
+        except Exception as exc:
+            if os.path.exists(path):
+                os.unlink(path)
+            logger.warning("app video upload failed: %s", exc)
+            return web.json_response({"error": "video storage failed"}, status=500)
+        return web.json_response({"ok": True, "video": video.id})
+
     async def asking(request: web.Request):
         bad = await guard(request)
         if bad:
@@ -1038,6 +1141,21 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "not registered"}, status=404)
         return web.json_response({"people": people})
 
+    async def app_video_state(request: web.Request) -> web.Response:
+        owner, bad = await asking(request)
+        if bad:
+            return bad
+        video_id = numbered(request, "video")
+        if video_id is None:
+            return web.json_response({"error": "no video"}, status=400)
+        from db.database import AsyncSessionFactory
+
+        async with AsyncSessionFactory() as session:
+            video = await videos.owned(session, owner, video_id)
+            if video is None or video.kind != "app" or not app_storage.available(video):
+                return web.json_response({"error": "video unavailable"}, status=404)
+            return web.json_response({"ready": True})
+
     async def video_replay(request: web.Request) -> web.Response:
         owner, bad = await asking(request)
         if bad:
@@ -1048,7 +1166,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            if await videos.owned(session, owner.telegram_id, video_id) is None:
+            video = await videos.owned(session, owner, video_id)
+            if video is None:
                 return web.json_response({"error": "no video"}, status=404)
         try:
             path, _ = await _spool(request, RENDER_REPLAY_MOST, "shared-replay-")
@@ -1064,13 +1183,16 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if not donated.looks_like_replay(data):
             return web.json_response({"error": "not a replay"}, status=400)
         try:
-            known = donated.keep(data, owner.telegram_id, folder=SHARED_REPLAYS_DIR, most=SHARED_REPLAYS_STORAGE_MOST)
+            if video.kind == "app":
+                known = await app_storage.keep_replay(data, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST)
+            else:
+                known = donated.keep(data, owner.telegram_id, folder=SHARED_REPLAYS_DIR, most=SHARED_REPLAYS_STORAGE_MOST)
         except OSError as exc:
             return web.json_response({"error": str(exc)}, status=500)
         if known is None:
             return web.json_response({"error": "full"}, status=507)
         async with AsyncSessionFactory() as session:
-            await videos.attach_replay(session, owner.telegram_id, video_id, hashlib.md5(data).hexdigest())
+            await videos.attach_replay(session, owner, video_id, hashlib.md5(data).hexdigest(), known if video.kind == "app" else None)
         return web.json_response({"ok": True})
 
     async def video_share(request: web.Request) -> web.Response:
@@ -1085,7 +1207,14 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await videos.share(session, owner.telegram_id, video_id, chosen, invites.linked(), invites.linked_players())
+            video = await videos.owned(session, owner, video_id)
+            if video is not None and video.kind == "app":
+                replay_path = app_storage.replay_path(video, SHARED_REPLAYS_DIR)
+                if replay_path is None or not replay_path.is_file():
+                    return web.json_response({"error": "replay required"}, status=409)
+                if not app_storage.available(video):
+                    return web.json_response({"error": "video expired"}, status=410)
+            body = await videos.share(session, owner, video_id, chosen, invites.linked(), invites.linked_players())
         if body is None:
             return web.json_response({"error": "no video"}, status=404)
         return web.json_response(body)
@@ -1129,6 +1258,65 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return None, web.json_response({"error": "no video"}, status=404)
         return (owner, *found), None
 
+    async def inbox_restore_state(request: web.Request) -> web.Response:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        _, _, video, _ = found
+        if video.kind != "app":
+            return web.json_response({"state": "ready"})
+        if app_storage.available(video):
+            return web.json_response({"state": "ready"})
+        job = line.for_video(video.id)
+        return web.json_response({"state": "rendering" if job else "expired"})
+
+    async def inbox_restore(request: web.Request) -> web.Response:
+        found, bad = await taken(request)
+        if bad:
+            return bad
+        owner, _, video, _ = found
+        if video.kind != "app":
+            return web.json_response({"error": "not an app video"}, status=409)
+        if app_storage.available(video):
+            return web.json_response({"state": "ready"})
+        if line.for_video(video.id):
+            return web.json_response({"state": "rendering"})
+        replay_path = app_storage.replay_path(video, SHARED_REPLAYS_DIR)
+        if replay_path is None or not replay_path.is_file() or not video.map_hash:
+            return web.json_response({"error": "render source unavailable"}, status=410)
+        settings = dict(STANDARD)
+        try:
+            look = json.loads(video.settings) if video.settings else {}
+        except (ValueError, TypeError):
+            look = {}
+        if isinstance(look, dict):
+            for name, lower, upper in (("width", 640, 3840), ("height", 360, 2160), ("fps", 24, 240)):
+                value = look.get(name)
+                if type(value) is int:
+                    settings[name] = max(lower, min(upper, value))
+            for name in ("music", "hitsounds"):
+                value = look.get(name)
+                if type(value) in (int, float) and math.isfinite(value):
+                    settings[name] = max(0.0, min(1.0, float(value)))
+            if isinstance(look.get("play"), dict):
+                play = {}
+                for name in ("hud", "cursor_grows", "map_sounds", "skin_sounds", "snaking", "hit_lighting",
+                             "cursor_trail", "key_overlay", "error_meter", "unstable_rate", "show_300",
+                             "storyboard", "map_video"):
+                    if type(look["play"].get(name)) is bool:
+                        play[name] = look["play"][name]
+                for name, maximum in (("dim", 100), ("blur", 100), ("cursor_size", 1000), ("meter_size", 1000)):
+                    value = look["play"].get(name)
+                    if type(value) is int:
+                        play[name] = max(0, min(maximum, value))
+                settings["play"] = play
+        skin = skins.described(video.skin_name, video.owner) if video.skin_name else None
+        if skin is not None and skin.get("hash") != video.skin_hash:
+            skin = None
+        line.offer(str(replay_path), videos.caption(video, None) or "Shared video", beatmap_md5=video.map_hash,
+                   skin=skin, requester=video.owner, video_id=video.id, settings=settings)
+        return web.json_response({"state": "rendering"}, status=202)
+
     async def inbox_thumb(request: web.Request) -> web.Response:
         found, bad = await taken(request)
         if bad:
@@ -1151,6 +1339,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         _, _, video, _ = found
+        if video.kind == "app":
+            if not app_storage.available(video):
+                return web.json_response({"error": "video expired"}, status=410)
+            return web.FileResponse(app_storage.path_for(video.id), headers={"Content-Type": "video/mp4", "X-Content-SHA256": video.storage_hash or ""})
         if _bot is None:
             return web.json_response({"error": "bot asleep"}, status=503)
         key = video.file_unique_id or video.file_id
@@ -1191,8 +1383,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         _, _, video, _ = found
-        path = os.path.join(SHARED_REPLAYS_DIR, f"{video.replay_hash}.osr") if video.replay_hash else ""
-        if not path or not os.path.isfile(path):
+        path = app_storage.replay_path(video, SHARED_REPLAYS_DIR)
+        if path is None or not path.is_file():
             return web.json_response({"error": "no replay"}, status=404)
         return web.FileResponse(path)
 
@@ -1201,6 +1393,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         owner, _, video, sender = found
+        if video.kind == "app":
+            return web.json_response({"error": "only in app"}, status=404)
         if _bot is None:
             return web.json_response({"error": "bot asleep"}, status=503)
         if not owner.telegram_id:
@@ -1343,13 +1537,17 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/me/friends", friends),
         web.get("/render/me/card", card),
         web.post("/render/send", send),
+        web.post("/render/videos", app_video),
         web.get("/render/videos/receivers", video_receivers),
+        web.get("/render/videos/{video}", app_video_state),
         web.put("/render/videos/{video}/replay", video_replay),
         web.post("/render/videos/{video}/share", video_share),
         web.get("/render/me/inbox", inbox),
         web.post("/render/me/accept", inbox_accept),
         web.get("/render/inbox/{delivery}/thumb", inbox_thumb),
         web.get("/render/inbox/{delivery}/video", inbox_video),
+        web.get("/render/inbox/{delivery}/restore", inbox_restore_state),
+        web.post("/render/inbox/{delivery}/restore", inbox_restore),
         web.get("/render/inbox/{delivery}/replay", inbox_replay),
         web.post("/render/inbox/{delivery}/telegram", inbox_telegram),
         web.post("/render/inbox/{delivery}/seen", inbox_seen),
@@ -1378,5 +1576,26 @@ def install(app: web.Application) -> bool:
         logger.info("no RENDER_WORKER_TOKEN: renders stay on this host")
         return False
     app.add_routes(make_routes())
+    app.cleanup_ctx.append(_video_cleanup)
     logger.info("render worker endpoints ready")
     return True
+
+async def _video_cleanup(app: web.Application):
+    from db.database import AsyncSessionFactory
+
+    async def run():
+        while True:
+            try:
+                async with AsyncSessionFactory() as session:
+                    await app_storage.purge(session)
+            except Exception as exc:
+                logger.warning("app video cleanup failed: %s", exc)
+            await asyncio.sleep(900)
+
+    task = asyncio.create_task(run())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass

@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 import os
 import struct
 import types
@@ -16,7 +18,7 @@ from db.models.chat_member import ChatMember
 from db.models.player import Player
 from db.models.shared_video import SharedVideo, VideoDelivery
 from db.models.user import User
-from services.render_farm import http, invites, videos
+from services.render_farm import app_storage, http, invites, videos
 
 CHAT = -1001
 OTHER = -2002
@@ -363,3 +365,103 @@ async def test_without_a_local_bot_api_the_file_is_passed_on_from_telegram(serve
     got = await client.get(f"/render/inbox/{delivery}/video", headers=tokens[9])
     assert got.status == 200 and await got.read() == b"abcdef"
     assert asked == ["https://files/bot-token/videos/file_1.mp4"]
+
+async def test_app_video_expires_and_can_be_rendered_again(served, factory, monkeypatch, tmp_path):
+    client, tokens, bot = served
+    people = await _seed(factory)
+    monkeypatch.setattr(app_storage, "APP_VIDEOS_DIR", str(tmp_path / "app-videos"))
+    for telegram, player in ((7, people["NaumRedlo"]), (9, people["lumen"])):
+        token = tokens[telegram]["Authorization"][len("Bearer "):]
+        invites.remember(token, invites.Owner(telegram, "test", player))
+    original = b"\x00\x00\x00\x18ftypisom" + b"original-video"
+    meta = {**META, "settings": {"width": 1280, "height": 720, "fps": 120, "music": 0.5}}
+    reply = await client.post("/render/videos", headers={**tokens[7], "X-Render-Meta": json.dumps(meta)}, data=original)
+    assert reply.status == 200
+    video_id = (await reply.json())["video"]
+    assert not bot.sent
+    assert (await client.post(f"/render/videos/{video_id}/share", headers=tokens[7], json={"to": [people["lumen"]]})).status == 409
+    assert (await client.put(f"/render/videos/{video_id}/replay", headers=tokens[7], data=_replay())).status == 200
+    async with factory() as session:
+        stored = await session.get(SharedVideo, video_id)
+        assert len(stored.replay_sha256) == 64
+        assert app_storage.replay_path(stored, http.SHARED_REPLAYS_DIR).read_bytes() == _replay()
+    shared = await client.post(f"/render/videos/{video_id}/share", headers=tokens[7], json={"to": [people["lumen"]]})
+    assert (await shared.json())["sent"] == [people["lumen"]]
+    box = await (await client.get("/render/me/inbox", headers=tokens[9])).json()
+    row = box["videos"][0]
+    delivery = row["id"]
+    assert row["storage"] == "app" and row["available"] and row["expires_at"]
+    assert (await client.get(f"/render/inbox/{delivery}/video", headers=tokens[8])).status == 404
+    response = await client.get(f"/render/inbox/{delivery}/video", headers=tokens[9])
+    assert response.headers["X-Content-SHA256"] == hashlib.sha256(original).hexdigest()
+    assert await response.read() == original
+    async with factory() as session:
+        video = await session.get(SharedVideo, video_id)
+        video.stored_until = datetime(2020, 1, 1)
+        await session.commit()
+        assert await app_storage.purge(session) == 1
+    assert not app_storage.path_for(video_id).exists()
+    assert (await client.get(f"/render/inbox/{delivery}/video", headers=tokens[9])).status == 410
+    assert (await client.post(f"/render/inbox/{delivery}/restore", headers=tokens[8])).status == 404
+    restore = await client.post(f"/render/inbox/{delivery}/restore", headers=tokens[9])
+    assert restore.status == 202
+    assert (await restore.json())["state"] == "rendering"
+    claim = await client.post("/render/claim", headers=tokens[7], json={"take": True})
+    job = await claim.json()
+    assert job["settings"]["fps"] == 120 and job["settings"]["music"] == 0.5
+    again = b"\x00\x00\x00\x18ftypisom" + b"rerendered-video"
+    result = await client.post(f"/render/job/{job['id']}/result", headers=tokens[7], data=again)
+    assert result.status == 200
+    state = await client.get(f"/render/inbox/{delivery}/restore", headers=tokens[9])
+    assert (await state.json())["state"] == "ready"
+    response = await client.get(f"/render/inbox/{delivery}/video", headers=tokens[9])
+    assert await response.read() == again
+
+async def test_app_video_storage_migration_is_repeatable():
+    from sqlalchemy import text
+
+    from db.migrations.add_app_video_storage import run_app_video_storage_migration
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE shared_videos (id INTEGER PRIMARY KEY, owner BIGINT, file_id VARCHAR(255))"))
+        await run_app_video_storage_migration(engine)
+        await run_app_video_storage_migration(engine)
+        async with engine.begin() as conn:
+            columns = {row[1] for row in (await conn.execute(text("PRAGMA table_info(shared_videos)"))).fetchall()}
+        assert {"storage_hash", "stored_until", "skin_name", "skin_hash", "owner_player_id", "replay_sha256"} <= columns
+    finally:
+        await engine.dispose()
+
+async def test_bot_order_result_appears_in_owners_app_instead_of_telegram(served, factory, monkeypatch, tmp_path):
+    client, tokens, bot = served
+    await _seed(factory)
+    monkeypatch.setattr(app_storage, "APP_VIDEOS_DIR", str(tmp_path / "app-videos"))
+    replay = tmp_path / "bot-order.osr"
+    replay.write_bytes(_replay())
+    job = http.default_queue.offer(str(replay), "NaumRedlo — A Map", beatmap_md5="a" * 32,
+                                   requester=7, in_app=True, video_meta={"player": "NaumRedlo", "song": "A Map"})
+    claim = await client.post("/render/claim", headers=tokens[7], json={"take": True})
+    assert (await claim.json())["id"] == job.id
+    result = await client.post(f"/render/job/{job.id}/result", headers=tokens[7], data=b"\x00\x00\x00\x18ftypisomrender")
+    assert result.status == 200
+    assert job.payload["video"] and not bot.sent
+    box = await (await client.get("/render/me/inbox", headers=tokens[7])).json()
+    row = box["videos"][0]
+    assert row["storage"] == "app" and row["player"] == "NaumRedlo"
+    assert row["replay"] and row["available"]
+
+async def test_full_video_storage_refuses_upload_without_leaving_an_inbox_item(served, factory, monkeypatch, tmp_path):
+    client, tokens, _ = served
+    people = await _seed(factory)
+    token = tokens[7]["Authorization"][len("Bearer "):]
+    invites.remember(token, invites.Owner(7, "Naum", people["NaumRedlo"]))
+    monkeypatch.setattr(app_storage, "APP_VIDEOS_DIR", str(tmp_path / "app-videos"))
+    monkeypatch.setattr(app_storage, "APP_VIDEO_STORAGE_MOST", 10)
+    reply = await client.post("/render/videos", headers={**tokens[7], "X-Render-Meta": json.dumps(META)},
+                              data=b"\x00\x00\x00\x18ftypisomtoo-large-for-storage")
+    assert reply.status == 507
+    async with factory() as session:
+        assert (await session.execute(select(SharedVideo))).scalars().all() == []
+    assert list((tmp_path / "app-videos").glob("*.mp4")) == []
