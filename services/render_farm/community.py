@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
@@ -15,6 +16,7 @@ from services.leaderboard.deltas import DELTA_CATEGORIES, absolute_for, delta_fo
 from services.leaderboard.periods import current_period_key, period_start_utc, week_number
 from utils.timeutils import utcnow
 from utils.titles import RARITY_ORDER, TITLE_REGISTRY
+from utils.ttl_cache import TTLCache
 
 TOP = 5
 RECENT = 12
@@ -152,6 +154,13 @@ def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: 
     }
 
 async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] = None) -> dict[str, Any]:
+    body, owners = await _gather(session, chat_id, now)
+    for card in body["people"]:
+        card["you"] = owners.get(card["id"]) == viewer
+    return body
+
+async def _gather(session, chat_id: int, now: Optional[datetime]) -> tuple[dict[str, Any], dict[int, int]]:
+    given = now is not None
     now = naive(now) or utcnow()
     period = current_period_key(now)
     users = (await session.execute(
@@ -196,7 +205,7 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
             moved=moved[u.id],
             gained=gained[u.id],
             was=_was(anchors.get(u.id)),
-            you=u.telegram_id == viewer,
+            you=False,
         )
         card["earned"] = {row.title_code: stamp(row.unlocked_at) for row in unlocked[u.id] if row.unlocked_at}
         people.append(card)
@@ -242,7 +251,7 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
             happened.append({"who": p["id"], "kind": "climb", "board": DELTA_CATEGORIES[0], "from": place + climbed, "to": place, "at": week_began})
     happened.sort(key=lambda h: h["at"] or 0, reverse=True)
 
-    return {
+    body = {
         "chat": chat_id,
         "week": week_number(period),
         "week_began": stamp(period_start_utc(period)),
@@ -251,9 +260,42 @@ async def gather(session, chat_id: int, viewer: int, *, now: Optional[datetime] 
         "live": live,
         "happened": happened[:60],
         "titles": titles_catalogue(),
-        "title_holders": await title_holders(session),
+        "title_holders": await (title_holders(session) if given else held_titles(session)),
         "at": stamp(now),
     }
+    return body, {u.id: u.telegram_id for u in users}
+
+GATHERED_KEEP = 10.0
+_gathered_cache = TTLCache(maxsize=200, ttl=GATHERED_KEEP)
+_gathering: dict[int, asyncio.Lock] = {}
+
+def forget_gathered() -> None:
+    _gathered_cache.clear()
+    _gathering.clear()
+
+async def gather_shared(session, chat_id: int, viewer: int) -> dict[str, Any]:
+    kept = _gathered_cache.get(chat_id)
+    if kept is None:
+        async with _gathering.setdefault(chat_id, asyncio.Lock()):
+            kept = _gathered_cache.get(chat_id)
+            if kept is None:
+                kept = await _gather(session, chat_id, None)
+                _gathered_cache[chat_id] = kept
+    body, owners = kept
+    return {**body, "people": [{**card, "you": owners.get(card["id"]) == viewer} for card in body["people"]]}
+
+HOLDERS_KEEP = 60.0
+_holders_cache = TTLCache(maxsize=1, ttl=HOLDERS_KEEP)
+
+def forget_holders() -> None:
+    _holders_cache.clear()
+
+async def held_titles(session) -> dict[str, Any]:
+    kept = _holders_cache.get("all")
+    if kept is None:
+        kept = await title_holders(session)
+        _holders_cache["all"] = kept
+    return kept
 
 async def title_holders(session) -> dict[str, Any]:
     everyone = {
@@ -298,6 +340,7 @@ async def wear(session, viewer: int, chat_id: Optional[int], code: Optional[str]
             return NOT_UNLOCKED
     mine.active_title_code = code
     await session.commit()
+    forget_gathered()
     return WORN
 
 async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
@@ -341,6 +384,7 @@ async def keep_card(session, telegram_id: int, card: dict[str, Any], *, now: Opt
         row.app_profile = raw
         row.app_profile_at = moment
     await session.commit()
+    forget_gathered()
     return len(rows)
 
 async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) -> dict[str, Any]:

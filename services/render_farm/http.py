@@ -10,7 +10,7 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import community as gathered, donated, invites, pairing, players, replays, videos
+from services.render_farm import community as gathered, donated, invites, members, pairing, players, replays, videos
 from services.render_farm.queue import RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -131,6 +131,19 @@ async def _osu_friends(token: str) -> Optional[list]:
 FETCH_PATIENCE = 900
 THUMB_KEEP = 3600.0
 _thumb_cache = TTLCache(maxsize=200, ttl=THUMB_KEEP)
+
+CHAT_KEEP = 600.0
+_chat_cache = TTLCache(maxsize=500, ttl=CHAT_KEEP)
+
+def _etag_of(body: dict) -> str:
+    steady = {key: value for key, value in body.items() if key != "at"}
+    return '"' + hashlib.sha1(json.dumps(steady, sort_keys=True).encode()).hexdigest()[:24] + '"'
+
+def forget_memories() -> None:
+    _chat_cache.clear()
+    members.forget()
+    gathered.forget_holders()
+    gathered.forget_gathered()
 _fetching: dict[str, asyncio.Lock] = {}
 _reading: dict[str, int] = {}
 
@@ -489,9 +502,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             photo = False
             if _bot is not None:
                 try:
-                    chat = await _bot.get_chat(chat_id)
-                    title = chat.title or chat.full_name or ""
-                    photo = chat.photo is not None
+                    title, photo = await _chat_card(chat_id)
                     if not await _member(chat_id, owner.telegram_id):
                         continue
                 except Exception as exc:
@@ -501,13 +512,16 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         return web.json_response(rows)
 
     async def _member(chat_id: int, telegram_id: int) -> bool:
-        if _bot is None:
-            return False
-        try:
-            member = await _bot.get_chat_member(chat_id, telegram_id)
-        except Exception:
-            return False
-        return getattr(member, "status", "left") not in {"left", "kicked"}
+        return await members.is_member(_bot, chat_id, telegram_id)
+
+    async def _chat_card(chat_id: int) -> tuple[str, bool]:
+        kept = _chat_cache.get(chat_id)
+        if kept is not None:
+            return kept
+        chat = await _bot.get_chat(chat_id)
+        card = (chat.title or chat.full_name or "", chat.photo is not None)
+        _chat_cache[chat_id] = card
+        return card
 
     async def chat_avatar(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -578,7 +592,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await gathered.gather(session, chat_id, owner.telegram_id) if chat_id is not None else {
+            body = await gathered.gather_shared(session, chat_id, owner.telegram_id) if chat_id is not None else {
                 "chat": None, "week": 0, "people": [], "live": [], "happened": [], "titles": gathered.titles_catalogue(), "at": None,
             }
             body["me"] = await gathered.own(session, owner.telegram_id, chat_id)
@@ -588,12 +602,16 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         body["photo"] = False
         if chat_id is not None and _bot is not None:
             try:
-                chat = await _bot.get_chat(chat_id)
-                body["group"] = chat.title or chat.full_name or ""
-                body["photo"] = chat.photo is not None
+                body["group"], body["photo"] = await _chat_card(chat_id)
             except Exception as exc:
                 logger.info("chat %s is not reachable: %s", chat_id, exc)
-        return web.json_response(body)
+        text = json.dumps(body)
+        tag = _etag_of(body)
+        if request.headers.get("If-None-Match") == tag:
+            return web.Response(status=304, headers={"ETag": tag})
+        reply = web.Response(text=text, content_type="application/json", headers={"ETag": tag})
+        reply.enable_compression()
+        return reply
 
     async def map_board(request: web.Request) -> web.Response:
         bad = await guard(request)

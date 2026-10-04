@@ -321,3 +321,85 @@ async def test_the_app_says_its_person_just_played(served, factory):
         assert 70 in tracker.nudged
     finally:
         live_tracker.set_current(None)
+
+async def test_the_title_holders_are_counted_once_a_minute_for_the_live_feed_and_afresh_when_a_time_is_given(factory, monkeypatch):
+    await _seed(factory)
+    asked = []
+    real = community.title_holders
+
+    async def counting(session):
+        asked.append(1)
+        return await real(session)
+
+    monkeypatch.setattr(community, "title_holders", counting)
+    async with factory() as s:
+        one = await community.held_titles(s)
+        two = await community.held_titles(s)
+        await community.gather(s, CHAT, 7, now=NOW)
+    assert one == two
+    assert len(asked) == 2
+
+async def test_one_chat_is_gathered_once_for_every_viewer_and_each_sees_only_themselves(factory, monkeypatch):
+    await _seed(factory)
+    asked = []
+    real = community._gather
+
+    async def counting(session, chat_id, now):
+        asked.append(chat_id)
+        return await real(session, chat_id, now)
+
+    monkeypatch.setattr(community, "_gather", counting)
+    async with factory() as s:
+        mine = await community.gather_shared(s, CHAT, 7)
+        theirs = await community.gather_shared(s, CHAT, 8)
+        nobody = await community.gather_shared(s, CHAT, 99)
+    assert asked == [CHAT]
+    assert [p["name"] for p in mine["people"] if p["you"]] == ["NaumRedlo"]
+    assert [p["name"] for p in theirs["people"] if p["you"]] == ["kotofey"]
+    assert not any(p["you"] for p in nobody["people"])
+    assert [p["name"] for p in mine["people"] if p["you"]] == ["NaumRedlo"], "one viewer's marks do not leak into another's"
+
+async def test_a_worn_title_or_a_shared_card_does_not_wait_for_the_cache(factory):
+    naum, koto, lumen = await _seed(factory)
+    async with factory() as s:
+        before = await community.gather_shared(s, CHAT, 7)
+        assert next(p for p in before["people"] if p["name"] == "lumen")["app"] is False
+        await community.keep_card(s, 9, {"username": "lumen"})
+        after = await community.gather_shared(s, CHAT, 7)
+    assert next(p for p in after["people"] if p["name"] == "lumen")["app"] is True
+
+async def test_an_unchanged_feed_answers_not_modified_and_a_changed_one_answers_afresh(served, factory):
+    await _seed(factory)
+    client, mine = served
+    first = await client.get("/render/community", headers=mine)
+    assert first.status == 200
+    tag = first.headers["ETag"]
+    assert tag.startswith('"')
+    again = await client.get("/render/community", headers={**mine, "If-None-Match": tag})
+    assert again.status == 304 and again.headers["ETag"] == tag
+    assert await again.read() == b""
+    community.forget_gathered()
+    async with factory() as s:
+        await s.execute(User.__table__.update().where(User.telegram_id == 8).values(player_pp=13000))
+        await s.commit()
+    changed = await client.get("/render/community", headers={**mine, "If-None-Match": tag})
+    assert changed.status == 200 and changed.headers["ETag"] != tag
+    assert next(p for p in (await changed.json())["people"] if p["name"] == "kotofey")["pp"] == 13000
+
+async def test_the_etag_belongs_to_the_viewer_and_the_time_of_gathering_does_not_change_it(served, factory):
+    await _seed(factory)
+    client, mine = served
+    one = (await client.get("/render/community", headers=mine)).headers["ETag"]
+    community.forget_gathered()
+    two = (await client.get("/render/community", headers=mine)).headers["ETag"]
+    assert one == two
+    assert http._etag_of({"a": 1, "at": 5}) == http._etag_of({"a": 1, "at": 9})
+    assert http._etag_of({"a": 1}) != http._etag_of({"a": 2})
+
+async def test_a_client_that_accepts_gzip_gets_the_feed_compressed(served, factory):
+    await _seed(factory)
+    client, mine = served
+    reply = await client.get("/render/community", headers={**mine, "Accept-Encoding": "gzip"})
+    assert reply.status == 200
+    assert reply.headers.get("Content-Encoding") == "gzip"
+    assert len((await reply.json())["people"]) == 3
