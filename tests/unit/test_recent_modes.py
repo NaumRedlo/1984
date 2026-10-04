@@ -1,8 +1,11 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from bot.handlers.profile import recent as handler
 from services.image.render import recent as render
 from utils.osu import rulesets
+from utils.osu.api_client import OsuApiClient
+from utils.osu.resolve_user import resolve_osu_user
 
 
 def test_a_mode_is_read_from_the_first_or_last_word():
@@ -27,7 +30,10 @@ class _Osu:
 
     async def get_user_recent_scores(self, osu_id, limit=1, oauth_token=None, mode=None):
         self.asked.append((mode, limit))
-        return self.plays.get(mode, [])
+        found = self.plays.get(mode, [])
+        if isinstance(found, Exception):
+            raise found
+        return found
 
 
 async def test_with_no_mode_the_newest_play_of_any_mode_is_shown():
@@ -51,6 +57,64 @@ async def test_a_named_mode_is_the_only_one_asked_and_nothing_else_is_counted():
 
 async def test_no_plays_at_all():
     assert await handler.fetch_recent(_Osu({}), 7, None) == ([], None)
+
+
+@pytest.mark.parametrize("plays", [
+    {"osu": TimeoutError("osu unavailable")},
+    {"osu": [{"id": 1}], "mania": TimeoutError("mania unavailable")},
+])
+async def test_failed_requests_are_not_reported_as_no_plays_or_an_older_play(plays):
+    with pytest.raises(TimeoutError):
+        await handler.fetch_recent(_Osu(plays), 7, None)
+
+
+async def test_recent_dates_are_compared_in_utc():
+    osu = _Osu({
+        "osu": [{"id": 1, "ended_at": "2026-10-04T22:00:00+03:00"}],
+        "mania": [{"id": 2, "created_at": "2026-10-04T20:00:00Z"}],
+    })
+    _, shown = await handler.fetch_recent(osu, 7, None)
+    assert shown["id"] == 2
+
+
+async def test_rejected_user_token_retries_recent_with_public_access():
+    client = OsuApiClient()
+    client._make_request = AsyncMock(side_effect=[None, [{"id": 7}]])
+    assert await client.get_user_recent_scores(123, 50, "rejected", "osu") == [{"id": 7}]
+    first, second = client._make_request.call_args_list
+    assert first.kwargs["bearer_token"] == "rejected"
+    assert "bearer_token" not in second.kwargs
+    assert first.args == second.args == ("GET", "users/123/scores/recent")
+    assert first.kwargs["params"] == second.kwargs["params"] == {"limit": 50, "include_fails": 1, "mode": "osu"}
+
+
+@pytest.mark.parametrize("reply", [None, {}, {"error": "unavailable"}])
+async def test_invalid_recent_response_is_not_an_empty_history(reply):
+    client = OsuApiClient()
+    client._make_request = AsyncMock(return_value=reply)
+    with pytest.raises(ValueError, match="Invalid recent scores response"):
+        await client.get_user_recent_scores(123)
+
+
+async def test_real_empty_recent_history_does_not_trigger_a_retry():
+    client = OsuApiClient()
+    client._make_request = AsyncMock(return_value=[])
+    assert await client.get_user_recent_scores(123, oauth_token="valid") == []
+    client._make_request.assert_awaited_once()
+
+
+@pytest.mark.parametrize("name", ["nazeetskyyy", "1011", "-legusshhka-"])
+async def test_lookup_keeps_numeric_and_punctuated_names_as_usernames(name):
+    client = OsuApiClient()
+    client._make_request = AsyncMock(return_value={
+        "id": 123, "username": name, "statistics": None, "cover": None, "country": None,
+    })
+    user = await resolve_osu_user(client, name)
+    assert user["id"] == 123 and user["username"] == name
+    call = client._make_request.call_args
+    assert call.args == ("GET", f"users/{name}/osu")
+    assert call.kwargs["params"] == {"key": "username"}
+    assert call.kwargs["strict"] is True
 
 
 @pytest.mark.parametrize("ruleset, stats, labels, values", [

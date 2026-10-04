@@ -91,8 +91,8 @@ class App:
         self.dp.callback_query.middleware(rate_mw)
 
         last_seen_mw = LastSeenMiddleware()
-        self.dp.message.middleware(last_seen_mw)
-        self.dp.callback_query.middleware(last_seen_mw)
+        self.dp.message.outer_middleware(last_seen_mw)
+        self.dp.callback_query.outer_middleware(last_seen_mw)
 
         api_mw = ApiClientMiddleware(self.osu_api_client)
         self.dp.message.middleware(api_mw)

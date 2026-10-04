@@ -180,6 +180,7 @@ class OsuApiClient:
         json: Optional[Dict] = None,
         retry_on_429: bool = True,
         bearer_token: Optional[str] = None,
+        strict: bool = False,
     ) -> Any:
         using_oauth = bearer_token is not None
         if not using_oauth:
@@ -223,6 +224,8 @@ class OsuApiClient:
                 if resp.status != 200:
                     error_text = " ".join((await resp.text())[:200].split())
                     logger.error(f"API error {resp.status} for {endpoint}: {error_text}")
+                    if strict:
+                        resp.raise_for_status()
                     return None
 
                 return await resp.json()
@@ -271,16 +274,16 @@ class OsuApiClient:
             user = quote(user, safe="")
         key_type = "id" if isinstance(user, int) else "username"
         path = f"users/{user}/{mode}" if mode else f"users/{user}"
-        data = await self._make_request("GET", path, params={"key": key_type}, bearer_token=oauth_token)
+        data = await self._make_request("GET", path, params={"key": key_type}, bearer_token=oauth_token, strict=True)
         if not data or "id" not in data:
             return None
 
-        stats = data.get("statistics", {})
+        stats = data.get("statistics") or {}
         return {
             "id": data.get("id"),
             "username": data.get("username"),
             "playmode": data.get("playmode"),
-            "country_code": data.get("country", {}).get("code", "XX"),
+            "country_code": (data.get("country") or {}).get("code", "XX"),
             "pp": stats.get("pp", 0),
             "global_rank": stats.get("global_rank"),
             "country_rank": stats.get("country_rank"),
@@ -293,9 +296,9 @@ class OsuApiClient:
             "is_supporter": data.get("is_supporter", False),
             "last_visit": data.get("last_visit"),
             "avatar_url": data.get("avatar_url"),
-            "cover_url": data.get("cover", {}).get("url"),
+            "cover_url": (data.get("cover") or {}).get("url"),
 
-            "level": stats.get("level", {}).get("current", 0),
+            "level": (stats.get("level") or {}).get("current", 0),
             "join_date": data.get("join_date"),
             "grade_counts": stats.get("grade_counts", {}) or {},
         }
@@ -350,7 +353,11 @@ class OsuApiClient:
         if mode:
             params["mode"] = mode
         data = await self._make_request("GET", f"users/{user_id}/scores/recent", params=params, bearer_token=oauth_token)
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list) and oauth_token:
+            data = await self._make_request("GET", f"users/{user_id}/scores/recent", params=params, strict=True)
+        if not isinstance(data, list):
+            raise ValueError(f"Invalid recent scores response for user {user_id}")
+        return data
 
     async def sync_user_stats_from_api(self, user_model, oauth_token: Optional[str] = None) -> bool:
         stats = await self.get_user_data(user_model.osu_user_id, oauth_token=oauth_token)

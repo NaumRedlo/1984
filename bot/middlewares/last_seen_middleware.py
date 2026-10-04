@@ -1,4 +1,7 @@
+import asyncio
+from datetime import timezone
 from typing import Callable, Dict, Any
+from weakref import WeakValueDictionary
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
@@ -15,6 +18,7 @@ logger = get_logger("middleware.last_seen")
 
 _COOLDOWN_SECONDS = 300
 _last_updated = TTLCache(maxsize=20000, ttl=_COOLDOWN_SECONDS)
+_activity_locks = WeakValueDictionary()
 
 def _event_chat(event) -> object | None:
     if isinstance(event, Message):
@@ -25,36 +29,37 @@ def _event_chat(event) -> object | None:
 
 class LastSeenMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable, event: object, data: Dict[str, Any]) -> Any:
-        import time
-
         if not isinstance(event, (Message, CallbackQuery)):
             return await handler(event, data)
 
-        user_id = event.from_user.id if event.from_user else None
+        user_id = event.from_user.id if event.from_user and not event.from_user.is_bot else None
         chat = _event_chat(event)
 
         chat_id = chat.id if chat and chat.type in ("group", "supergroup") else None
 
         if user_id and chat_id is not None:
-            now_mono = time.monotonic()
-            key = (user_id, chat_id)
-            if key not in _last_updated:
-                _last_updated[key] = now_mono
-                try:
-                    async with AsyncSessionFactory() as session:
-                        user = (await session.execute(
-                            select(User).where(
-                                User.telegram_id == user_id, User.chat_id == chat_id)
-                        )).scalar_one_or_none()
-                        if user is not None:
-
-                            came_back = detect_comeback(user)
-                            touch_activity_day(user)
-                            user.last_seen_at = utcnow()
-                            if came_back:
-                                await unlock_title(user, "comeback_180d", session)
-                            await session.commit()
-                except Exception as e:
-                    logger.debug(f"last_seen update failed for {user_id}@{chat_id}: {e}")
+            moment = event.date if isinstance(event, Message) else utcnow()
+            if moment.tzinfo is not None:
+                moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+            key = (user_id, chat_id, moment.date())
+            lock = _activity_locks.setdefault(user_id, asyncio.Lock())
+            async with lock:
+                if key not in _last_updated:
+                    try:
+                        async with AsyncSessionFactory() as session:
+                            user = (await session.execute(
+                                select(User).where(
+                                    User.telegram_id == user_id, User.chat_id == chat_id)
+                            )).scalar_one_or_none()
+                            if user is not None:
+                                came_back = detect_comeback(user)
+                                touch_activity_day(user, moment.date())
+                                user.last_seen_at = max(user.last_seen_at or moment, moment)
+                                if came_back:
+                                    await unlock_title(user, "comeback_180d", session)
+                                await session.commit()
+                                _last_updated[key] = True
+                    except Exception as e:
+                        logger.warning(f"last_seen update failed for {user_id}@{chat_id}: {e}")
 
         return await handler(event, data)

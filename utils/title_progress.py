@@ -272,10 +272,10 @@ def bump_profile_opens(user) -> None:
     user.profile_opens_count = (user.profile_opens_count or 0) + 1
     user.profile_opens_best = max(user.profile_opens_best or 0, user.profile_opens_count)
 
-def touch_activity_day(user) -> None:
-    today = utcnow().date()
+def touch_activity_day(user, today=None) -> None:
+    today = today or utcnow().date()
     last = user.active_day
-    if last == today:
+    if last is not None and last >= today:
         return
     if last is not None and (today - last).days == 1:
         user.active_streak = (user.active_streak or 0) + 1

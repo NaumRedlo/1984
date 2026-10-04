@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,7 +14,7 @@ from utils.osu.helpers import remember_message_context
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
 from utils.title_progress import evaluate_recent_plays
-from utils.osu.api_client import _is_perfect
+from utils.osu.api_client import _is_perfect, _parse_played_at
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
 from services.image.render.recent import build_recent_card_data, _pick_score_value
@@ -24,21 +25,22 @@ router = Router(name="recent")
 
 RECENT_LIMIT = 50
 
-def _ended(raw: dict) -> str:
-    return str(raw.get("ended_at") or raw.get("created_at") or "")
+def _ended(raw: dict) -> datetime:
+    return _parse_played_at(raw) or datetime.min
 
 async def fetch_recent(client, osu_id: int, token, ruleset=None) -> tuple[list, dict | None]:
-    """osu!standard plays (the ones leaderboards and titles count) and the play to show.
-
-    With no mode named, the play to show is the newest of all four modes; osu! itself only
-    answers with the player's main mode when none is asked for."""
     wanted = [ruleset] if ruleset is not None else list(rulesets.RULESETS)
     lists = await asyncio.gather(*(
         client.get_user_recent_scores(osu_id, limit=RECENT_LIMIT if rid == 0 else 1, oauth_token=token,
                                       mode=rulesets.RULESETS[rid])
         for rid in wanted
     ), return_exceptions=True)
-    found = {rid: (got if isinstance(got, list) else []) for rid, got in zip(wanted, lists)}
+    for got in lists:
+        if isinstance(got, BaseException):
+            raise got
+        if not isinstance(got, list):
+            raise ValueError("Invalid recent scores response")
+    found = dict(zip(wanted, lists))
     standard = found.get(0, [])
     newest = [plays[0] for plays in found.values() if plays]
     shown = max(newest, key=_ended) if newest else None
@@ -178,9 +180,11 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
         registered_user = None
         newly_titles = []
+        player_cover_url = ""
         async with get_db_session() as session:
             registered_user = await get_registered_user_by_osu(session, tenant_chat_id, osu_user_id=target_id)
             if registered_user:
+                player_cover_url = registered_user.cover_url or ""
                 if not target_tg_id:
                     target_tg_id = registered_user.telegram_id
                 try:
@@ -191,12 +195,10 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
                     if synced or newly_titles:
                         await session.commit()
                 except Exception as e:
+                    await session.rollback()
                     logger.debug(f"Failed to sync/eval recent for {target_id}: {e}")
 
-        player_cover_url = ""
-        if registered_user and registered_user.cover_url:
-            player_cover_url = registered_user.cover_url
-        else:
+        if not player_cover_url:
             try:
                 user_data = await osu_api_client.get_user_data(target_id)
                 if user_data:
