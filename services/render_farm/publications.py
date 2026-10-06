@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from db.database import AsyncSessionFactory
 from db.models.map_publication import MapPublication
 from db.models.player import Player
+from services.render_farm.videos import player_of
 
 
 def clean(kind, content):
@@ -81,14 +82,20 @@ def routes(guard, who):
     async def identity(request):
         denied = await guard(request)
         if denied is not None:
-            raise web.HTTPUnauthorized()
+            return denied
         owner = await who(request)
-        if owner is None or owner.player_id is None:
+        if owner is None:
             raise web.HTTPUnauthorized()
-        return owner.player_id
+        async with AsyncSessionFactory() as session:
+            player = await player_of(session, owner)
+        if player is None:
+            raise web.HTTPForbidden(text="linked player profile required")
+        return player.id
 
     async def listed(request):
         owner = await identity(request)
+        if isinstance(owner, web.StreamResponse):
+            return owner
         kind = request.match_info["kind"]
         if kind not in {"pool", "collection"}:
             raise web.HTTPBadRequest()
@@ -102,6 +109,8 @@ def routes(guard, who):
 
     async def saved(request):
         owner = await identity(request)
+        if isinstance(owner, web.StreamResponse):
+            return owner
         kind, key = request.match_info["kind"], request.match_info["key"]
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key):
             raise web.HTTPBadRequest()
@@ -145,6 +154,8 @@ def routes(guard, who):
 
     async def removed(request):
         owner = await identity(request)
+        if isinstance(owner, web.StreamResponse):
+            return owner
         async with AsyncSessionFactory() as session:
             await session.execute(delete(MapPublication).where(MapPublication.owner_id == owner, MapPublication.kind == request.match_info["kind"], MapPublication.local_id == request.match_info["key"]))
             await session.commit()

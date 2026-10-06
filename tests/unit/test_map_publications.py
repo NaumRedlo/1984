@@ -19,11 +19,13 @@ async def client(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     monkeypatch.setattr(publications, "AsyncSessionFactory", factory)
     async with factory() as session:
-        session.add_all([Player(id=1, osu_user_id=100, osu_username="Mapper One"), Player(id=2, osu_user_id=200, osu_username="Other")])
+        session.add_all([Player(id=1, telegram_id=1234, osu_user_id=100, osu_username="Mapper One"), Player(id=2, osu_user_id=200, osu_username="Other")])
         await session.commit()
     async def guard(request):
         return None
     async def who(request):
+        if request.headers.get("X-Test-Telegram"):
+            return Owner(int(request.headers["X-Test-Telegram"]), "Player", None)
         said = request.headers.get("X-Test-Owner")
         return Owner(0, "Player", int(said)) if said else None
     app = web.Application()
@@ -35,6 +37,17 @@ async def client(monkeypatch):
 
 def pool():
     return {"format": "dossier-pool", "version": 1, "name": "Cup", "frame": "Free", "calc": 2, "authors": ["mapper one"], "slots": [{"hash": "a" * 32, "mods": "Nm", "category": "AB", "colour": [94, 194, 208]}]}
+
+
+async def test_telegram_sign_in_can_publish_without_a_player_id_in_the_token(client):
+    headers = {"X-Test-Telegram": "1234"}
+    response = await client.put("/render/catalog/pool/legacy", json={"content": pool(), "revision": 0}, headers=headers)
+    assert response.status == 200
+    assert (await response.json())["owner_id"] == 1
+    response = await client.get("/render/catalog/pool", headers={"X-Test-Owner": "1"})
+    assert (await response.json())[0]["mine"] is True
+    unknown = await client.get("/render/catalog/pool", headers={"X-Test-Telegram": "9999"})
+    assert unknown.status == 403
 
 
 async def test_pool_publication_owner_revisions_and_author_links(client):
