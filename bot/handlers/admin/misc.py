@@ -147,7 +147,7 @@ async def cmd_whereami(message: types.Message):
 async def cmd_userslist(message: types.Message, trigger_args: TriggerArgs):
     async with get_db_session() as session:
         users = (await session.execute(
-            select(User).order_by(asc(User.last_seen_at))
+            select(User).order_by(asc(User.last_seen_at).nulls_first())
         )).scalars().all()
 
     if not users:
@@ -283,6 +283,8 @@ async def purge_confirm(callback: types.CallbackQuery):
         await callback.answer("Запрос устарел.", show_alert=True)
         return
 
+    from db.models.chat_member import ChatMember
+    from db.models.leaderboard_snapshot import LeaderboardSnapshot
     from db.models.oauth_token import OAuthToken
     from db.player_data import clear_if_last
 
@@ -299,6 +301,8 @@ async def purge_confirm(callback: types.CallbackQuery):
 
         await clear_if_last(session, user)
 
+        await session.execute(delete(LeaderboardSnapshot).where(LeaderboardSnapshot.user_id == user_id))
+        await session.execute(delete(ChatMember).where(ChatMember.user_id == user_id))
         await session.execute(delete(User).where(User.id == user_id))
 
         other_exists = (await session.execute(

@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -20,6 +21,7 @@ async def _fresh_engine():
         await conn.run_sync(Base.metadata.create_all)
     return engine
 
+@pytest.mark.sqlite_only
 async def test_chain_runs_on_a_database_without_the_removed_tables():
     engine = await _fresh_engine()
     try:
@@ -29,6 +31,7 @@ async def test_chain_runs_on_a_database_without_the_removed_tables():
     finally:
         await engine.dispose()
 
+@pytest.mark.sqlite_only
 async def test_chain_still_upgrades_a_legacy_database():
     engine = await _fresh_engine()
     try:

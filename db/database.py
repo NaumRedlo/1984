@@ -1,5 +1,6 @@
 from typing import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -14,6 +15,22 @@ from config.settings import DATABASE_URL
 
 class Base(DeclarativeBase):
     pass
+
+def _wall_clock(value):
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo is not None else value
+    if isinstance(value, dict):
+        return {key: _wall_clock(inner) for key, inner in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_wall_clock(inner) for inner in value)
+    if isinstance(value, list):
+        return [_wall_clock(inner) for inner in value]
+    return value
+
+def attach_postgres(target) -> None:
+    @event.listens_for(target.sync_engine, "before_cursor_execute", retval=True)
+    def _drop_time_zones(_conn, _cursor, statement, parameters, _context, _executemany):
+        return statement, _wall_clock(parameters)
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
@@ -46,6 +63,7 @@ else:
         max_overflow=20,
         pool_timeout=60,
     )
+    attach_postgres(engine)
 
 AsyncSessionFactory = async_sessionmaker(
     bind=engine,
@@ -66,6 +84,7 @@ async def close_engine() -> None:
 
 __all__ = [
     "Base",
+    "attach_postgres",
     "engine",
     "AsyncSessionFactory",
     "get_db_session",

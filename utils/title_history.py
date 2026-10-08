@@ -219,7 +219,7 @@ async def load_history(session, player_id: int) -> History:
     if player_id in cached:
         return cached[player_id]
     attempts = (await session.execute(
-        select(UserMapAttempt).where(UserMapAttempt.player_id == player_id).order_by(UserMapAttempt.played_at, UserMapAttempt.id)
+        select(UserMapAttempt).where(UserMapAttempt.player_id == player_id).order_by(UserMapAttempt.played_at.asc().nulls_first(), UserMapAttempt.id)
     )).scalars().all()
     bests = (await session.execute(select(UserBestScore).where(UserBestScore.player_id == player_id))).scalars().all()
     spans = (await session.execute(

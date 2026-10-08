@@ -82,6 +82,7 @@ async def _legacy_rows(engine):
         ):
             await conn.execute(text(f"INSERT INTO user_title_progress (user_id, title_code, current_value, unlocked, unlocked_at) VALUES {row}"))
 
+@pytest.mark.sqlite_only
 async def test_scores_attempts_and_titles_move_to_the_player_and_doubles_become_one(old):
     await _legacy_rows(old)
     await run_players_migration(old)
@@ -104,6 +105,7 @@ async def test_scores_attempts_and_titles_move_to_the_player_and_doubles_become_
         assert titles[(alice.id, "played_100k")].current_value == 52000 and not titles[(alice.id, "played_100k")].unlocked
         assert titles[(alice.id, "magic7")].unlocked and not titles[(bob.id, "wysi")].unlocked
 
+@pytest.mark.sqlite_only
 async def test_progress_of_two_chat_rows_becomes_one_on_the_player_and_on_both_rows(old):
     await _legacy_rows(old)
     await run_players_migration(old)
@@ -118,6 +120,7 @@ async def test_progress_of_two_chat_rows_becomes_one_on_the_player_and_on_both_r
         rows = (await s.execute(select(User).where(User.player_id == alice.id).order_by(User.id))).scalars().all()
         assert [(row.level, row.compare_uses, row.active_streak_best, row.active_day) for row in rows] == [(95, 15, 9, date(2026, 9, 20))] * 2
 
+@pytest.mark.sqlite_only
 async def test_the_move_happens_once_and_leaves_a_fresh_database_alone(old):
     await _legacy_rows(old)
     await run_players_migration(old)
@@ -134,6 +137,7 @@ async def test_the_move_happens_once_and_leaves_a_fresh_database_alone(old):
     finally:
         await fresh.dispose()
 
+@pytest.mark.sqlite_only
 async def test_a_players_table_from_before_gains_the_new_columns(old):
     await _legacy_rows(old)
     await run_players_migration(old)
@@ -222,6 +226,7 @@ async def test_leaving_one_chat_keeps_the_scores_and_leaving_the_last_takes_them
             assert await s.scalar(select(func.count()).select_from(model)) == 0
         assert not await clear_if_last(s, here)
 
+@pytest.mark.sqlite_only
 async def test_a_dry_run_reports_on_a_copy_and_leaves_the_database_as_it_was(tmp_path, monkeypatch):
     monkeypatch.setattr(add_players, "REPORT", str(tmp_path / "players.log"))
     path = tmp_path / "bot.db"
@@ -244,6 +249,7 @@ async def test_a_dry_run_reports_on_a_copy_and_leaves_the_database_as_it_was(tmp
     assert path.read_bytes() == before
     assert not player_sync.is_on()
 
+@pytest.mark.sqlite_only
 async def test_the_database_is_copied_before_the_move_and_only_then(tmp_path, monkeypatch):
     monkeypatch.setattr(add_players, "REPORT", str(tmp_path / "players.log"))
     monkeypatch.setattr(move_progress_to_players, "REPORT", str(tmp_path / "progress.log"))

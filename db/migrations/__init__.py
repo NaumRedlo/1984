@@ -54,6 +54,10 @@ from db.migrations.move_progress_to_players import run_player_progress_migration
 from db.migrations.add_app_accounts import run_app_accounts_migration
 
 async def run_all_migrations(engine) -> None:
+    if engine.dialect.name == "sqlite":
+        await _sqlite_history(engine)
+
+async def _sqlite_history(engine) -> None:
     await run_migration(engine)
     await run_avatar_migration(engine)
     await run_beatmapset_id_migration(engine)

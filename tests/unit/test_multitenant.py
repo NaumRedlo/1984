@@ -205,6 +205,31 @@ async def test_purge_one_group_keeps_other_row_and_oauth(factory):
     assert len(toks) == 1
 
 @pytest.mark.asyncio
+async def test_purge_takes_the_membership_and_the_snapshots_of_that_row_with_it(factory):
+    from db.models.chat_member import ChatMember
+    from db.models.leaderboard_snapshot import LeaderboardSnapshot
+
+    await _seed_two_groups(factory)
+    gone = await _row_id(factory, CHAT_A, 1)
+    kept = await _row_id(factory, CHAT_B, 1)
+    async with factory() as s:
+        s.add_all([
+            LeaderboardSnapshot(tenant_chat_id=CHAT_A, user_id=gone, period_key="2026-W40"),
+            LeaderboardSnapshot(tenant_chat_id=CHAT_B, user_id=kept, period_key="2026-W40"),
+        ])
+        await s.commit()
+        assert len((await s.execute(lb.select(ChatMember).where(ChatMember.user_id == gone))).scalars().all()) == 1
+
+    await _run_purge(factory, gone)
+
+    async with factory() as s:
+        members = (await s.execute(lb.select(ChatMember.user_id))).scalars().all()
+        snapshots = (await s.execute(lb.select(LeaderboardSnapshot.user_id))).scalars().all()
+
+    assert gone not in members and kept in members
+    assert snapshots == [kept]
+
+@pytest.mark.asyncio
 async def test_purge_last_group_removes_oauth(factory):
     await _seed_two_groups(factory)
     await _add_global_token(factory, 1)

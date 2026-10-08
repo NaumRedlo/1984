@@ -132,7 +132,7 @@ async def keep(session, who, data: bytes, named: Optional[dict] = None, *, osu=N
     ))
     await session.flush()
     extra = (await session.execute(
-        select(SharedReplay).where(SharedReplay.player_id == player.id).order_by(SharedReplay.played_at.desc(), SharedReplay.id.desc()).offset(each)
+        select(SharedReplay).where(SharedReplay.player_id == player.id).order_by(SharedReplay.played_at.desc().nulls_last(), SharedReplay.id.desc()).offset(each)
     )).scalars().all()
     gone = [row.replay_hash for row in extra]
     for row in extra:
@@ -152,7 +152,7 @@ async def listed(session, who, scope: str = CHAT, *, limit: int = LISTED) -> Opt
         if not near:
             return {"replays": [], "at": stamp(utcnow())}
         wanted = wanted.where(Player.id.in_(near))
-    found = (await session.execute(wanted.order_by(SharedReplay.played_at.desc(), SharedReplay.id.desc()).limit(limit))).all()
+    found = (await session.execute(wanted.order_by(SharedReplay.played_at.desc().nulls_last(), SharedReplay.id.desc()).limit(limit))).all()
     seen: set[str] = set()
     rows = []
     for replay, player in found:

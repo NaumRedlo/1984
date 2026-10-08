@@ -227,7 +227,7 @@ updates to the pinned packages and the actions once a week.
 
 | | |
 |---|---|
-| **Bot** | Python 3.12, aiogram 3.29, SQLAlchemy 2.0 (async) over SQLite, Pillow |
+| **Bot** | Python 3.12, aiogram 3.29, SQLAlchemy 2.0 (async) over SQLite or PostgreSQL, Pillow |
 | **pp** | [assay-server](assay-server/README.md): osu!'s own `ppy.osu.Game*` packages in .NET |
 | **API** | osu! API v2 |
 | **Host** | Ubuntu Server 24.04 LTS |

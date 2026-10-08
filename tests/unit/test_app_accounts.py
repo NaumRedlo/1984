@@ -139,6 +139,8 @@ async def test_a_state_that_is_used_or_unknown_is_refused(factory, monkeypatch):
 
 async def test_enrolled_machines_come_back_with_their_players_after_a_restart(factory):
     async with factory() as s:
+        s.add(Player(id=3, osu_user_id=3, osu_username="alice"))
+        await s.flush()
         s.add_all([
             RenderWorkerToken(digest="a" * 64, issued_to=7, issued_name="Naum"),
             RenderWorkerToken(digest="b" * 64, issued_to=None, player_id=3, issued_name="alice"),
@@ -360,6 +362,7 @@ async def test_joining_a_group_later_links_the_same_player_and_keeps_what_it_had
         assert (player.active_title_code, player.share_replays, player.player_pp) == ("wysi", True, 4500)
         assert await s.scalar(select(func.count()).select_from(Player)) == 1
 
+@pytest.mark.sqlite_only
 async def test_older_tables_gain_what_app_accounts_need():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     try:

@@ -19,6 +19,7 @@ from db.models.witness_session import WitnessSession
 from db.models.local_score import LocalScore
 from db.models.left_member import LeftMember
 from db.models.map_publication import MapPublication
+from db.models.bot_settings import BotSettings
 import db.player_sync
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication", "BotSettings"]

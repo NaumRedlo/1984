@@ -73,6 +73,7 @@ async def _seed(factory, *users):
         session.add_all(users)
         await session.commit()
 
+@pytest.mark.sqlite_only
 @pytest.mark.asyncio
 async def test_the_migration_joins_rows_to_players_once_and_then_keeps_them_in_step(engine, factory):
     await _seed(
@@ -155,6 +156,7 @@ async def test_unlinking_the_last_chat_frees_the_person_for_another_account(fact
         member = (await session.execute(select(ChatMember))).scalar_one()
         assert member.player_id == new.id
 
+@pytest.mark.sqlite_only
 @pytest.mark.asyncio
 async def test_the_dry_run_writes_nothing(tmp_path):
     url = f"sqlite+aiosqlite:///{tmp_path / 'bot.db'}"

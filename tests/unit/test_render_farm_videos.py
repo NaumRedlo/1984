@@ -6,6 +6,7 @@ import struct
 import types
 from datetime import datetime, timedelta
 
+import pytest
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -326,6 +327,7 @@ async def test_seen_dropped_and_the_setting_over_http(served, factory):
     refused = await (await client.post(f"/render/videos/{video}/share", headers=tokens[7], json={"to": [people["lumen"]]})).json()
     assert refused == {"sent": [], "refused": [{"player": people["lumen"], "why": "closed"}]}
 
+@pytest.mark.sqlite_only
 async def test_the_migration_adds_the_setting_to_an_older_players_table():
     from sqlalchemy import text
 
@@ -417,6 +419,7 @@ async def test_app_video_expires_and_can_be_rendered_again(served, factory, monk
     response = await client.get(f"/render/inbox/{delivery}/video", headers=tokens[9])
     assert await response.read() == again
 
+@pytest.mark.sqlite_only
 async def test_app_video_storage_migration_is_repeatable():
     from sqlalchemy import text
 
