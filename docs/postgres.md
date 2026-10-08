@@ -58,8 +58,8 @@ Both runs are part of CI.
 
 ## Moving the data
 
-`scripts/sqlite_to_postgres.py SOURCE TARGET` copies every table the models
-know, parents before children, in one transaction. It refuses a SQLite file
+`scripts/sqlite_to_postgres.py SOURCE TARGET`, run from the repository root with
+`PYTHONPATH=.`, copies every table the models know, parents before children, in one transaction. It refuses a SQLite file
 that is behind the code and a target that already holds rows. Rows that point
 at something no longer there are left out and counted; the tables the code no
 longer knows (duels, bounties, seasons and the rest) stay in the SQLite file.
@@ -78,7 +78,8 @@ admin purge had removed.
 2. Deploy this code and let the bot start once on SQLite as usual, so the file
    is in today's shape. Stop the bot.
 3. Copy `botdata.db` aside. It is the way back and is not touched again.
-4. Rehearse: `python scripts/sqlite_to_postgres.py botdata.db "$TARGET"`.
+4. Rehearse:
+   `PYTHONPATH=. venv/bin/python scripts/sqlite_to_postgres.py botdata.db "$TARGET"`.
 5. Keep it: the same line with `--apply`.
 6. Put `DATABASE_URL` in `.env` and start the bot.
 
