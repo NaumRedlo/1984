@@ -210,6 +210,39 @@ read automatically. Everything else has a default — see
 [config/settings.py](config/settings.py), which documents each one where it is
 defined.
 
+### lava.top preparation
+
+`services/lava_top.py` provides an opt-in API adapter for subscription checkout,
+invoice and subscription lookup, cancellation, and authenticated webhook parsing.
+It follows the [lava.top API](https://developers.lava.top/en) and
+[OpenAPI schema](https://gate.lava.top/docs/documentation.yaml).
+It is not yet registered with the HTTP server and does not grant paid access.
+
+`LavaConfig.from_env()` reads `LAVA_TOP_ENABLED` (false by default),
+`LAVA_TOP_API_KEY` (the outgoing key from lava.top), and
+`LAVA_TOP_WEBHOOK_KEY` (a separate secret generated on our server, at most
+80 ASCII characters). Configure the latter as the webhook's `X-Api-Key`.
+Both secrets belong on the server, never in Dossier or a browser bundle.
+Enabling the flag alone does not expose payment routes.
+
+Before wiring the adapter into the application:
+
+- Map server-owned tariff IDs to `SubscriptionOffer` values from the creator
+  dashboard. Do not accept arbitrary offer IDs or amounts from the client.
+- Resolve the signed-in Dossier account to `Player.id`, and persist ownership
+  of each checkout before granting access. Buyer email is not account identity.
+- Persist events using `WebhookEvent.deduplication_key` under a unique constraint;
+  reconcile provider state before applying access changes. Delivery may be out of
+  order. Cancellation keeps the paid-through date; it is not an immediate refund.
+- Refund and chargeback payloads do not provide an invoice ID in the documented
+  examples. Reconcile these explicitly; do not revoke access by email alone.
+- Acknowledge authenticated unknown events with 2xx. Store known events durably
+  before acknowledging them. Returning to a success URL never grants access.
+- Do not blindly retry checkout creation after a timeout: the provider may have
+  created the invoice. The adapter intentionally does not retry mutations.
+
+The adapter tests use a local fake provider and make no real payment requests.
+
 ### Tests
 
 ```bash
