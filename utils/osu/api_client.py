@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 from functools import wraps
 from urllib.parse import quote
+from collections import deque
 from collections.abc import Mapping
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
@@ -124,6 +125,7 @@ class OsuApiClient:
 
     DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
     RATE_LIMIT_DELAY = 0.2
+    RATE_WINDOW = 60.0
 
     def __init__(self):
         self.token: Optional[str] = None
@@ -131,6 +133,8 @@ class OsuApiClient:
         self.session: Optional[aiohttp.ClientSession] = None
         self._last_request_time: float = 0
         self._request_lock = asyncio.Lock()
+        self._closed_until: Dict[Optional[str], float] = {}
+        self._sent: deque = deque()
         self._requests = SingleFlight()
 
     async def initialize(self):
@@ -167,13 +171,26 @@ class OsuApiClient:
             self.token_expiry = now + timedelta(seconds=expires_in)
             logger.info(f"Token acquired successfully. Expires at: {self.token_expiry}")
 
-    async def _rate_limit(self):
+    def _now(self) -> float:
+        return asyncio.get_running_loop().time()
+
+    def _close(self, identity: Optional[str], seconds: float) -> None:
+        self._closed_until[identity] = max(self._closed_until.get(identity, 0.0), self._now() + seconds)
+
+    async def _rate_limit(self, identity: Optional[str] = None):
+        closed = self._closed_until.get(identity, 0.0) - self._now()
+        if closed > 0:
+            await asyncio.sleep(closed)
+        else:
+            self._closed_until.pop(identity, None)
         async with self._request_lock:
-            now = asyncio.get_running_loop().time()
-            elapsed = now - self._last_request_time
+            elapsed = self._now() - self._last_request_time
             if elapsed < self.RATE_LIMIT_DELAY:
                 await asyncio.sleep(self.RATE_LIMIT_DELAY - elapsed)
-            self._last_request_time = asyncio.get_running_loop().time()
+            self._last_request_time = self._now()
+            self._sent.append(self._last_request_time)
+            while self._sent[0] < self._last_request_time - self.RATE_WINDOW:
+                self._sent.popleft()
 
     async def _make_request(
         self, method: str, endpoint: str, params: Optional[QueryParams] = None, json: Optional[Dict] = None,
@@ -206,7 +223,7 @@ class OsuApiClient:
         using_oauth = bearer_token is not None
         if not using_oauth:
             await self._ensure_token()
-        await self._rate_limit()
+        await self._rate_limit(bearer_token)
 
         url = f"{self.BASE_URL}/{endpoint}"
         headers = {
@@ -225,8 +242,13 @@ class OsuApiClient:
 
                 if resp.status == 429:
                     retry_after = min(float(resp.headers.get("Retry-After", "60")), 60)
-                    logger.warning(f"Rate limited. Waiting {retry_after}s before retry...")
-                    await asyncio.sleep(retry_after)
+                    self._close(bearer_token, retry_after)
+                    logger.warning(
+                        f"Rate limited on {endpoint} with {'a user token' if using_oauth else 'the app token'}: "
+                        f"closed for {retry_after:.0f}s, limit {resp.headers.get('X-RateLimit-Limit', '?')}, "
+                        f"remaining {resp.headers.get('X-RateLimit-Remaining', '?')}, "
+                        f"{len(self._sent)} requests sent in the last {self.RATE_WINDOW:.0f}s"
+                    )
                     raise aiohttp.ClientError(f"Rate limited, retrying after {retry_after}s")
 
                 if resp.status == 401:
