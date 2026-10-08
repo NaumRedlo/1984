@@ -100,3 +100,64 @@ async def test_the_rating_with_mods_is_asked_of_ppy_not_of_rosu():
         )
     assert data["star_rating"] == 10.58
     assert client.asked == [(129891, [{"acronym": "HD"}, {"acronym": "DT"}], 7.42)]
+
+
+class _Best:
+    def __init__(self, ids=(), fails=False):
+        self.ids, self.fails, self.asked = list(ids), fails, []
+
+    async def effective_sr(self, beatmap_id, mods, nominal):
+        return nominal
+
+    async def get_user_best_scores(self, user_id, limit=5, mode="osu", oauth_token=None):
+        self.asked.append((user_id, limit, mode))
+        if self.fails:
+            raise RuntimeError("osu! is away")
+        return [{"id": found} for found in self.ids]
+
+
+async def _built(client, **score):
+    mode = score.pop("card_mode", "recent")
+    with patch.object(recent_render, "calculate_pp", _fake_calculate_pp):
+        return await recent_render.build_recent_card_data(
+            _raw_score(**score), username="kazaki1865", player_id=999, client=client, card_mode=mode,
+        )
+
+
+async def test_the_place_is_where_the_score_stands_among_the_players_best():
+    client = _Best(ids=[901, 902, 555, 903])
+    data = await _built(client)
+    assert data["top_place"] == 3
+    assert client.asked == [(999, 100, "osu")]
+
+
+async def test_a_score_that_is_not_among_the_best_has_no_place():
+    assert (await _built(_Best(ids=[901, 902])))["top_place"] is None
+    assert (await _built(_Best(fails=True)))["top_place"] is None
+    assert (await _built(None))["top_place"] is None
+
+
+async def test_a_failed_or_unweighted_score_is_not_looked_up_at_all():
+    for score in ({"passed": False}, {"pp": None}, {"pp": 0}, {"id": None}):
+        client = _Best(ids=[555])
+        data = await _built(client, **score)
+        assert data["top_place"] is None and client.asked == []
+
+
+async def test_a_top_play_card_already_knows_its_place_and_does_not_ask_again():
+    client = _Best(ids=[555])
+    data = await _built(client, card_mode="top")
+    assert data["top_place"] is None and client.asked == []
+
+
+async def test_the_best_scores_are_asked_for_in_the_mode_that_was_played():
+    client = _Best(ids=[555])
+    data = await _built(client, ruleset_id=3)
+    assert client.asked == [(999, 100, "mania")] and data["top_place"] == 1
+
+
+async def test_the_score_and_the_client_come_with_the_card():
+    stable = await _built(None, legacy_total_score=1087654321, total_score=987654)
+    assert stable["total_score"] == 1087654321 and stable["score_client"] == "stable"
+    lazer = await _built(None, total_score=987654, build_id=8123)
+    assert lazer["total_score"] == 987654 and lazer["score_client"] == "lazer"

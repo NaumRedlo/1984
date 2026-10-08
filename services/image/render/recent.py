@@ -133,6 +133,7 @@ _RECENT_STRINGS = {
         "no_data": "NO DATA", "failed": "FAILED",
         "great": "GREAT", "good": "GOOD", "fruits": "FRUITS", "drops": "DROPS",
         "droplets": "DROPLETS", "max": "MAX", "KEYS": "KEYS",
+        "top_place": "TOP #{n}",
     },
     "ru": {
         "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ", "header_top": "ЛУЧШИЙ РЕЗУЛЬТАТ #{n}",
@@ -143,6 +144,7 @@ _RECENT_STRINGS = {
         "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
         "great": "GREAT", "good": "GOOD", "fruits": "ФРУКТЫ", "drops": "КАПЛИ",
         "droplets": "КАПЕЛЬКИ", "max": "MAX", "KEYS": "КЛАВИШИ",
+        "top_place": "ТОП #{n}",
     },
 }
 
@@ -349,7 +351,30 @@ class RecentCardMixin:
             spw = self._text_size(draw, slabel, f_pill)[0] + 18
             self._aa_rounded_fill(img, (cx, int(chip_cy - 13), cx + spw, int(chip_cy + 13)), radius=13, fill=sc)
             self._text_mid(ImageDraw.Draw(img), cx + spw / 2, chip_cy, slabel, f_pill, sink, align="center")
+            cx += spw + 22
         draw = ImageDraw.Draw(img)
+
+        total_score = int(data.get("total_score") or 0)
+        if total_score > 0:
+            shown = f"{total_score:,}".replace(",", " ")
+            pad_x, pad_y, soft = 20, 9, 14
+            fits = next((f for f in (f_val, f_val2, f_chip) if self._text_size(draw, shown, f)[0] <= mid_right - cx - 2 * pad_x), None)
+            if fits is not None:
+                score_w = self._text_size(draw, shown, fits)[0]
+                cap_top, cap_bottom = draw.textbbox((0, 0), "H", font=fits)[1::2]
+                score_cx, half_h = (cx + mid_right) / 2, (cap_bottom - cap_top) / 2
+                box = (int(score_cx - score_w / 2 - pad_x), int(chip_cy - half_h - pad_y),
+                       int(score_cx + score_w / 2 + pad_x), int(chip_cy + half_h + pad_y))
+                reach = soft * 3
+                shade = Image.new("RGBA", (box[2] - box[0] + 2 * reach, box[3] - box[1] + 2 * reach), (0, 0, 0, 0))
+                ImageDraw.Draw(shade).rounded_rectangle((reach, reach, shade.width - reach, shade.height - reach),
+                                                        radius=(box[3] - box[1]) // 2, fill=(0, 0, 0, 105))
+                shade = shade.filter(ImageFilter.GaussianBlur(soft))
+                keep = (max(box[0] - reach, M), max(box[1] - reach, hero_y), min(box[2] + reach, M + hero_w), min(box[3] + reach, hero_y + hero_h))
+                shade = shade.crop((keep[0] - (box[0] - reach), keep[1] - (box[1] - reach), keep[2] - (box[0] - reach), keep[3] - (box[1] - reach)))
+                img.paste(shade, (keep[0], keep[1]), shade)
+                draw = ImageDraw.Draw(img)
+                self._text_mid(draw, score_cx, chip_cy, shown, fits, TEXT_PRIMARY, align="center")
 
         mods = data.get("mods", "")
         mod_list = self._normalize_mods(mods)
@@ -504,9 +529,18 @@ class RecentCardMixin:
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)
         self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, RECENT_ACCENT)
+        top_place = int(data.get("top_place") or 0)
+        if top_place > 0:
+            place_txt = S["top_place"].format(n=top_place)
+            place_w = self._text_size(draw, place_txt, f_pill)[0] + 18
+            place_right, place_cy = ply_x + ply_w - 14, mid_y + 24
+            self._aa_rounded_fill(img, (place_right - place_w, place_cy - 12, place_right, place_cy + 12), radius=12, fill=RECENT_ACCENT)
+            self._text_mid(ImageDraw.Draw(img), place_right - place_w / 2, place_cy, place_txt, f_pill, (255, 255, 255), align="center")
+            draw = ImageDraw.Draw(img)
+        played_in = data.get("score_client") if data.get("score_client") in ("lazer", "stable") else None
         pav = 88
         pcx = ply_x + ply_w // 2
-        pav_x, pav_y = pcx - pav // 2, mid_y + 58
+        pav_x, pav_y = pcx - pav // 2, mid_y + (50 if played_in else 58)
         if player_avatar:
             circle = self._circle_crop(player_avatar, pav)
             img.paste(circle, (pav_x, pav_y), circle)
@@ -520,6 +554,8 @@ class RecentCardMixin:
         if uname != username:
             uname += ".."
         self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE)
+        if played_in:
+            self._text_center(draw, pcx, pav_y + pav + 60, played_in, f_lbl, TEXT_SECONDARY)
 
         return self._save(img)
 
@@ -735,6 +771,20 @@ def _detect_client(score: dict) -> str:
         return "stable"
     return "lazer"
 
+async def _top_place(client, raw_score: dict, player_id: int, ruleset: int) -> Optional[int]:
+    score_id = raw_score.get("id")
+    if client is None or not score_id or not raw_score.get("passed", True) or not (raw_score.get("pp") or 0) > 0:
+        return None
+    try:
+        best = await client.get_user_best_scores(player_id, limit=100, mode=rulesets.RULESETS.get(ruleset, "osu"))
+    except Exception:
+        logger.debug("build_recent_card_data: best scores not read", exc_info=True)
+        return None
+    for place, found in enumerate(best, 1):
+        if found.get("id") == score_id:
+            return place
+    return None
+
 _RATE_MODS = {"DT", "NC", "HT", "DC"}
 
 def _hit_counts(ruleset: int, stats: dict) -> list:
@@ -919,6 +969,7 @@ async def build_recent_card_data(
 
         "total_score": _pick_score_value(raw_score),
         "score_client": _detect_client(raw_score),
+        "top_place": None if card_mode == "top" else await _top_place(client, raw_score, player_id, ruleset),
 
         "mapper_name": beatmapset.get("creator", "Unknown"),
         "mapper_id": beatmapset.get("user_id", 0),
