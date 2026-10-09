@@ -102,7 +102,8 @@ def routes(guard, who, catalogue=None, provider=None):
             return web.json_response({"error": "plan and a valid email are required"}, status=400)
         try:
             prices = await catalogue.prices()
-        except LavaError:
+        except LavaError as error:
+            log.warning("lava.top checkout for plan %s stopped at the catalogue: %s", plan, error)
             return web.json_response({"error": "billing catalogue unavailable"}, status=503, headers={"Retry-After": "10", **NO_STORE})
         price = next((price for price in prices if price.key == plan), None)
         if price is None:
