@@ -74,8 +74,16 @@ async def author_links(session, names):
     return result
 
 
+CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def code_of(publication_id: str) -> str:
+    number = int(publication_id[:10], 16)
+    return "".join(CODE_LETTERS[(number >> shift) & 31] for shift in range(35, -1, -5))
+
+
 def body(row, owner):
-    return {"id": row.id, "kind": row.kind, "local_id": row.local_id, "revision": row.revision, "name": row.name, "content": row.content, "authors": row.authors, "owner_id": row.owner_id, "mine": row.owner_id == owner, "updated_at": row.updated_at.isoformat()}
+    return {"id": row.id, "code": code_of(row.id), "kind": row.kind, "local_id": row.local_id, "revision": row.revision, "name": row.name, "content": row.content, "authors": row.authors, "owner_id": row.owner_id, "mine": row.owner_id == owner, "updated_at": row.updated_at.isoformat()}
 
 
 def routes(guard, who):

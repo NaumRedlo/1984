@@ -96,3 +96,12 @@ async def test_collections_are_separate_editable_and_require_sign_in(client):
 def test_invalid_collections_are_rejected(content):
     with pytest.raises(ValueError):
         publications.clean("collection", content)
+
+
+def test_a_publication_has_a_short_code_made_from_its_server_id():
+    from services.render_farm.publications import CODE_LETTERS, code_of
+
+    first, second = code_of("0123456789abcdef0123456789abcdef"), code_of("fedcba98765432100123456789abcdef")
+    assert len(first) == 8 and first != second and first == code_of("0123456789abcdef0123456789abcdef")
+    assert set(first + second) <= set(CODE_LETTERS) and not set("01IO") & set(CODE_LETTERS)
+    assert code_of("0000000000" + "f" * 22) == "AAAAAAAA" and code_of("ffffffffff" + "0" * 22) == "99999999"
