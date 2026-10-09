@@ -22,7 +22,9 @@ async def api(monkeypatch):
 
     async def handler(request):
         body = await request.json() if request.can_read_body else None
-        calls.append((request.method, request.path, dict(request.query), body, request.headers.get("X-Api-Key")))
+        calls.append((request.method, request.path, request.query.copy(), body, request.headers.get("X-Api-Key")))
+        if "pages" in reply:
+            return web.json_response(reply["pages"].pop(0))
         if reply["status"] == 204:
             return web.Response(status=204)
         return web.json_response(reply["body"], status=reply["status"], headers=reply.get("headers"))
@@ -108,13 +110,20 @@ async def test_invalid_return_urls_fail_before_request(api, url):
     assert calls == []
 
 
-def test_configuration_requires_separate_keys_and_hides_them():
+def test_configuration_requires_api_key_and_distinct_webhook_key_and_hides_them():
     with pytest.raises(ValueError):
         lava.LavaConfig.from_env({"LAVA_TOP_ENABLED": "true"})
     with pytest.raises(ValueError):
         lava.LavaConfig(True, "same", "same")
     assert CONFIG.api_key not in repr(CONFIG)
     assert CONFIG.webhook_key not in repr(CONFIG)
+
+
+def test_read_only_configuration_cannot_accept_webhooks():
+    config = lava.LavaConfig.from_env({"LAVA_TOP_ENABLED": "true", "LAVA_TOP_API_KEY": "test-key"})
+    assert config.enabled
+    with pytest.raises(PermissionError):
+        lava.webhook_event(b"{}", "test-key", config)
 
 
 def payment(kind="payment.success", **extra):
@@ -177,3 +186,92 @@ def test_oversized_webhook_is_rejected():
 def test_subscription_offer_rejects_one_time_or_unknown_terms(period, currency):
     with pytest.raises(ValueError):
         lava.SubscriptionOffer(OFFER, currency, period)
+
+
+def product(product_id=INVOICE, offer_id=OFFER, **extra):
+    return {"id": product_id, "type": "SUBSCRIPTION", "title": "Dossier", "offers": [{"id": offer_id, "name": "Plus", "prices": [
+        {"amount": 199.99, "currency": "RUB", "periodicity": "MONTHLY"},
+        {"amount": 19, "currency": "EUR", "periodicity": "PERIOD_YEAR"},
+    ]}], **extra}
+
+
+def product_page(products, next_page=None):
+    return {"items": [{"type": "PRODUCT", "data": p} for p in products], "nextPage": next_page}
+
+
+async def test_all_product_pages_keep_long_periods_and_hidden_products(api):
+    client, calls, reply = api
+    reply["pages"] = [product_page([product()], lava.API_URL + "/api/v2/products?beforeCreatedAt=2024-01-01T00%3A00%3A00Z"), product_page([product(RENEWAL)])]
+    assert len(await client.products()) == 2
+    assert len(calls) == 2
+    assert all(call[2]["showAllSubscriptionPeriods"] == "true" and call[2]["feedVisibility"] == "ALL" for call in calls)
+    assert calls[1][2]["beforeCreatedAt"] == "2024-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize("suffix", ["https://other.example/api/v2/products?beforeCreatedAt=2024-01-01T00:00:00Z", "/api/v2/products", "http://gate.lava.top/api/v2/products"])
+async def test_untrusted_pagination_link_is_never_requested(api, suffix):
+    client, calls, reply = api
+    reply["body"] = product_page([], suffix)
+    with pytest.raises(lava.LavaError, match="cursor"):
+        await client.products()
+    assert len(calls) == 1
+
+
+async def test_repeated_product_cursor_is_rejected(api):
+    client, calls, reply = api
+    reply["body"] = product_page([], lava.API_URL + "/api/v2/products?beforeCreatedAt=2024-01-01T00:00:00Z")
+    with pytest.raises(lava.LavaError, match="cursor"):
+        await client.products()
+    assert len(calls) == 2
+
+
+async def test_subscription_snapshot_includes_unsuccessful_and_all_pages(api):
+    client, calls, reply = api
+    reply["pages"] = [
+        {"items": [{"id": INVOICE}], "page": 1, "pages": 2, "total": 2},
+        {"items": [{"id": RENEWAL}], "page": 2, "pages": 2, "total": 2},
+    ]
+    assert [s["id"] for s in await client.subscriptions()] == [INVOICE, RENEWAL]
+    assert calls[0][2].getall("invoiceStatuses") == ["NEW", "IN_PROGRESS", "COMPLETED", "FAILED"]
+    assert calls[1][2]["page"] == "2"
+
+
+@pytest.mark.parametrize("page", [
+    {"items": [], "page": 1, "pages": 2, "total": 1},
+    {"items": [], "page": 1, "pages": 1, "total": 1},
+    {"items": [], "page": 2, "pages": 2, "total": 0},
+    {"items": [], "page": 1, "pages": 201, "total": 0},
+])
+async def test_incomplete_subscription_snapshot_is_not_returned(api, page):
+    client, _, reply = api
+    reply["body"] = page
+    with pytest.raises(lava.LavaError):
+        await client.subscriptions()
+
+
+async def test_empty_account(api):
+    client, _, reply = api
+    reply["pages"] = [product_page([]), {"items": [], "page": 1, "pages": 0, "total": 0}]
+    assert await client.products() == []
+    assert await client.subscriptions() == []
+
+
+def test_catalogue_prices_preserve_decimal_and_filter_selected_products():
+    rows = lava.catalogue_prices([product(), product(RENEWAL)], frozenset({INVOICE}))
+    assert [r.amount for r in rows] == ["199.99", "19"]
+    assert rows[1].offer().periodicity == "PERIOD_YEAR"
+    assert rows[0].key != rows[1].key
+    assert lava.catalogue_prices([product()], frozenset()) == []
+
+
+def test_catalogue_ignores_non_subscription_and_unpriced_offers():
+    assert lava.catalogue_prices([product(type="COURSE")]) == []
+    assert lava.catalogue_prices([product(offers=None)]) == []
+
+
+@pytest.mark.parametrize("amount", [-1, float("nan"), float("inf"), True])
+def test_invalid_catalogue_prices_fail_closed(amount):
+    item = product()
+    item["offers"][0]["prices"][0]["amount"] = amount
+    with pytest.raises(lava.LavaError):
+        lava.catalogue_prices([item])

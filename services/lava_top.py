@@ -4,8 +4,9 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import aiohttp
@@ -14,6 +15,7 @@ import aiohttp
 API_URL = "https://gate.lava.top"
 MAX_BODY = 256 * 1024
 PERIODS = {"MONTHLY", "PERIOD_90_DAYS", "PERIOD_180_DAYS", "PERIOD_YEAR"}
+MAX_PAGES = 200
 PAYMENTS = {
     "payment.success", "payment.failed",
     "subscription.recurring.payment.success", "subscription.recurring.payment.failed",
@@ -36,10 +38,12 @@ class LavaConfig:
 
     def __post_init__(self):
         if self.enabled:
-            if not self.api_key or not self.webhook_key or self.api_key == self.webhook_key:
-                raise ValueError("Two distinct lava.top keys are required")
+            if not self.api_key:
+                raise ValueError("lava.top API key is required")
+            if self.api_key == self.webhook_key:
+                raise ValueError("lava.top API and webhook keys must be distinct")
             for key in (self.api_key, self.webhook_key):
-                if not key.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in key):
+                if key and (not key.isascii() or any(ord(c) < 33 or ord(c) > 126 for c in key)):
                     raise ValueError("Invalid lava.top key")
             if len(self.webhook_key) > 80:
                 raise ValueError("lava.top webhook key exceeds 80 characters")
@@ -92,6 +96,56 @@ class SubscriptionOffer:
 class Checkout:
     invoice_id: str
     payment_url: str | None
+
+
+@dataclass(frozen=True)
+class CataloguePrice:
+    product_id: str
+    offer_id: str
+    title: str
+    name: str
+    description: str
+    currency: str
+    periodicity: str
+    amount: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.offer_id}:{self.currency}:{self.periodicity}"
+
+    def offer(self) -> SubscriptionOffer:
+        return SubscriptionOffer(self.offer_id, self.currency, self.periodicity)
+
+
+def catalogue_prices(products: list[dict], product_ids: frozenset[str] | None = None) -> list[CataloguePrice]:
+    prices = {}
+    try:
+        for product in products:
+            if product.get("type") != "SUBSCRIPTION":
+                continue
+            product_id = identifier(product.get("id"))
+            if product_ids is not None and product_id not in product_ids:
+                continue
+            for offer in product.get("offers") or []:
+                offer_id = identifier(offer.get("id"))
+                for price in offer.get("prices") or []:
+                    period = price.get("periodicity")
+                    currency = price.get("currency")
+                    if period not in PERIODS or currency not in {"RUB", "EUR", "USD"} or price.get("amount") is None:
+                        continue
+                    amount = Decimal(str(price["amount"]))
+                    if not amount.is_finite() or amount < 0:
+                        raise ValueError("Invalid price")
+                    title, name, description = product.get("title") or "", offer.get("name") or "", offer.get("description") or ""
+                    if not all(isinstance(text, str) for text in (title, name, description)):
+                        raise ValueError("Invalid catalogue text")
+                    row = CataloguePrice(product_id, offer_id, title, name, description, currency, period, format(amount, "f"))
+                    if row.key in prices and prices[row.key] != row:
+                        raise ValueError("Conflicting prices")
+                    prices[row.key] = row
+    except (ValueError, InvalidOperation, TypeError, AttributeError):
+        raise LavaError("Invalid lava.top catalogue") from None
+    return list(prices.values())
 
 
 class LavaClient:
@@ -153,6 +207,72 @@ class LavaClient:
     async def subscription(self, subscription_id: str) -> dict:
         return await self._request("GET", f"/api/v1/subscriptions/{identifier(subscription_id)}")
 
+    async def products(self) -> list[dict]:
+        params = {"contentCategories": "PRODUCT", "productTypes": "SUBSCRIPTION", "showAllSubscriptionPeriods": "true", "feedVisibility": "ALL"}
+        products = {}
+        cursors = set()
+        for _ in range(MAX_PAGES):
+            page = await self._request("GET", "/api/v2/products", params=params)
+            items = page.get("items")
+            if not isinstance(items, list):
+                raise LavaError("Invalid lava.top product page")
+            for item in items:
+                if not isinstance(item, dict) or item.get("type") != "PRODUCT" or not isinstance(item.get("data"), dict):
+                    raise LavaError("Invalid lava.top product")
+                product = item["data"]
+                try:
+                    product_id = identifier(product.get("id"))
+                except ValueError:
+                    raise LavaError("Invalid lava.top product identifier") from None
+                if product_id in products and products[product_id] != product:
+                    raise LavaError("lava.top catalogue changed during pagination; try again")
+                products[product_id] = product
+            link = page.get("nextPage")
+            if link is None:
+                return list(products.values())
+            try:
+                if not isinstance(link, str):
+                    raise ValueError("Invalid cursor")
+                parsed, origin = urlsplit(link), urlsplit(API_URL)
+                if (parsed.scheme, parsed.netloc, parsed.path) != (origin.scheme, origin.netloc, "/api/v2/products") or parsed.fragment or parsed.username:
+                    raise ValueError("Invalid cursor origin")
+                values = parse_qs(parsed.query).get("beforeCreatedAt", [])
+                if len(values) != 1 or values[0] in cursors:
+                    raise ValueError("Repeated or missing cursor")
+                timestamp(values[0])
+                params["beforeCreatedAt"] = values[0]
+                cursors.add(values[0])
+            except (ValueError, TypeError):
+                raise LavaError("Invalid lava.top catalogue cursor") from None
+        raise LavaError("lava.top catalogue exceeds pagination limit")
+
+    async def subscriptions(self) -> list[dict]:
+        rows = {}
+        for number in range(1, MAX_PAGES + 1):
+            params = [("page", str(number)), ("size", "50")]
+            params.extend(("invoiceStatuses", status) for status in ("NEW", "IN_PROGRESS", "COMPLETED", "FAILED"))
+            page = await self._request("GET", "/api/v1/subscriptions", params=params)
+            items, pages = page.get("items"), page.get("pages")
+            if not isinstance(items, list) or type(pages) is not int or pages < 0 or type(page.get("page")) is not int or page["page"] != number:
+                raise LavaError("Invalid lava.top subscription page")
+            if pages > MAX_PAGES or (pages == 0 and items) or (number > pages and number > 1):
+                raise LavaError("Invalid lava.top subscription pagination")
+            if number < pages and not items:
+                raise LavaError("Incomplete lava.top subscription page")
+            for row in items:
+                try:
+                    key = identifier(row.get("id"))
+                except (ValueError, AttributeError):
+                    raise LavaError("Invalid lava.top subscription identifier") from None
+                if key in rows:
+                    raise LavaError("lava.top subscriptions changed during pagination; try again")
+                rows[key] = row
+            if number >= pages:
+                if type(page.get("total")) is not int or page["total"] != len(rows):
+                    raise LavaError("Incomplete lava.top subscription snapshot")
+                return list(rows.values())
+        raise LavaError("lava.top subscriptions exceed pagination limit")
+
     async def cancel_subscription(self, parent_invoice_id: str, email: str) -> None:
         await self._request("DELETE", "/api/v1/subscriptions", params={
             "contractId": identifier(parent_invoice_id), "email": email_address(email),
@@ -180,7 +300,7 @@ def timestamp(value) -> datetime:
 
 
 def webhook_event(body: bytes, supplied_key: str | None, config: LavaConfig) -> WebhookEvent | None:
-    if not config.enabled or not supplied_key or not hmac.compare_digest(
+    if not config.enabled or not config.webhook_key or not supplied_key or not hmac.compare_digest(
         supplied_key.encode("utf-8"), config.webhook_key.encode("utf-8"),
     ):
         raise PermissionError("Invalid lava.top webhook credentials")

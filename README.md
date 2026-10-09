@@ -210,25 +210,42 @@ read automatically. Everything else has a default — see
 [config/settings.py](config/settings.py), which documents each one where it is
 defined.
 
-### lava.top preparation
+### lava.top integration
 
 `services/lava_top.py` provides an opt-in API adapter for subscription checkout,
-invoice and subscription lookup, cancellation, and authenticated webhook parsing.
+invoice and subscription lookup, cancellation, authenticated webhook parsing,
+and complete paginated reads of products and subscriptions.
 It follows the [lava.top API](https://developers.lava.top/en) and
 [OpenAPI schema](https://gate.lava.top/docs/documentation.yaml).
-It is not yet registered with the HTTP server and does not grant paid access.
+The authenticated `GET /render/billing/plans` endpoint returns selected tariffs
+from lava.top, cached for 60 seconds. Payment creation and webhook routes are
+not yet registered; this integration does not grant paid access.
 
 `LavaConfig.from_env()` reads `LAVA_TOP_ENABLED` (false by default),
 `LAVA_TOP_API_KEY` (the outgoing key from lava.top), and
 `LAVA_TOP_WEBHOOK_KEY` (a separate secret generated on our server, at most
 80 ASCII characters). Configure the latter as the webhook's `X-Api-Key`.
+The webhook key may be omitted while only reading the catalogue; incoming
+webhooks are rejected until it is configured.
 Both secrets belong on the server, never in Dossier or a browser bundle.
-Enabling the flag alone does not expose payment routes.
+`LAVA_TOP_PRODUCT_IDS` selects the subscription product UUIDs that belong to
+Dossier, separated by commas. No selection means the catalogue stays unavailable.
+Names, prices, currencies, and billing periods are read from lava.top, including
+hidden products and periods longer than a month. A failed refresh returns 503
+rather than serving old prices. Subscription lists are never exposed to clients.
+
+To check the account before enabling billing, run `python -m scripts.lava_check`
+from the server repository. It reads `LAVA_TOP_API_KEY` from the server environment
+or `.env`, or prompts for it without echoing. It performs GET requests only and
+prints the available tariffs with product IDs and subscription counts, not buyer
+emails or credentials. Compare the count with the creator dashboard: the API
+describes the subscription listing as scoped to the supplied API key, so do not
+assume that historical purchases through other channels are included.
 
 Before wiring the adapter into the application:
 
-- Map server-owned tariff IDs to `SubscriptionOffer` values from the creator
-  dashboard. Do not accept arbitrary offer IDs or amounts from the client.
+- Resolve the selected catalogue price to a `SubscriptionOffer` on the server
+  when adding checkout. Do not accept arbitrary offer IDs or amounts from clients.
 - Resolve the signed-in Dossier account to `Player.id`, and persist ownership
   of each checkout before granting access. Buyer email is not account identity.
 - Persist events using `WebhookEvent.deduplication_key` under a unique constraint;
