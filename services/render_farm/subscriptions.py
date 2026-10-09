@@ -14,7 +14,7 @@ from services.lava_top import ADJUSTMENTS, LavaClient, LavaConfig, LavaError, id
 
 log = logging.getLogger(__name__)
 
-UNSURE_FOR = timedelta(minutes=15)
+UNSURE_FOR = timedelta(minutes=2)
 PENDING_FOR = timedelta(minutes=30)
 POLL_EVERY = timedelta(seconds=4)
 WATCH_EVERY = timedelta(minutes=1)
