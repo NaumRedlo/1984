@@ -337,6 +337,7 @@ class OsuApiClient:
             "total_hits": stats.get("total_hits", 0),
             "total_score": stats.get("total_score", 0),
             "is_supporter": data.get("is_supporter", False),
+            "has_supported": data.get("has_supported", False),
             "last_visit": data.get("last_visit"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": (data.get("cover") or {}).get("url"),
@@ -380,6 +381,7 @@ class OsuApiClient:
             "last_visit": data.get("last_visit"),
             "is_online": data.get("is_online", False),
             "is_supporter": data.get("is_supporter", False),
+            "has_supported": data.get("has_supported", False),
             "join_date": data.get("join_date"),
             "avatar_url": data.get("avatar_url"),
             "cover_url": data.get("cover", {}).get("url"),
@@ -425,7 +427,7 @@ class OsuApiClient:
         user_model.total_score = int(stats.get("total_score", 0))
         user_model.is_supporter = bool(stats.get("is_supporter", False))
 
-        if user_model.is_supporter:
+        if user_model.is_supporter or bool(stats.get("has_supported", False)):
             user_model.was_supporter = True
 
         user_model.level = int(stats.get("level") or 0)

@@ -65,3 +65,28 @@ async def test_missing_or_blank_username_never_wipes_the_stored_one(monkeypatch)
 
         await client.sync_user_stats_from_api(user)
         assert user.osu_username == "Keeper"
+
+
+async def test_a_past_supporter_purchase_counts_even_when_the_tag_has_run_out(monkeypatch):
+    client = OsuApiClient()
+
+    async def lapsed(user, mode="osu", oauth_token=None):
+        return {**_stats("Lapsed"), "is_supporter": False, "has_supported": True}
+
+    async def never(user, mode="osu", oauth_token=None):
+        return {**_stats("Never"), "is_supporter": False, "has_supported": False}
+
+    async def no_picture(*a, **kw):
+        return None
+
+    monkeypatch.setattr(client, "_download_image_bytes", no_picture)
+    monkeypatch.setattr(client, "get_user_data", lapsed)
+    once = _user("Lapsed")
+    await client.sync_user_stats_from_api(once)
+    assert once.was_supporter is True and once.is_supporter is False
+    monkeypatch.setattr(client, "get_user_data", never)
+    none = _user("Never")
+    await client.sync_user_stats_from_api(none)
+    assert not none.was_supporter
+    await client.sync_user_stats_from_api(once)
+    assert once.was_supporter is True, "having supported once is never taken back"
