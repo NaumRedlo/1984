@@ -218,8 +218,16 @@ and complete paginated reads of products and subscriptions.
 It follows the [lava.top API](https://developers.lava.top/en) and
 [OpenAPI schema](https://gate.lava.top/docs/documentation.yaml).
 The authenticated `GET /render/billing/plans` endpoint returns selected tariffs
-from lava.top, cached for 60 seconds. Payment creation and webhook routes are
-not yet registered; this integration does not grant paid access.
+from lava.top, cached for 60 seconds. The same module registers the rest of the
+billing routes, all keyed to the signed-in Dossier account's `Player`:
+`GET /render/billing/status` (the account's subscription, checked against
+lava.top at most every few seconds while a payment is pending),
+`POST /render/billing/checkout` (`{"plan", "email"}`, the plan is resolved from the
+catalogue on the server and a payment link comes back), `POST /render/billing/cancel`,
+and `POST /render/billing/webhook` (authenticated with `LAVA_TOP_WEBHOOK_KEY`, not
+with a Dossier token). State lives in `billing_subscriptions` and `billing_events`
+(`services/render_farm/subscriptions.py`). Nothing in the bot is gated by it yet:
+the status only reports `state` and `access`.
 
 `LavaConfig.from_env()` reads `LAVA_TOP_ENABLED` (false by default),
 `LAVA_TOP_API_KEY` (the outgoing key from lava.top), and
@@ -242,7 +250,9 @@ emails or credentials. Compare the count with the creator dashboard: the API
 describes the subscription listing as scoped to the supplied API key, so do not
 assume that historical purchases through other channels are included.
 
-Before wiring the adapter into the application:
+The points below are what the routes above follow. Checkout carries our own
+reference in `clientUtm.utm_content`, so a webhook for an invoice whose creation
+answer was lost can still be matched to its buyer.
 
 - Resolve the selected catalogue price to a `SubscriptionOffer` on the server
   when adding checkout. Do not accept arbitrary offer IDs or amounts from clients.

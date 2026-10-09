@@ -63,6 +63,12 @@ def identifier(value) -> str:
     return str(UUID(value))
 
 
+def reference(value: str) -> str:
+    if not isinstance(value, str) or not 1 <= len(value) <= 64 or not value.isascii() or not value.isalnum():
+        raise ValueError("Invalid checkout reference")
+    return value
+
+
 def https_url(value: str) -> str:
     if not isinstance(value, str) or len(value) > 512 or any(c.isspace() for c in value):
         raise ValueError("Invalid payment URL")
@@ -148,6 +154,19 @@ def catalogue_prices(products: list[dict], product_ids: frozenset[str] | None = 
     return list(prices.values())
 
 
+def feed_product(item) -> dict:
+    if not isinstance(item, dict):
+        raise LavaError("Invalid lava.top product")
+    if "data" in item:
+        if item.get("type") != "PRODUCT" or not isinstance(item["data"], dict):
+            raise LavaError("Invalid lava.top product")
+        return item["data"]
+    kind = item.get("type")
+    if not isinstance(kind, str) or kind in {"PRODUCT", "POST"}:
+        raise LavaError("Invalid lava.top product")
+    return item
+
+
 class LavaClient:
     def __init__(self, session: aiohttp.ClientSession, config: LavaConfig):
         self.session = session
@@ -182,12 +201,14 @@ class LavaClient:
             raise LavaError("lava.top connection failed; request outcome may be unknown") from None
 
     async def create_subscription(
-        self, offer: SubscriptionOffer, email: str, *, return_url: str | None = None,
+        self, offer: SubscriptionOffer, email: str, *, return_url: str | None = None, ref: str | None = None,
     ) -> Checkout:
         payload = {
             "offerId": offer.offer_id, "email": email_address(email),
             "currency": offer.currency, "periodicity": offer.periodicity,
         }
+        if ref is not None:
+            payload["clientUtm"] = {"utm_source": "dossier", "utm_content": reference(ref)}
         if return_url is not None:
             for name in ("successful_return_url", "failure_return_url", "cancel_return_url"):
                 payload[name] = https_url(return_url)
@@ -217,9 +238,7 @@ class LavaClient:
             if not isinstance(items, list):
                 raise LavaError("Invalid lava.top product page")
             for item in items:
-                if not isinstance(item, dict) or item.get("type") != "PRODUCT" or not isinstance(item.get("data"), dict):
-                    raise LavaError("Invalid lava.top product")
-                product = item["data"]
+                product = feed_product(item)
                 try:
                     product_id = identifier(product.get("id"))
                 except ValueError:

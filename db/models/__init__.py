@@ -20,6 +20,7 @@ from db.models.local_score import LocalScore
 from db.models.left_member import LeftMember
 from db.models.map_publication import MapPublication
 from db.models.bot_settings import BotSettings
+from db.models.billing import BillingEvent, BillingSubscription
 import db.player_sync
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication", "BotSettings"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication", "BotSettings", "BillingEvent", "BillingSubscription"]

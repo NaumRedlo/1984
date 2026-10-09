@@ -51,6 +51,22 @@ async def test_checkout_uses_v3_and_explicit_subscription_period(api):
     }
 
 
+async def test_checkout_carries_our_own_reference_so_a_lost_answer_can_be_matched_later(api):
+    client, calls, _ = api
+    await client.create_subscription(lava.SubscriptionOffer(OFFER, "RUB", "MONTHLY"), "buyer@example.org", ref="a1b2c3d4e5f60718293a4b5c6d7e8f90")
+    assert calls[0][3]["clientUtm"] == {"utm_source": "dossier", "utm_content": "a1b2c3d4e5f60718293a4b5c6d7e8f90"}
+    await client.create_subscription(lava.SubscriptionOffer(OFFER, "RUB", "MONTHLY"), "buyer@example.org")
+    assert "clientUtm" not in calls[1][3]
+
+
+@pytest.mark.parametrize("ref", ["", "has space", "ключ", "x" * 65, "a-b", 7, None.__class__])
+async def test_an_unsafe_checkout_reference_fails_before_any_request(api, ref):
+    client, calls, _ = api
+    with pytest.raises(ValueError):
+        await client.create_subscription(lava.SubscriptionOffer(OFFER, "RUB", "MONTHLY"), "buyer@example.org", ref=ref)
+    assert calls == []
+
+
 async def test_lookup_and_cancel_use_parent_contract_and_saved_email(api):
     client, calls, reply = api
     await client.invoice(INVOICE)
@@ -197,6 +213,45 @@ def product(product_id=INVOICE, offer_id=OFFER, **extra):
 
 def product_page(products, next_page=None):
     return {"items": [{"type": "PRODUCT", "data": p} for p in products], "nextPage": next_page}
+
+
+def flat_page(products, next_page=None):
+    return {"items": list(products), "nextPage": next_page}
+
+
+@pytest.mark.parametrize("page", [product_page, flat_page])
+async def test_a_product_page_may_wrap_each_product_or_list_it_directly(api, page):
+    client, calls, reply = api
+    reply["body"] = page([product(), product(RENEWAL, RENEWAL)])
+    products = await client.products()
+    assert [row["id"] for row in products] == [INVOICE, RENEWAL]
+    assert [price.key for price in lava.catalogue_prices(products)] == [
+        f"{OFFER}:RUB:MONTHLY", f"{OFFER}:EUR:PERIOD_YEAR", f"{RENEWAL}:RUB:MONTHLY", f"{RENEWAL}:EUR:PERIOD_YEAR",
+    ]
+
+
+async def test_wrapped_and_direct_products_may_share_a_page(api):
+    client, calls, reply = api
+    reply["body"] = {"items": [{"type": "PRODUCT", "data": product()}, product(RENEWAL)], "nextPage": None}
+    assert len(await client.products()) == 2
+
+
+@pytest.mark.parametrize("item", [
+    "text", None, [],
+    {"type": "POST", "data": {"id": INVOICE}},
+    {"type": "PRODUCT", "data": "text"},
+    {"type": "PRODUCT", "id": INVOICE},
+    {"type": "POST", "id": INVOICE},
+    {"id": INVOICE},
+    {"type": 7, "id": INVOICE},
+    {"type": "SUBSCRIPTION"},
+    {"type": "SUBSCRIPTION", "id": "not-a-uuid"},
+])
+async def test_a_product_page_with_an_unrecognised_item_is_rejected(api, item):
+    client, calls, reply = api
+    reply["body"] = {"items": [item], "nextPage": None}
+    with pytest.raises(lava.LavaError, match="Invalid lava.top product"):
+        await client.products()
 
 
 async def test_all_product_pages_keep_long_periods_and_hidden_products(api):
