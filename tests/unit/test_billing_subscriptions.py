@@ -207,7 +207,7 @@ async def test_a_rejected_checkout_is_a_known_failure_and_may_be_tried_again(set
 
 async def test_status_follows_the_provider_and_asks_it_no_more_than_every_few_seconds(setup):
     client, provider, factory = setup
-    assert (await (await client.get("/render/billing/status", headers=ONE)).json()) == {"subscription": None}
+    assert (await (await client.get("/render/billing/status", headers=ONE)).json()) == {"subscription": None, "badge": None}
     await pay(client)
     provider.checked.clear()
     first = (await (await client.get("/render/billing/status", headers=ONE)).json())["subscription"]
@@ -228,7 +228,7 @@ async def test_status_belongs_to_the_account_that_asks(setup):
     client, provider, factory = setup
     await pay(client)
     other = await client.get("/render/billing/status", headers={"X-Test-Owner": "2"})
-    assert await other.json() == {"subscription": None}
+    assert await other.json() == {"subscription": None, "badge": None}
     assert (await client.get("/render/billing/status")).status == 401
 
 
@@ -637,3 +637,90 @@ async def test_a_fault_of_our_own_is_answered_as_ours_and_logged(setup, caplog):
     response = await pay(client)
     assert response.status == 500 and await response.json() == {"error": "checkout failed"}
     assert "broke on our side" in caplog.text
+
+
+def served_row(at, plan=PLAN, name="Plus", days_ago=0, days=30, **fields):
+    base = dict(id=uuid.uuid4().hex, player_id=1, state="active", plan_key=plan, title="Dossier", name=name, amount="199", currency="RUB", periodicity="MONTHLY", email="a@b.c", created_at=at - timedelta(days=days_ago), paid_until=at - timedelta(days=days_ago) + timedelta(days=days), bonus_seconds=0)
+    return BillingSubscription(**{**base, **fields})
+
+
+@pytest.mark.parametrize("days,stage", [(0, 1), (89, 1), (90, 2), (364, 2), (365, 3), (729, 3), (730, 4), (5000, 4)])
+def test_the_stage_follows_the_time_of_paid_subscription(days, stage):
+    assert subscriptions.stage_of(timedelta(days=days), True) == stage
+    assert subscriptions.stage_of(timedelta(days=days), False) == 0
+
+
+def test_tenure_counts_lived_paid_time_across_breaks_and_stops_at_a_replacement():
+    at = datetime(2026, 10, 9, 12, 0)
+    year_bought_ten_days_ago = served_row(at, days_ago=10, days=365)
+    assert subscriptions.lived(year_bought_ten_days_ago, at) == timedelta(days=10), "a year bought ahead counts as it is lived"
+    ended = served_row(at, days_ago=200, days=60, state="expired")
+    assert subscriptions.lived(ended, at) == timedelta(days=60)
+    replaced = served_row(at, days_ago=100, days=90, state="replaced", cancelled_at=at - timedelta(days=80))
+    assert subscriptions.lived(replaced, at) == timedelta(days=20), "what was carried over is lived on the new subscription"
+    carried = served_row(at, days_ago=80, days=30, state="cancelled", bonus_seconds=10 * DAY)
+    assert subscriptions.lived(carried, at) == timedelta(days=40)
+    unpaid = served_row(at, days_ago=5, state="pending", paid_until=None)
+    assert subscriptions.lived(unpaid, at) == timedelta()
+    assert subscriptions.tenure([year_bought_ten_days_ago, ended, replaced, carried, unpaid], at) == timedelta(days=130)
+
+
+async def test_a_badge_tells_the_tier_the_stage_and_the_tiers_once_bought(setup):
+    client, provider, factory = setup
+    empty = await (await client.get(STATUS, headers=ONE)).json()
+    assert empty["badge"] is None
+    await subscribed(client, provider, days=20)
+    await pay(client, plan=PRO, change=True)
+    await paid_change(client, provider, factory, PRO)
+    async with factory() as session:
+        for row in (await session.execute(select(BillingSubscription))).scalars().all():
+            row.created_at = row.created_at - timedelta(days=100 if row.plan_key == PLAN else 95)
+            if row.cancelled_at is not None:
+                row.cancelled_at = row.cancelled_at - timedelta(days=95)
+        await session.commit()
+    badge = (await (await client.get(STATUS, headers=ONE)).json())["badge"]
+    assert badge["tier"] == {"offer": HIGH, "name": "Pro", "rank": 1} and badge["title"] == badge["tier"]
+    assert badge["owned"] == [{"offer": OFFER, "name": "Plus", "rank": 0}, {"offer": HIGH, "name": "Pro", "rank": 1}]
+    assert (badge["stage"], badge["show_badge"], badge["show_title"], badge["active"]) == (2, True, True, True)
+    assert 99 <= badge["served_days"] <= 101
+
+
+async def test_the_title_is_chosen_among_bought_tiers_and_both_marks_can_be_hidden(setup):
+    client, provider, factory = setup
+    wear = lambda body, headers=ONE: client.post("/render/billing/badge", json=body, headers=headers)
+    assert (await wear({"show_title": False})).status == 409, "nothing was bought yet"
+    await subscribed(client, provider)
+    await pay(client, plan=PRO, change=True)
+    await paid_change(client, provider, factory, PRO)
+    worn = await wear({"title": OFFER})
+    assert worn.status == 200 and (await worn.json())["badge"]["title"] == {"offer": OFFER, "name": "Plus", "rank": 0}
+    assert (await (await client.get(STATUS, headers=ONE)).json())["badge"]["tier"]["offer"] == HIGH, "the colour stays with the held tier"
+    assert (await wear({"title": PRODUCT})).status == 409
+    for body in ({"title": "not an id"}, {"show_badge": "yes"}, []):
+        assert (await wear(body)).status == 400
+    assert (await client.post("/render/billing/badge", json={"show_badge": False})).status == 401
+    seen = lambda: client.get("/render/billing/badges?players=1,2,77", headers={"X-Test-Owner": "2"})
+    shown = (await (await seen()).json())["badges"]
+    assert shown == {"1": {"rank": 1, "stage": 1, "title": {"offer": OFFER, "name": "Plus", "rank": 0}}}
+    assert (await wear({"show_title": False})).status == 200
+    assert (await (await seen()).json())["badges"] == {"1": {"rank": 1, "stage": 1, "title": None}}
+    assert (await wear({"show_badge": False})).status == 200
+    assert (await (await seen()).json())["badges"] == {}, "with both hidden nobody is told anything"
+    assert (await client.get("/render/billing/badges?players=x", headers=ONE)).status == 400
+    assert (await client.get("/render/billing/badges?players=1")).status == 401
+
+
+async def test_the_badge_stays_after_the_subscription_ends(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider)
+    async with factory() as session:
+        row = (await session.execute(select(BillingSubscription))).scalars().one()
+        row.created_at = row.created_at - timedelta(days=400)
+        row.paid_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=5)
+        row.state, row.checked_at = "expired", datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+    body = await (await client.get(STATUS, headers=ONE)).json()
+    assert body["subscription"]["access"] is False
+    assert (body["badge"]["stage"], body["badge"]["active"], body["badge"]["tier"]["offer"]) == (3, False, OFFER)
+    shown = (await (await client.get("/render/billing/badges?players=1", headers=ONE)).json())["badges"]
+    assert shown["1"]["stage"] == 3 and shown["1"]["rank"] == 0

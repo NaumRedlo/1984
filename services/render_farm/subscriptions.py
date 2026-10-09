@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from db.database import AsyncSessionFactory
-from db.models.billing import BillingEvent, BillingSubscription
+from db.models.billing import BillingBadge, BillingEvent, BillingSubscription
 from services.lava_top import ADJUSTMENTS, LavaClient, LavaConfig, LavaError, identifier
 
 from utils.logger import get_logger
@@ -26,6 +26,7 @@ LAPSED = ("failed", "expired")
 DAYS = {"MONTHLY": 30, "PERIOD_90_DAYS": 90, "PERIOD_180_DAYS": 180, "PERIOD_YEAR": 365}
 MOST_CARRIED = timedelta(days=1095)
 MOST_RATE = 50.0
+STAGES = (timedelta(days=90), timedelta(days=365), timedelta(days=730))
 
 
 class Refused(Exception):
@@ -114,6 +115,115 @@ def view(row, at: datetime, change: dict | None = None) -> dict:
         "payment_url": row.payment_url if state == "pending" else None,
         "change": change,
     }
+
+
+def lived(row, at: datetime) -> timedelta:
+    if row.paid_until is None:
+        return timedelta()
+    end = row.cancelled_at if row.state == "replaced" and row.cancelled_at is not None else until(row)
+    return max(min(end, at) - row.created_at, timedelta())
+
+
+def tenure(rows, at: datetime) -> timedelta:
+    return sum((lived(row, at) for row in rows), timedelta())
+
+
+def stage_of(served: timedelta, paid: bool) -> int:
+    if not paid:
+        return 0
+    return 1 + sum(1 for edge in STAGES if served >= edge)
+
+
+def offer_of(row) -> str:
+    return row.plan_key.split(":")[0]
+
+
+def tier_order(prices) -> list[str]:
+    least: dict[str, Decimal] = {}
+    for currency in ("RUB", "USD", "EUR"):
+        for price in prices:
+            cost = per_day(price.amount, price.periodicity) if price.currency == currency and price.periodicity == "MONTHLY" else None
+            if cost is not None and price.offer_id not in least:
+                least[price.offer_id] = cost
+        if least:
+            break
+    return sorted(least, key=lambda offer: (least[offer], offer))
+
+
+def badge_of(rows, choice, prices, at: datetime) -> dict | None:
+    paid = [row for row in rows if row.paid_until is not None]
+    if not paid:
+        return None
+    order = tier_order(prices)
+    owned = {}
+    for row in sorted(paid, key=lambda row: row.created_at):
+        owned[offer_of(row)] = row.name or row.title
+    latest = max(paid, key=lambda row: row.created_at)
+    current = next((row for row in rows if has_access(row, at)), latest)
+    worn = choice.title_offer if choice is not None and choice.title_offer in owned else offer_of(current)
+    served = tenure(rows, at)
+
+    def tier(offer: str) -> dict:
+        return {"offer": offer, "name": owned.get(offer, ""), "rank": order.index(offer) if offer in order else None}
+
+    return {
+        "tier": tier(offer_of(current)),
+        "title": tier(worn),
+        "owned": [tier(offer) for offer in sorted(owned, key=lambda offer: (order.index(offer) if offer in order else len(order), offer))],
+        "stage": stage_of(served, True),
+        "served_days": served.days,
+        "show_badge": True if choice is None else bool(choice.show_badge),
+        "show_title": True if choice is None else bool(choice.show_title),
+        "active": any(has_access(row, at) for row in rows),
+    }
+
+
+async def badge(player_id: int, prices) -> dict | None:
+    async with AsyncSessionFactory() as session:
+        rows = await rows_of(session, player_id)
+        choice = await session.get(BillingBadge, player_id)
+        return badge_of(rows, choice, prices, now())
+
+
+async def badges(player_ids, prices) -> dict[int, dict]:
+    wanted = sorted({int(value) for value in player_ids})[:200]
+    if not wanted:
+        return {}
+    async with AsyncSessionFactory() as session:
+        found = await session.execute(select(BillingSubscription).where(BillingSubscription.player_id.in_(wanted)).order_by(BillingSubscription.created_at.desc(), BillingSubscription.id))
+        by_player: dict[int, list] = {}
+        for row in found.scalars().all():
+            by_player.setdefault(row.player_id, []).append(row)
+        choices = {row.player_id: row for row in (await session.execute(select(BillingBadge).where(BillingBadge.player_id.in_(wanted)))).scalars().all()}
+        at = now()
+        shown = {}
+        for player_id, rows in by_player.items():
+            made = badge_of(rows, choices.get(player_id), prices, at)
+            if made is not None and (made["show_badge"] or made["show_title"]):
+                shown[player_id] = {"rank": made["tier"]["rank"] if made["show_badge"] else None, "stage": made["stage"], "title": made["title"] if made["show_title"] else None}
+        return shown
+
+
+async def wear(player_id: int, show_badge, show_title, title_offer, prices) -> dict:
+    async with AsyncSessionFactory() as session:
+        rows = await rows_of(session, player_id)
+        owned = {offer_of(row) for row in rows if row.paid_until is not None}
+        if not owned:
+            raise Refused("none")
+        if title_offer is not None and title_offer not in owned:
+            raise Refused("unowned")
+        choice = await session.get(BillingBadge, player_id)
+        if choice is None:
+            choice = BillingBadge(player_id=player_id, show_badge=True, show_title=True)
+            session.add(choice)
+        if isinstance(show_badge, bool):
+            choice.show_badge = show_badge
+        if isinstance(show_title, bool):
+            choice.show_title = show_title
+        if title_offer is not None:
+            choice.title_offer = title_offer
+        await session.commit()
+        return badge_of(rows, choice, prices, now())
 
 
 def per_day(amount, periodicity) -> Decimal | None:

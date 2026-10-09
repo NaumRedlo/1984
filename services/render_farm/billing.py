@@ -87,7 +87,47 @@ def routes(guard, who, catalogue=None, provider=None):
         player_id, denied = await account(request)
         if denied is not None:
             return denied
-        return web.json_response({"subscription": await subscriptions.status(player_id, provider)}, headers=NO_STORE)
+        shown = await subscriptions.status(player_id, provider)
+        return web.json_response({"subscription": shown, "badge": await subscriptions.badge(player_id, await listed())}, headers=NO_STORE)
+
+    async def listed():
+        try:
+            return await catalogue.prices()
+        except LavaError:
+            return ()
+
+    async def worn(request):
+        player_id, denied = await account(request)
+        if denied is not None:
+            return denied
+        try:
+            raw = await request.content.read(1025)
+            value = json.loads(raw) if 0 < len(raw) <= 1024 else None
+            show_badge, show_title, title = value.get("show_badge"), value.get("show_title"), value.get("title")
+            if any(flag is not None and not isinstance(flag, bool) for flag in (show_badge, show_title)):
+                raise ValueError("invalid switch")
+            if title is not None:
+                title = identifier(title)
+        except (ValueError, TypeError, AttributeError):
+            return web.json_response({"error": "invalid badge settings"}, status=400)
+        try:
+            shown = await subscriptions.wear(player_id, show_badge, show_title, title, await listed())
+        except subscriptions.Refused as refused:
+            return web.json_response({"error": refused.reason}, status=409, headers=NO_STORE)
+        return web.json_response({"badge": shown}, headers=NO_STORE)
+
+    async def seen(request):
+        denied = await guard(request)
+        if denied is not None:
+            return denied
+        if await who(request) is None:
+            return web.json_response({"error": "sign in required"}, status=401)
+        try:
+            wanted = [int(value) for value in request.query.get("players", "").split(",") if value.strip()][:200]
+        except ValueError:
+            return web.json_response({"error": "invalid players"}, status=400)
+        shown = await subscriptions.badges(wanted, await listed())
+        return web.json_response({"badges": {str(player): badge for player, badge in shown.items()}}, headers=NO_STORE)
 
     async def checkout(request):
         player_id, denied = await account(request)
@@ -155,4 +195,6 @@ def routes(guard, who, catalogue=None, provider=None):
         web.post("/render/billing/checkout", checkout),
         web.post("/render/billing/cancel", cancelled),
         web.post("/render/billing/webhook", webhook),
+        web.post("/render/billing/badge", worn),
+        web.get("/render/billing/badges", seen),
     ]

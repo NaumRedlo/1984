@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 
 from db.database import Base
 
@@ -28,6 +28,16 @@ class BillingSubscription(Base):
     bonus_seconds = Column(Integer, nullable=True, default=0)
     settled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class BillingBadge(Base):
+    __tablename__ = "billing_badges"
+
+    player_id = Column(Integer, ForeignKey("players.id"), primary_key=True)
+    show_badge = Column(Boolean, nullable=False, default=True)
+    show_title = Column(Boolean, nullable=False, default=True)
+    title_offer = Column(String(36), nullable=True)
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 

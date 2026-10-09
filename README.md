@@ -245,6 +245,16 @@ renews and the end of access afterwards. A cancel that lava.top does not take is
 tried again on every later status check and webhook. The columns for this are added
 by `db/migrations/add_billing_change.py` on SQLite and PostgreSQL alike.
 
+A subscriber badge comes with the status as `badge`: the held (or last held) tier,
+the title worn, every tier once bought, and a stage from 1 to 4. The stage follows
+only the time of paid subscription that was actually lived, on any tier and across
+breaks: 90, 365 and 730 days open stages 2, 3 and 4; a year bought ahead counts day
+by day, and time stops when the subscription ends. The badge is never taken away.
+`POST /render/billing/badge` (`{"show_badge", "show_title", "title"}`) hides either
+mark or picks the title among bought tiers; `GET /render/billing/badges?players=1,2`
+tells signed-in clients what other players chose to show. Choices live in
+`billing_badges`.
+
 `LavaConfig.from_env()` reads `LAVA_TOP_ENABLED` (false by default),
 `LAVA_TOP_API_KEY` (the outgoing key from lava.top), and
 `LAVA_TOP_WEBHOOK_KEY` (a separate secret generated on our server, at most
