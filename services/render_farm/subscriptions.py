@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -12,7 +11,9 @@ from db.database import AsyncSessionFactory
 from db.models.billing import BillingEvent, BillingSubscription
 from services.lava_top import ADJUSTMENTS, LavaClient, LavaConfig, LavaError, identifier
 
-log = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+log = get_logger("services.render_farm.subscriptions")
 
 UNSURE_FOR = timedelta(minutes=2)
 PENDING_FOR = timedelta(minutes=30)

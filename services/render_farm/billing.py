@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import os
 import time
 from dataclasses import asdict
@@ -13,7 +12,9 @@ from services.lava_top import MAX_BODY, LavaClient, LavaConfig, LavaError, catal
 from services.render_farm import subscriptions
 from services.render_farm.videos import player_of
 
-log = logging.getLogger(__name__)
+from utils.logger import get_logger
+
+log = get_logger("services.render_farm.billing")
 
 NO_STORE = {"Cache-Control": "no-store"}
 

@@ -338,3 +338,14 @@ def test_a_refusal_is_quoted_for_the_log_without_the_buyer_address():
     quoted = said(b'{"error":"Validation failed",\n "details":{"email":"buyer@example.org is not allowed"}}' + b"x" * 900)
     assert "buyer@example.org" not in quoted and "<email>" in quoted and "Validation failed" in quoted
     assert len(quoted) <= 300 and "\n" not in quoted
+
+
+def test_a_long_payment_link_is_still_a_payment_link():
+    from services.lava_top import https_url
+
+    link = "https://app.lava.top/checkout?token=" + "t" * 1800
+    assert https_url(link) == link
+    with pytest.raises(ValueError):
+        https_url("https://app.lava.top/" + "t" * 5000)
+    with pytest.raises(ValueError):
+        https_url("http://app.lava.top/checkout")

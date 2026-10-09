@@ -78,7 +78,7 @@ def reference(value: str) -> str:
 
 
 def https_url(value: str) -> str:
-    if not isinstance(value, str) or len(value) > 512 or any(c.isspace() for c in value):
+    if not isinstance(value, str) or len(value) > 4096 or any(c.isspace() for c in value):
         raise ValueError("Invalid payment URL")
     parsed = urlsplit(value)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
@@ -227,7 +227,9 @@ class LavaClient:
             if url is not None:
                 url = https_url(url)
         except ValueError:
-            raise LavaError("Invalid lava.top checkout response", None, "fields: " + ", ".join(sorted(str(key) for key in result))[:280]) from None
+            link = result.get("paymentUrl")
+            shape = f"paymentUrl is {type(link).__name__} of {len(link)}" if isinstance(link, str) else f"paymentUrl is {type(link).__name__}"
+            raise LavaError("Invalid lava.top checkout response", None, f"{shape}; fields: " + ", ".join(sorted(str(key) for key in result))[:240]) from None
         return Checkout(invoice_id, url)
 
     async def invoice(self, invoice_id: str) -> dict:
