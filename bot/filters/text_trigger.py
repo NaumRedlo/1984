@@ -24,6 +24,8 @@ class TextTriggerFilter(BaseFilter):
             return False
 
         parts = text.strip().split(maxsplit=1)
+        if not parts:
+            return False
         first_word = parts[0].lower()
 
         if first_word not in self.triggers:

@@ -5,6 +5,7 @@ from aiogram.types import BufferedInputFile
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.profile.targets import resolve_target, token_for
+from bot.utils.safe_edit import discard_status
 from db.database import get_db_session
 from services import tracking
 from services.command_refresh import RefreshBusy, RefreshCooldown, requests as refresh_requests
@@ -116,8 +117,8 @@ async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_
             "more": max(0, len(changes.new_scores) - ROWS_SHOWN),
         }
         buf = await card_renderer.generate_update_card_async(data)
-        await wait.delete()
         await message.answer_photo(photo=BufferedInputFile(buf.read(), filename="update.png"))
+        await discard_status(wait)
     except RefreshCooldown as exc:
         await wait.edit_text(t("common.refresh_wait", lang, seconds=exc.seconds))
     except RefreshBusy:

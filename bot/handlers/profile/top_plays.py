@@ -1,3 +1,4 @@
+import secrets
 from typing import Optional
 
 from aiogram import Router, types
@@ -30,25 +31,28 @@ logger = get_logger("handlers.top_plays")
 
 _NAV_CACHE = TTLCache(maxsize=1000, ttl=15 * 60)
 
-def _store_nav(uid: int, payload: dict) -> None:
-    _NAV_CACHE[uid] = payload
+def _store_nav(uid: int, payload: dict) -> str:
+    nav_id = secrets.token_hex(6)
+    payload["nav_id"] = nav_id
+    _NAV_CACHE[(uid, nav_id)] = payload
+    return nav_id
 
-def _get_nav(uid: int) -> Optional[dict]:
-    return _NAV_CACHE.get(uid)
+def _get_nav(uid: int, nav_id: str) -> Optional[dict]:
+    return _NAV_CACHE.get((uid, nav_id))
 
 def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
 
 def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
-                  subject_tg_id: Optional[int] = None, lang: str = "en") -> InlineKeyboardMarkup:
+                  subject_tg_id: Optional[int] = None, lang: str = "en", nav_id: str = "") -> InlineKeyboardMarkup:
     rows = []
     if total_pages > 1:
         rows.append([
-            InlineKeyboardButton(text="◀", callback_data=f"tpp|p|{uid}|{page - 1}")
+            InlineKeyboardButton(text="◀", callback_data=f"tpp|p|{uid}|{page - 1}|{nav_id}")
             if page > 0 else InlineKeyboardButton(text="◀", callback_data="tpp|x"),
             InlineKeyboardButton(text=t("tpp.kb.page", lang, page=page + 1, total=total_pages), callback_data="tpp|x"),
-            InlineKeyboardButton(text="▶", callback_data=f"tpp|p|{uid}|{page + 1}")
+            InlineKeyboardButton(text="▶", callback_data=f"tpp|p|{uid}|{page + 1}|{nav_id}")
             if page < total_pages - 1 else InlineKeyboardButton(text="▶", callback_data="tpp|x"),
         ])
     if show_back:
@@ -148,7 +152,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     payload["cur_total_pages"] = data["total_pages"]
     buf = await card_renderer.generate_top_plays_card_async(data)
     kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False),
-                       subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"))
+                       subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"), nav_id=payload["nav_id"])
     file = BufferedInputFile(buf.getvalue(), filename="top_plays.png")
     try:
         if edit:
@@ -213,11 +217,12 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|p|"))
 async def on_tpp_page(callback: types.CallbackQuery) -> None:
-    parts = callback.data.split("|", 3)
-    if len(parts) != 4:
+    parts = callback.data.split("|")
+    if len(parts) not in (4, 5):
         await callback.answer()
         return
-    _, _, uid_str, page_str = parts
+    _, _, uid_str, page_str = parts[:4]
+    nav_id = parts[4] if len(parts) == 5 else ""
     try:
         uid = int(uid_str)
         page = int(page_str)
@@ -228,7 +233,7 @@ async def on_tpp_page(callback: types.CallbackQuery) -> None:
         lang = (await get_language(callback.from_user.id)).lower()
         await callback.answer(t("tpp.not_your_plays", lang), show_alert=True)
         return
-    payload = _get_nav(uid)
+    payload = _get_nav(uid, nav_id)
     if not payload:
         lang = (await get_language(callback.from_user.id)).lower()
         await callback.answer(t("tpp.stale", lang), show_alert=True)

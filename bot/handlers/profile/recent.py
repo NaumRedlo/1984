@@ -4,6 +4,7 @@ from datetime import datetime
 from aiogram import Router, types
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
+from bot.utils.safe_edit import discard_status
 from db.database import get_db_session
 from services.image import card_renderer
 from services import recent_plays
@@ -239,7 +240,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             "rs.fallback_text", lang, sep="═" * 25,
             name=escape_html(display_name), artist=escape_html(artist), title=escape_html(title),
             version=escape_html(version), mods=mods_str, stars=stars, rank=rank, acc=acc, combo=combo,
-            miss_or_fc=(t("rs.misses", lang, n=misses) if misses else t("rs.fc", lang)),
+            miss_or_fc=(t("rs.fc", lang) if passed and _is_perfect(score) and not misses else t("rs.misses", lang, n=misses)),
             pp_line=pp_line,
         )
 
@@ -265,15 +266,15 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             rows = [buttons]
             kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
-            await wait_msg.delete()
             sent = await message.answer_photo(photo=photo, reply_markup=kb)
+            await discard_status(wait_msg)
             remember_message_context(sent.chat.id, sent.message_id, recent_data)
         except Exception as img_err:
             logger.warning(f"Recent card generation failed: {img_err}")
             cover_url = beatmapset.get("covers", {}).get("list@2x")
             if cover_url:
-                await wait_msg.delete()
                 await message.answer_photo(photo=cover_url, caption=fallback_text, parse_mode="HTML")
+                await discard_status(wait_msg)
             else:
                 await wait_msg.edit_text(fallback_text, parse_mode="HTML")
 

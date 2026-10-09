@@ -5,6 +5,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboar
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.profile.targets import resolve_target, token_for
+from bot.utils.safe_edit import discard_status
 from db.database import get_db_session
 from services.image import card_renderer
 from services.image.render.recent import build_recent_card_data
@@ -41,7 +42,7 @@ async def cmd_top_play(message: types.Message, trigger_args: TriggerArgs, osu_ap
 
     ruleset, rest = rulesets.split_args(trigger_args.args or "")
     place, query = split_place(rest)
-    place = place or 1
+    place = 1 if place is None else place
     if not 1 <= place <= 100:
         await message.answer(format_error(t("tp.bad_place", lang), lang), parse_mode="HTML")
         return
@@ -85,9 +86,9 @@ async def cmd_top_play(message: types.Message, trigger_args: TriggerArgs, osu_ap
         if beatmap.get("id") and played_in == 0:
             buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang),
                                                 callback_data=f"lbm:{beatmap['id']}"))
-        await wait.delete()
         sent = await message.answer_photo(photo=BufferedInputFile(buf.read(), filename="top.png"),
                                           reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]))
+        await discard_status(wait)
         remember_message_context(sent.chat.id, sent.message_id, data)
     except Exception as exc:
         logger.error(f"top play {place} of {target.osu_id} failed: {exc}", exc_info=True)

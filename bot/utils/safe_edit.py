@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
 _BENIGN_EDIT_MARKERS = (
     "message is not modified",
@@ -33,4 +33,12 @@ async def safe_edit_text(message: Any, text: str, **kwargs: Any) -> bool:
             return False
         raise
 
-__all__ = ["is_benign_edit_race", "safe_edit_media", "safe_edit_text"]
+async def discard_status(message: Any) -> bool:
+    try:
+        await message.delete()
+        return True
+    except TelegramAPIError:
+        return False
+
+
+__all__ = ["is_benign_edit_race", "safe_edit_media", "safe_edit_text", "discard_status"]
