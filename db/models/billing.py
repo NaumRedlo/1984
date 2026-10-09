@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String
 
 from db.database import Base
 
@@ -23,6 +23,10 @@ class BillingSubscription(Base):
     paid_until = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
     checked_at = Column(DateTime, nullable=True)
+    replaces_id = Column(String(32), nullable=True)
+    credit_rate = Column(Float, nullable=True)
+    bonus_seconds = Column(Integer, nullable=True, default=0)
+    settled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

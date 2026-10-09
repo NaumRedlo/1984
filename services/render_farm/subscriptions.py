@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 
 import aiohttp
 from sqlalchemy import select
@@ -20,6 +21,10 @@ WATCH_EVERY = timedelta(minutes=1)
 RECHECK_EVERY = timedelta(minutes=30)
 WAITING = ("creating", "unknown", "pending")
 PAID = ("active", "cancelled")
+LAPSED = ("failed", "expired")
+DAYS = {"MONTHLY": 30, "PERIOD_90_DAYS": 90, "PERIOD_180_DAYS": 180, "PERIOD_YEAR": 365}
+MOST_CARRIED = timedelta(days=1095)
+MOST_RATE = 50.0
 
 
 class Refused(Exception):
@@ -73,26 +78,80 @@ def stamp(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat() + "Z"
 
 
+def until(row) -> datetime | None:
+    if row.paid_until is None:
+        return None
+    return row.paid_until + timedelta(seconds=row.bonus_seconds or 0)
+
+
 def has_access(row, at: datetime) -> bool:
+    end = until(row)
     if row.state == "active":
-        return row.paid_until is None or row.paid_until > at
-    if row.state == "cancelled":
-        return row.paid_until is not None and row.paid_until > at
+        return end is None or end > at
+    if row.state == "cancelled" or (row.state in LAPSED and row.bonus_seconds):
+        return end is not None and end > at
     return False
 
 
-def view(row, at: datetime) -> dict:
+def view(row, at: datetime, change: dict | None = None) -> dict:
     access = has_access(row, at)
-    state = "expired" if row.state in PAID and not access else row.state
+    renewing = row.state == "active" and (row.paid_until is None or row.paid_until > at)
+    if access and not renewing:
+        state = "cancelled"
+    elif row.state in PAID and not access:
+        state = "expired"
+    else:
+        state = row.state
     return {
         "state": state,
         "access": access,
         "plan": {"id": row.plan_key, "title": row.title, "name": row.name, "amount": row.amount, "currency": row.currency, "periodicity": row.periodicity},
-        "paid_until": stamp(row.paid_until),
+        "paid_until": stamp(row.paid_until if renewing else until(row)),
+        "carried_seconds": row.bonus_seconds or 0,
         "cancelled_at": stamp(row.cancelled_at),
         "created_at": stamp(row.created_at),
         "payment_url": row.payment_url if state == "pending" else None,
+        "change": change,
     }
+
+
+def per_day(amount, periodicity) -> Decimal | None:
+    days = DAYS.get(periodicity)
+    try:
+        value = Decimal(str(amount))
+    except InvalidOperation:
+        return None
+    if days is None or not value.is_finite() or value <= 0:
+        return None
+    return value / days
+
+
+def listed(prices, offer_id: str, currency: str, periodicity: str) -> Decimal | None:
+    found = next((price for price in prices if price.offer_id == offer_id and price.currency == currency and price.periodicity == periodicity), None)
+    return None if found is None else per_day(found.amount, found.periodicity)
+
+
+def weigh(row, price, prices) -> tuple[str, float | None]:
+    held_offer = row.plan_key.split(":")[0]
+    wanted = per_day(price.amount, price.periodicity)
+    paid = per_day(row.amount, row.periodicity)
+    if wanted is None or paid is None:
+        return "unknown", None
+    if row.currency != price.currency:
+        there, here = listed(prices, held_offer, price.currency, row.periodicity), listed(prices, held_offer, row.currency, row.periodicity)
+        if there is None or here is None:
+            return "unknown", None
+        paid = paid * there / here
+    rate = min(float(paid / wanted), MOST_RATE)
+    if held_offer == price.offer_id:
+        return "same", rate
+    pairs = [(price.currency, price.periodicity), (row.currency, row.periodicity)]
+    pairs += [(other.currency, other.periodicity) for other in prices if other.offer_id == price.offer_id]
+    for currency, periodicity in pairs:
+        old, new = listed(prices, held_offer, currency, periodicity), listed(prices, price.offer_id, currency, periodicity)
+        if old is not None and new is not None:
+            return ("lower" if new < old else "higher"), rate
+    return "unknown", None
 
 
 def apply_invoice(row, invoice: dict, at: datetime) -> None:
@@ -100,6 +159,8 @@ def apply_invoice(row, invoice: dict, at: datetime) -> None:
     details = invoice.get("subscriptionDetails") if isinstance(invoice.get("subscriptionDetails"), dict) else {}
     expires, cancelled, ended = moment(details.get("expiredAt")), moment(details.get("cancelledAt")), moment(details.get("terminatedAt"))
     row.checked_at = at
+    if row.state == "replaced":
+        return
     if status in ("NEW", "IN_PROGRESS"):
         if row.state in WAITING:
             row.state = "expired" if at - row.created_at > PENDING_FOR else "pending"
@@ -168,18 +229,51 @@ def lock_of(player_id: int) -> asyncio.Lock:
     return _locks.setdefault(player_id, asyncio.Lock())
 
 
-async def start(player_id: int, price, email: str, provider) -> dict:
+async def settle(rows, provider, at: datetime) -> None:
+    known = {row.id: row for row in rows}
+    for row in rows:
+        if row.replaces_id is None or row.state not in PAID:
+            continue
+        old = known.get(row.replaces_id)
+        if row.settled_at is None:
+            end = until(old) if old is not None and has_access(old, at) else None
+            left = max((end - at).total_seconds(), 0.0) if end is not None else 0.0
+            row.bonus_seconds = int(min(left * (row.credit_rate or 0.0), MOST_CARRIED.total_seconds()))
+            row.settled_at = at
+        if old is None or old.state == "replaced":
+            continue
+        if old.state == "active" and old.invoice_id:
+            try:
+                await provider.cancel(old.invoice_id, old.email)
+            except LavaError:
+                log.error("lava.top subscription %s gave way to checkout %s but could not be cancelled", old.invoice_id, row.id)
+                continue
+        old.state, old.cancelled_at = "replaced", old.cancelled_at or at
+
+
+async def start(player_id: int, price, email: str, provider, change: bool = False, prices=()) -> dict:
     async with lock_of(player_id):
         async with AsyncSessionFactory() as session:
             at = now()
             rows = await rows_of(session, player_id)
-            for row in sorted(rows, key=lambda row: rank(row, at)):
-                if blocks(row, at):
-                    raise Refused("exists" if has_access(row, at) else "busy", view(row, at))
+            held = next((row for row in rows if has_access(row, at)), None)
+            waiting = next((row for row in rows if not has_access(row, at) and blocks(row, at)), None)
+            if held is not None and not change:
+                raise Refused("exists", view(held, at))
+            if waiting is not None:
+                raise Refused("busy", view(waiting, at))
+            rate = None
+            if held is not None:
+                if held.plan_key == price.key:
+                    raise Refused("same", view(held, at))
+                kind, rate = weigh(held, price, prices)
+                if kind in ("lower", "unknown"):
+                    raise Refused(kind, view(held, at))
             row = BillingSubscription(
                 id=uuid.uuid4().hex, player_id=player_id, plan_key=price.key, title=price.title, name=price.name,
                 amount=price.amount, currency=price.currency, periodicity=price.periodicity, email=email,
                 state="creating", created_at=at, updated_at=at,
+                replaces_id=None if held is None else held.id, credit_rate=rate, bonus_seconds=0,
             )
             session.add(row)
             await session.commit()
@@ -204,16 +298,23 @@ async def status(player_id: int, provider) -> dict | None:
         rows = await rows_of(session, player_id)
         if not rows:
             return None
-        row = sorted(rows, key=lambda row: rank(row, at))[0]
-        if row.state in ("creating", "unknown") and at - row.created_at >= UNSURE_FOR:
-            row.state = "failed"
-        elif row.invoice_id and due(row, at):
-            try:
-                await refresh(row, provider)
-            except LavaError:
-                log.warning("lava.top invoice %s could not be checked", row.invoice_id)
+        first = sorted(rows, key=lambda row: rank(row, at))[0]
+        coming = next((row for row in rows if row is not first and row.replaces_id and row.state in WAITING and blocks(row, at)), None)
+        for row in (first, coming):
+            if row is None:
+                continue
+            if row.state in ("creating", "unknown") and at - row.created_at >= UNSURE_FOR:
+                row.state = "failed"
+            elif row.invoice_id and due(row, at):
+                try:
+                    await refresh(row, provider)
+                except LavaError:
+                    log.warning("lava.top invoice %s could not be checked", row.invoice_id)
+        await settle(rows, provider, at)
         await session.commit()
-        return view(row, at)
+        first = sorted(rows, key=lambda row: rank(row, at))[0]
+        coming = next((row for row in rows if row.replaces_id == first.id and row.state == "pending" and blocks(row, at)), None)
+        return view(first, at, None if coming is None else view(coming, at))
 
 
 async def cancel(player_id: int, provider) -> dict:
@@ -295,6 +396,7 @@ async def receive(event, provider) -> bool:
                 log.warning("lava.top %s %s belongs to no known checkout", event.kind, event.deduplication_key)
                 return fresh
             await refresh(row, provider, naive(event.expires_at))
+            await settle(await rows_of(session, row.player_id), provider, now())
             await session.commit()
     except LavaError:
         log.warning("lava.top %s %s was stored but the invoice could not be checked", event.kind, event.deduplication_key)

@@ -95,7 +95,7 @@ def routes(guard, who, catalogue=None, provider=None):
         try:
             raw = await request.content.read(4097)
             value = json.loads(raw) if 0 < len(raw) <= 4096 else None
-            plan, email = value["plan"], email_address(value["email"])
+            plan, email, change = value["plan"], email_address(value["email"]), value.get("change") is True
             if not isinstance(plan, str) or not 0 < len(plan) <= 120:
                 raise ValueError("invalid plan")
         except (ValueError, TypeError, KeyError):
@@ -108,7 +108,7 @@ def routes(guard, who, catalogue=None, provider=None):
         if price is None:
             return web.json_response({"error": "unknown plan"}, status=404)
         try:
-            shown = await subscriptions.start(player_id, price, email, provider)
+            shown = await subscriptions.start(player_id, price, email, provider, change, prices)
         except subscriptions.Refused as refused:
             return web.json_response({"error": refused.reason, "subscription": refused.shown}, status=409, headers=NO_STORE)
         except LavaError:

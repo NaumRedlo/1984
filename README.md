@@ -229,6 +229,22 @@ with a Dossier token). State lives in `billing_subscriptions` and `billing_event
 (`services/render_farm/subscriptions.py`). Nothing in the bot is gated by it yet:
 the status only reports `state` and `access`.
 
+A held subscription refuses a second checkout with 409 `exists` unless the body
+carries `"change": true`. A change is allowed to a higher tier, or to another period
+or currency of the same tier; the plan already held answers `same`, a lower tier
+answers `lower` (cancel and subscribe again after the paid period), and a tier that
+cannot be compared in the catalogue answers `unknown`. Tiers are compared by the
+price of a day at the same currency and period. While the new payment is pending the
+status keeps showing the held subscription with the pending one under `change`.
+Once it is paid, the server cancels the old subscription at lava.top, marks it
+`replaced`, and carries its unused time over: the seconds left, multiplied by the old
+price of a day over the new one, are stored in `bonus_seconds` and reported as
+`carried_seconds`. Carried time is a tail after the paid period, so it counts once
+the new subscription stops renewing; `paid_until` is the next payment while it
+renews and the end of access afterwards. A cancel that lava.top does not take is
+tried again on every later status check and webhook. The columns for this are added
+by `db/migrations/add_billing_change.py` on SQLite and PostgreSQL alike.
+
 `LavaConfig.from_env()` reads `LAVA_TOP_ENABLED` (false by default),
 `LAVA_TOP_API_KEY` (the outgoing key from lava.top), and
 `LAVA_TOP_WEBHOOK_KEY` (a separate secret generated on our server, at most

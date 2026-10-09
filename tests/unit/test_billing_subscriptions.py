@@ -23,7 +23,9 @@ OFFER = "836b9fc5-7ae9-4a27-9642-592bc44072b7"
 FIRST = "7ea82675-4ded-4133-95a7-a6efbaf165cc"
 RENEWAL = "d41db415-ad71-4f2a-8d8c-27eefee91e66"
 SECOND = "04f152b7-63ec-46ff-958e-8a6f5869acd6"
+HIGH = "9d0b1c8e-5f0a-4c50-8a57-0d5f3b0c7a11"
 PLAN = f"{OFFER}:RUB:MONTHLY"
+PRO = f"{HIGH}:RUB:MONTHLY"
 CONFIG = LavaConfig(True, "outgoing-test", "incoming-test")
 HOOK = {"X-Api-Key": "incoming-test"}
 
@@ -33,7 +35,9 @@ def later(**delta):
 
 
 def catalogue_rows():
-    return [{"id": PRODUCT, "type": "SUBSCRIPTION", "title": "Dossier", "offers": [{"id": OFFER, "name": "Plus", "prices": [{"amount": 199, "currency": "RUB", "periodicity": "MONTHLY"}]}]}]
+    plus = [{"amount": 199, "currency": "RUB", "periodicity": "MONTHLY"}, {"amount": 2, "currency": "USD", "periodicity": "MONTHLY"}, {"amount": 540, "currency": "RUB", "periodicity": "PERIOD_90_DAYS"}]
+    pro = [{"amount": 398, "currency": "RUB", "periodicity": "MONTHLY"}, {"amount": 4, "currency": "USD", "periodicity": "MONTHLY"}]
+    return [{"id": PRODUCT, "type": "SUBSCRIPTION", "title": "Dossier", "offers": [{"id": OFFER, "name": "Plus", "prices": plus}, {"id": HIGH, "name": "Pro", "prices": pro}]}]
 
 
 def invoice(status="COMPLETED", sub="ACTIVE", expires=None, **extra):
@@ -390,6 +394,186 @@ async def test_a_paid_subscription_blocks_a_second_one_until_it_ends(setup):
         await session.commit()
     shown = (await (await client.get("/render/billing/status", headers=ONE)).json())["subscription"]
     assert shown["state"] == "expired" and shown["access"] is False
+
+
+STATUS = "/render/billing/status"
+DAY = 86400
+
+
+async def subscribed(client, provider, plan=PLAN, days=30):
+    assert (await pay(client, plan=plan)).status == 201
+    provider.invoices[FIRST] = invoice(expires=later(days=days))
+    assert (await hook(client, event("payment.success"))).status == 204
+
+
+async def shown_to(client, headers=ONE):
+    return (await (await client.get(STATUS, headers=headers)).json())["subscription"]
+
+
+async def paid_change(client, provider, factory, plan, days=30):
+    row = next(row for row in await rows(factory) if row.plan_key == plan)
+    provider.invoices[row.invoice_id] = {**invoice(expires=later(days=days)), "id": row.invoice_id}
+    assert (await hook(client, event("payment.success", contract=row.invoice_id))).status == 204
+    return row.id
+
+
+async def test_a_higher_tier_replaces_the_held_one_and_carries_its_unused_days_over(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider, days=20)
+    plain = await pay(client, plan=PRO)
+    assert plain.status == 409 and (await plain.json())["error"] == "exists"
+    response = await pay(client, plan=PRO, change=True)
+    assert response.status == 201
+    asked = (await response.json())["subscription"]
+    assert (asked["state"], asked["plan"]["id"], asked["payment_url"]) == ("pending", PRO, "https://pay.example/checkout/2")
+    held = await shown_to(client)
+    assert (held["plan"]["id"], held["state"], held["access"]) == (PLAN, "active", True)
+    assert (held["change"]["state"], held["change"]["plan"]["id"], held["change"]["payment_url"]) == ("pending", PRO, "https://pay.example/checkout/2")
+    assert provider.cancelled == [] and held["carried_seconds"] == 0
+    await paid_change(client, provider, factory, PRO)
+    now = await shown_to(client)
+    assert (now["plan"]["id"], now["state"], now["access"], now["change"]) == (PRO, "active", True, None)
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+    assert abs(now["carried_seconds"] - 10 * DAY) < 300
+    old = next(row for row in await rows(factory) if row.plan_key == PLAN)
+    assert old.state == "replaced" and old.cancelled_at is not None
+    assert (await shown_to(client))["carried_seconds"] == now["carried_seconds"]
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+
+
+async def test_a_lower_tier_and_the_plan_already_held_are_not_a_change(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider, plan=PRO)
+    same = await pay(client, plan=PRO, change=True)
+    assert same.status == 409 and (await same.json())["error"] == "same"
+    lower = await pay(client, plan=PLAN, change=True)
+    body = await lower.json()
+    assert lower.status == 409 and body["error"] == "lower" and body["subscription"]["plan"]["id"] == PRO
+    assert len(provider.created) == 1 and len(await rows(factory)) == 1 and provider.cancelled == []
+
+
+@pytest.mark.parametrize("wanted,rate", [
+    (f"{OFFER}:RUB:PERIOD_90_DAYS", (199 / 30) / (540 / 90)),
+    (f"{OFFER}:USD:MONTHLY", 1.0),
+    (f"{HIGH}:USD:MONTHLY", 0.5),
+])
+async def test_another_period_or_currency_is_a_change_weighed_by_the_price_of_a_day(setup, wanted, rate):
+    client, provider, factory = setup
+    await subscribed(client, provider, days=30)
+    assert (await pay(client, plan=wanted, change=True)).status == 201
+    await paid_change(client, provider, factory, wanted)
+    now = await shown_to(client)
+    assert now["plan"]["id"] == wanted and now["state"] == "active"
+    assert abs(now["carried_seconds"] - 30 * DAY * rate) < 300
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+
+
+async def test_an_unpaid_change_leaves_the_held_subscription_alone_and_blocks_another_try(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider)
+    assert (await pay(client, plan=PRO, change=True)).status == 201
+    again = await pay(client, plan=f"{HIGH}:USD:MONTHLY", change=True)
+    body = await again.json()
+    assert again.status == 409 and body["error"] == "busy" and body["subscription"]["plan"]["id"] == PRO
+    assert len(provider.created) == 2 and provider.cancelled == []
+    async with factory() as session:
+        row = (await session.execute(select(BillingSubscription).where(BillingSubscription.plan_key == PRO))).scalars().one()
+        row.created_at = row.created_at - timedelta(hours=1)
+        await session.commit()
+    held = await shown_to(client)
+    assert (held["plan"]["id"], held["state"], held["change"]) == (PLAN, "active", None)
+    assert next(row for row in await rows(factory) if row.plan_key == PLAN).state == "active"
+
+
+async def test_a_change_the_provider_cannot_cancel_yet_is_shown_and_finished_later(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider, days=20)
+    await pay(client, plan=PRO, change=True)
+    cancel = provider.cancel
+
+    async def broken(invoice_id, email):
+        raise LavaError("lava.top connection failed")
+
+    provider.cancel = broken
+    await paid_change(client, provider, factory, PRO)
+    now = await shown_to(client)
+    assert (now["plan"]["id"], now["state"]) == (PRO, "active")
+    carried = now["carried_seconds"]
+    assert abs(carried - 10 * DAY) < 300
+    assert next(row for row in await rows(factory) if row.plan_key == PLAN).state == "active"
+    provider.cancel = cancel
+    later_on = await shown_to(client)
+    assert later_on["plan"]["id"] == PRO and later_on["carried_seconds"] == carried
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+    assert next(row for row in await rows(factory) if row.plan_key == PLAN).state == "replaced"
+    await shown_to(client)
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+
+
+async def test_a_cancelled_subscription_that_still_runs_is_carried_over_without_another_cancel(setup):
+    client, provider, factory = setup
+    await subscribed(client, provider, days=20)
+    provider.invoices[FIRST] = invoice(sub="CANCELLED", expires=later(days=20))
+    assert (await client.post("/render/billing/cancel", headers=ONE)).status == 200
+    assert (await pay(client, plan=PRO, change=True)).status == 201
+    await paid_change(client, provider, factory, PRO)
+    now = await shown_to(client)
+    assert now["plan"]["id"] == PRO and abs(now["carried_seconds"] - 10 * DAY) < 300
+    assert provider.cancelled == [(FIRST, "buyer@example.org")]
+    assert next(row for row in await rows(factory) if row.plan_key == PLAN).state == "replaced"
+
+
+def held_row(at, **fields):
+    base = dict(state="cancelled", paid_until=at - timedelta(days=1), bonus_seconds=3 * DAY, created_at=at - timedelta(days=40), plan_key=PLAN, title="Dossier", name="Plus", amount="199", currency="RUB", periodicity="MONTHLY")
+    return BillingSubscription(**{**base, **fields})
+
+
+@pytest.mark.parametrize("state", ["cancelled", "active", "expired", "failed"])
+def test_carried_days_keep_access_after_the_paid_period_and_then_run_out(state):
+    at = datetime(2026, 10, 9, 12, 0)
+    row = held_row(at, state=state)
+    assert subscriptions.has_access(row, at)
+    shown = subscriptions.view(row, at)
+    assert (shown["state"], shown["access"], shown["paid_until"], shown["carried_seconds"]) == ("cancelled", True, "2026-10-11T12:00:00Z", 3 * DAY)
+    after = at + timedelta(days=2, seconds=1)
+    assert not subscriptions.has_access(row, after)
+    assert subscriptions.view(row, after)["state"] == ("expired" if state in ("cancelled", "active") else state)
+
+
+def test_a_renewing_subscription_shows_its_next_payment_and_not_the_carried_end():
+    at = datetime(2026, 10, 9, 12, 0)
+    row = held_row(at, state="active", paid_until=at + timedelta(days=5))
+    shown = subscriptions.view(row, at)
+    assert (shown["state"], shown["paid_until"], shown["carried_seconds"]) == ("active", "2026-10-14T12:00:00Z", 3 * DAY)
+    assert not subscriptions.has_access(held_row(at, state="failed", bonus_seconds=0), at)
+    assert not subscriptions.has_access(held_row(at, state="pending"), at)
+
+
+def test_a_replaced_subscription_stays_replaced_whatever_the_provider_says():
+    at = datetime(2026, 10, 9, 12, 0)
+    row = held_row(at, state="replaced", paid_until=at + timedelta(days=9))
+    subscriptions.apply_invoice(row, {"status": "COMPLETED", "subscriptionStatus": "ACTIVE", "subscriptionDetails": {"expiredAt": "2999-01-01T00:00:00Z"}}, at)
+    assert row.state == "replaced" and row.checked_at == at
+    assert not subscriptions.has_access(row, at) and not subscriptions.blocks(row, at)
+
+
+async def test_the_change_columns_are_added_to_a_table_made_before_them():
+    from sqlalchemy import text
+
+    from db.migrations._utils import existing_columns
+    from db.migrations.add_billing_change import run_billing_change_migration
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    await run_billing_change_migration(engine)
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE billing_subscriptions (id VARCHAR(32) PRIMARY KEY, state VARCHAR(16) NOT NULL)"))
+        await conn.execute(text("INSERT INTO billing_subscriptions (id, state) VALUES ('a', 'active')"))
+    await run_billing_change_migration(engine)
+    await run_billing_change_migration(engine)
+    async with engine.begin() as conn:
+        assert {"replaces_id", "credit_rate", "bonus_seconds", "settled_at"} <= await existing_columns(conn, "billing_subscriptions")
+        assert (await conn.execute(text("SELECT bonus_seconds, replaces_id FROM billing_subscriptions"))).all() == [(None, None)]
+    await engine.dispose()
 
 
 @pytest.mark.parametrize("invoice_body,start,state", [
