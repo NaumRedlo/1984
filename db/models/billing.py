@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 
 from db.database import Base
 
@@ -18,7 +18,7 @@ class BillingSubscription(Base):
     currency = Column(String(3), nullable=False)
     periodicity = Column(String(20), nullable=False)
     email = Column(String(254), nullable=False)
-    payment_url = Column(String(512), nullable=True)
+    payment_url = Column(Text, nullable=True)
     state = Column(String(16), nullable=False, index=True)
     paid_until = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)

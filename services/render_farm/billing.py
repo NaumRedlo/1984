@@ -114,6 +114,9 @@ def routes(guard, who, catalogue=None, provider=None):
         except LavaError as error:
             log.warning("lava.top checkout for plan %s failed: %s, status %s, said: %s", plan, error, error.status, error.detail or "nothing")
             return web.json_response({"error": "payment provider unavailable"}, status=502, headers=NO_STORE)
+        except Exception:
+            log.exception("lava.top checkout for plan %s broke on our side", plan)
+            return web.json_response({"error": "checkout failed"}, status=500, headers=NO_STORE)
         return web.json_response({"subscription": shown}, status=201, headers=NO_STORE)
 
     async def cancelled(request):

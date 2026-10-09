@@ -612,3 +612,28 @@ def test_an_unpaid_invoice_that_is_old_enough_expires():
 ])
 def test_provider_times_become_utc_wall_clock(value, expected):
     assert subscriptions.moment(value) == expected
+
+
+async def test_a_long_payment_link_is_kept_whole(setup):
+    client, provider, factory = setup
+    link = "https://pay.example/checkout/" + "t" * 1500
+
+    async def create(offer, email, ref):
+        return Checkout(FIRST, link)
+
+    provider.create = create
+    response = await pay(client)
+    assert response.status == 201 and (await response.json())["subscription"]["payment_url"] == link
+    assert BillingSubscription.__table__.c.payment_url.type.__class__.__name__ == "Text"
+
+
+async def test_a_fault_of_our_own_is_answered_as_ours_and_logged(setup, caplog):
+    client, provider, factory = setup
+
+    async def create(offer, email, ref):
+        raise RuntimeError("storage broke")
+
+    provider.create = create
+    response = await pay(client)
+    assert response.status == 500 and await response.json() == {"error": "checkout failed"}
+    assert "broke on our side" in caplog.text

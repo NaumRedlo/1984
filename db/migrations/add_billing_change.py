@@ -1,3 +1,5 @@
+from sqlalchemy import text
+
 from db.migrations._utils import add_column, table_exists
 from db.models.billing import BillingSubscription
 
@@ -9,3 +11,5 @@ async def run_billing_change_migration(engine) -> None:
             return
         for name in _COLUMNS:
             await add_column(conn, BillingSubscription.__table__.c[name])
+        if conn.dialect.name == "postgresql":
+            await conn.execute(text('ALTER TABLE "billing_subscriptions" ALTER COLUMN "payment_url" TYPE TEXT'))
