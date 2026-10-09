@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -25,9 +26,16 @@ ADJUSTMENTS = {"refund.success", "chargeback.initiated"}
 
 
 class LavaError(Exception):
-    def __init__(self, reason: str, status: int | None = None):
+    def __init__(self, reason: str, status: int | None = None, detail: str = ""):
         self.status = status
+        self.detail = detail
         super().__init__(reason)
+
+
+def said(body: bytes) -> str:
+    text = body[:600].decode("utf-8", "replace")
+    text = re.sub(r"[^\s\"'<>]+@[^\s\"'<>]+", "<email>", text)
+    return " ".join(text.split())[:300]
 
 
 @dataclass(frozen=True)
@@ -182,7 +190,7 @@ class LavaClient:
                 timeout=aiohttp.ClientTimeout(total=15), allow_redirects=False, **kwargs,
             ) as response:
                 if not 200 <= response.status < 300:
-                    raise LavaError("lava.top request failed", response.status)
+                    raise LavaError("lava.top request failed", response.status, said(await response.content.read(600)))
                 if response.status == 204:
                     return {}
                 body = bytearray()
@@ -219,7 +227,7 @@ class LavaClient:
             if url is not None:
                 url = https_url(url)
         except ValueError:
-            raise LavaError("Invalid lava.top checkout response") from None
+            raise LavaError("Invalid lava.top checkout response", None, "fields: " + ", ".join(sorted(str(key) for key in result))[:280]) from None
         return Checkout(invoice_id, url)
 
     async def invoice(self, invoice_id: str) -> dict:

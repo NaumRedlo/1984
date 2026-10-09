@@ -330,3 +330,11 @@ def test_invalid_catalogue_prices_fail_closed(amount):
     item["offers"][0]["prices"][0]["amount"] = amount
     with pytest.raises(lava.LavaError):
         lava.catalogue_prices([item])
+
+
+def test_a_refusal_is_quoted_for_the_log_without_the_buyer_address():
+    from services.lava_top import said
+
+    quoted = said(b'{"error":"Validation failed",\n "details":{"email":"buyer@example.org is not allowed"}}' + b"x" * 900)
+    assert "buyer@example.org" not in quoted and "<email>" in quoted and "Validation failed" in quoted
+    assert len(quoted) <= 300 and "\n" not in quoted

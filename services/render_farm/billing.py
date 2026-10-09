@@ -111,7 +111,8 @@ def routes(guard, who, catalogue=None, provider=None):
             shown = await subscriptions.start(player_id, price, email, provider, change, prices)
         except subscriptions.Refused as refused:
             return web.json_response({"error": refused.reason, "subscription": refused.shown}, status=409, headers=NO_STORE)
-        except LavaError:
+        except LavaError as error:
+            log.warning("lava.top checkout for plan %s failed: %s, status %s, said: %s", plan, error, error.status, error.detail or "nothing")
             return web.json_response({"error": "payment provider unavailable"}, status=502, headers=NO_STORE)
         return web.json_response({"subscription": shown}, status=201, headers=NO_STORE)
 
