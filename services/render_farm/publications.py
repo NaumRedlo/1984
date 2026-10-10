@@ -63,6 +63,17 @@ def clean(kind, content):
         raise ValueError("invalid authors")
     if content.get("frame") not in {"Free", "Duel", "Stage"}:
         raise ValueError("invalid pool frame")
+    backdrop = content.get("backdrop")
+    if backdrop is not None:
+        if not isinstance(backdrop, dict) or set(backdrop) - {"dim", "blur", "picture"}:
+            raise ValueError("invalid backdrop")
+        if type(backdrop.get("dim")) is not int or not 30 <= backdrop["dim"] <= 90 or type(backdrop.get("blur")) is not bool:
+            raise ValueError("invalid backdrop")
+        picture = backdrop.get("picture")
+        if not isinstance(picture, str) or not 1 <= len(picture) <= BACKDROP_MOST or not re.fullmatch(r"[A-Za-z0-9_-]+", picture):
+            raise ValueError("invalid backdrop picture")
+        if not picture.startswith("_9j_"):
+            raise ValueError("backdrop picture must be a JPEG")
     return {**content, "name": name.strip()}
 
 
@@ -74,6 +85,7 @@ async def author_links(session, names):
     return result
 
 
+BACKDROP_MOST = 330_000
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 

@@ -105,3 +105,23 @@ def test_a_publication_has_a_short_code_made_from_its_server_id():
     assert len(first) == 8 and first != second and first == code_of("0123456789abcdef0123456789abcdef")
     assert set(first + second) <= set(CODE_LETTERS) and not set("01IO") & set(CODE_LETTERS)
     assert code_of("0000000000" + "f" * 22) == "AAAAAAAA" and code_of("ffffffffff" + "0" * 22) == "99999999"
+
+
+def test_a_pool_may_carry_a_small_backdrop_picture():
+    content = {**pool(), "backdrop": {"dim": 60, "blur": True, "picture": "_9j_4AAQSkZJRg"}}
+    assert publications.clean("pool", content)["backdrop"] == {"dim": 60, "blur": True, "picture": "_9j_4AAQSkZJRg"}
+
+
+@pytest.mark.parametrize("backdrop", [
+    "picture",
+    {"dim": 60, "blur": True},
+    {"dim": 20, "blur": True, "picture": "_9j_4AAQ"},
+    {"dim": 60, "blur": "yes", "picture": "_9j_4AAQ"},
+    {"dim": 60, "blur": True, "picture": "iVBORw0KGgo"},
+    {"dim": 60, "blur": True, "picture": "_9j_ 4AAQ"},
+    {"dim": 60, "blur": True, "picture": "_9j_" + "A" * publications.BACKDROP_MOST},
+    {"dim": 60, "blur": True, "picture": "_9j_4AAQ", "path": "/etc/passwd"},
+])
+def test_a_wrong_backdrop_is_rejected(backdrop):
+    with pytest.raises(ValueError):
+        publications.clean("pool", {**pool(), "backdrop": backdrop})
