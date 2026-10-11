@@ -59,6 +59,17 @@ async def _spool(request: web.Request, most: int, prefix: str) -> tuple[str, int
         raise
     return path, written
 
+async def _drained(request: web.Request, most: int) -> None:
+    seen = 0
+    try:
+        async for chunk in request.content.iter_chunked(_CHUNK):
+            seen += len(chunk)
+            if seen > most:
+                return
+    except (OSError, asyncio.CancelledError, ConnectionError):
+        return
+
+
 def _authorised(request: web.Request) -> bool:
     header = request.headers.get("Authorization", "")
     prefix = "Bearer "
@@ -1089,9 +1100,11 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         if owner.player_id is None:
+            await _drained(request, APP_VIDEO_MOST)
             return web.json_response({"error": "not registered"}, status=403)
         meta = _meta(request)
         if not videos.described(meta)["map_hash"]:
+            await _drained(request, APP_VIDEO_MOST)
             return web.json_response({"error": "no map hash"}, status=400)
         try:
             path, written = await _spool(request, APP_VIDEO_MOST, "app-video-")
