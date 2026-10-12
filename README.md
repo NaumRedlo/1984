@@ -34,8 +34,9 @@ What the bot does for the application, and nothing more:
   to `/oauth/callback`): the bot finds or makes the player of that osu!
   account, keeps their osu! token, and the machine's token belongs to the
   player. Such a player has a profile, stands among the players, has an inbox
-  and a journal, is refreshed like everyone else, and has no chats: sending a
-  video asks for Telegram first. Telegram is linked later from the application
+  and a journal, is refreshed like everyone else, and has no chats: a video
+  can go to other Dossier users, and sending one to a chat asks for Telegram
+  first. Telegram is linked later from the application
   (`POST /render/me/telegram` gives a code, the bot asks in a private chat and
   links on yes) or simply by registering the same osu! account in a group;
 - **tells it who it belongs to** — the person, their avatar, their profile
@@ -112,6 +113,31 @@ stay. `GET /render/replays` lists the 200 newest plays of the people who share
 a chat with the asker (`scope=all`: of every sharing player), and
 `GET /render/replays/{md5}` hands one over. Switching sharing off removes the
 player's replays.
+
+What else the application asks for:
+
+- **Who is there.** Dossier says it is open every few seconds
+  (`POST /render/me/presence`), and the answer carries how many people are
+  online. `GET /render/players` lists every player once, across all chats, with
+  the players who have no chat but a linked application; each card says whether
+  the player uses Dossier (`app`) and is online now (`online`). A player with
+  neither a chat nor a linked application is not listed.
+- **Pools and collections.** `GET /render/catalog/{kind}` (`pool` or
+  `collection`) lists publications, `PUT /render/catalog/{kind}/{key}` publishes
+  or updates one under the signed-in player's name and `DELETE` withdraws it.
+  A pool may carry a backdrop picture, checked for size and kind
+  (`services/render_farm/publications.py`).
+- **Maps for a slot.** `GET /render/pools/suggest?low=&high=&mod=` searches the
+  osu! database for osu!standard difficulties in a star range, widened for the
+  speed of DT and HR, and returns at most 40
+  (`services/render_farm/suggestions.py`).
+- **Channel news.** `GET /render/news/channel/{name}` reads the public preview
+  page of a Telegram channel for an application that cannot reach Telegram
+  itself; pages are kept for five minutes, and only public channel names are
+  accepted (`services/render_farm/channels.py`).
+- **Witness.** `POST /render/me/play` takes a play the Witness program saw end,
+  and `POST /render/me/session` the length of a game session, for the feed and
+  for titles (`services/render_farm/witnessed.py`, `witness_sessions.py`).
 
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
