@@ -166,7 +166,7 @@ graph, what-if). The bot says at start-up whether the service answers.
 
 ## The bot
 
-| Feature | |
+| Feature | What it gives |
 |---|---|
 | 👤 **Profiles** | Auto-refreshing profile cards, recent plays, head-to-head comparison |
 | 📊 **Leaderboards** | Six categories: pp, accuracy, play count, play time, ranked score, hits per play |
@@ -201,7 +201,7 @@ anything; `members sync` applies it at once.
 Gameplay commands are deliberately short and take no slash. Case does not
 matter.
 
-| | |
+| Command | What it does |
 |---|---|
 | `start` | Greeting and quick start |
 | `register <nickname>` / `reg` | Register |
@@ -210,7 +210,7 @@ matter.
 | `group` / `switch` | In DMs: choose which group's data to work with |
 | `help` | Help menu |
 
-| | |
+| Command | What it shows |
 |---|---|
 | `pf` | Profile card |
 | `rs` | Last played map |
@@ -253,7 +253,7 @@ updates to the pinned packages and the actions once a week.
 
 ## Built with
 
-| | |
+| Part | Made with |
 |---|---|
 | **Bot** | Python 3.12, aiogram 3.29, SQLAlchemy 2.0 (async) over SQLite or PostgreSQL, Pillow |
 | **pp** | [assay-server](assay-server/README.md): osu!'s own `ppy.osu.Game*` packages in .NET |
@@ -277,7 +277,7 @@ The licence above covers this project's own code. It does **not** cover
 everything under `assets/`, which is other people's work and is not the
 project's to relicense:
 
-| | |
+| Files | Whose they are |
 |---|---|
 | `assets/fonts/Nunito-*` | Nunito (SIL OFL 1.1, `OFL-Nunito.txt`); static Regular, Bold and ExtraBold from Google Fonts (ExtraBold for bold text, Bold for semibold: drawn smoothed they read as Commissioner's Bold and SemiBold did) |
 | `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c (SIL OFL 1.1, `OFL-MPLUSRounded1c.txt`) |
