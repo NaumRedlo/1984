@@ -43,3 +43,5 @@ docs/work-plan-*.md
 /data/shared-replays/
 /data/player-replays/
 logs/
+
+data/removed/
