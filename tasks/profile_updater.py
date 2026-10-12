@@ -1,176 +1,299 @@
 import asyncio
+import random
 import time
-from collections import Counter
-from sqlalchemy import select
+from collections import Counter, deque
+from datetime import timedelta
+
+from sqlalchemy import exists, func, or_, select
+
 from db.database import AsyncSessionFactory
+from db.models.player import OWN, Player
 from db.models.user import User
-from services.refresh import refresh_user, needs_background_refresh, needs_stats_sweep
+from services.refresh.orchestrator import apply_refresh, claim_refresh
+from services.refresh.policy import BACKGROUND_THRESHOLD, STATS_SWEEP_THRESHOLD
+from services.refresh.prepared import PreparedProfile
+from services.refresh.runtime import background_request
 from services.leaderboard.snapshots import ensure_period_snapshot
 from utils.logger import get_logger
+from utils.timeutils import utcnow
 
 logger = get_logger("tasks.profile_updater")
 
+PROFILE_FIELDS = tuple(name for name in OWN if name not in ("active_title_code", "share_replays")) + (
+    "level", "join_date", "grade_count_s", "grade_count_ss", "best_scores_baseline_at",
+    "playcount_week_anchor", "playcount_week_anchor_at", "week_plays_best",
+    "last_api_update", "last_full_update",
+)
+
+
+def _bare(value):
+    return value.replace(tzinfo=None) if value is not None else None
+
+
 class ProfileUpdater:
     CONCURRENT_WORKERS = 3
-    TICK_SECONDS = 300
-
+    TICK_SECONDS = 30
     SWEEP_BATCH_LIMIT = 150
+    PROFILE_TIMEOUT = 180
+    INACTIVE_STATS_THRESHOLD = timedelta(hours=1)
+    INACTIVE_FULL_THRESHOLD = timedelta(hours=6)
+    ACTIVE_WINDOW = timedelta(days=1)
+    RETRY_BASE = 60
+    RETRY_MAX = 3600
 
     def __init__(self, api_client):
         self.api_client = api_client
-        self.semaphore = asyncio.Semaphore(self.CONCURRENT_WORKERS)
+        self.queues = {mode: asyncio.Queue(maxsize=self.SWEEP_BATCH_LIMIT)
+                       for mode in ("stats_only", "background_full")}
+        self.pending = set()
+        self.enqueued_at = {}
+        self.durations = deque(maxlen=200)
+        self.last_wait_seconds = 0.0
+        self.scheduler_lag_seconds = 0.0
+        self.retries = {}
+        self.counts = Counter()
+        self.last_success = None
+        self.last_success_by_mode = {}
+        self.last_schedule = None
+        self.active = {}
+        self.commit_seconds = 0.0
 
-    async def _update_single_user_task(self, user_id: int):
-        async with self.semaphore:
-            async with AsyncSessionFactory() as session:
-                try:
-                    user = (await session.execute(
-                        select(User).where(User.id == user_id)
-                    )).scalar_one_or_none()
-                    if not user:
-                        return "gone"
+    def health(self):
+        now = time.monotonic()
+        durations = sorted(self.durations)
+        return {
+            "queued": {mode: queue.qsize() for mode, queue in self.queues.items()},
+            "active": len(self.active),
+            "oldest_active_seconds": round(max((now - t for t in self.active.values()), default=0), 1),
+            "oldest_queued_seconds": round(max((now - t for t in self.enqueued_at.values()), default=0), 1),
+            "last_wait_seconds": round(self.last_wait_seconds, 1),
+            "scheduler_lag_seconds": round(self.scheduler_lag_seconds, 1),
+            "job_p95_seconds": round(durations[min(len(durations) - 1, int(len(durations) * .95))], 1) if durations else 0,
+            "retrying": len(self.retries), "outcomes": dict(self.counts),
+            "last_success": self.last_success, "last_success_by_mode": dict(self.last_success_by_mode),
+            "last_schedule": self.last_schedule,
+            "api_http_errors": dict(getattr(self.api_client, "http_errors", {})),
+            "last_commit_seconds": round(self.commit_seconds, 3),
+        }
 
-                    ok = await refresh_user(user, session, self.api_client, mode="background_full")
-                    if ok:
-                        await session.commit()
-                        logger.debug(f"Background update success: {user.osu_username}")
-                        return "updated"
-                    logger.warning(f"Background update failed or skipped: user_id={user_id}")
-                    return "failed"
-                except Exception as e:
-                    logger.error(f"Error in background task for user_id {user_id}: {e}")
-                    return "failed"
-
-    async def get_stale_user_ids(self) -> list[int]:
+    async def get_stale_user_ids(self):
+        cutoff = utcnow() - BACKGROUND_THRESHOLD
         async with AsyncSessionFactory() as session:
-            result = await session.execute(select(User.id, User.last_full_update))
-            return [
-                row[0] for row in result.fetchall()
-                if needs_background_refresh(row[1])
-            ]
+            return list((await session.scalars(select(func.min(User.id)).where(
+                User.osu_user_id.isnot(None),
+                or_(User.last_full_update.is_(None), User.last_full_update < cutoff),
+            ).group_by(User.osu_user_id).order_by(func.min(User.id)).limit(self.SWEEP_BATCH_LIMIT))).all())
 
-    async def get_stats_sweep_ids(self) -> list[int]:
+    async def get_stats_sweep_ids(self):
+        cutoff = utcnow() - STATS_SWEEP_THRESHOLD
         async with AsyncSessionFactory() as session:
-            result = await session.execute(
-                select(User.id, User.last_api_update)
-                .where(User.osu_user_id.isnot(None))
-                .order_by(User.last_api_update.asc().nullsfirst())
-            )
-            due = [row[0] for row in result.fetchall() if needs_stats_sweep(row[1])]
-        return due[:self.SWEEP_BATCH_LIMIT]
+            return list((await session.scalars(select(func.min(User.id)).where(
+                User.osu_user_id.isnot(None),
+                or_(User.last_api_update.is_(None), User.last_api_update < cutoff),
+            ).group_by(User.osu_user_id).order_by(func.min(User.last_api_update).asc().nullsfirst(),
+                                               func.min(User.id)).limit(self.SWEEP_BATCH_LIMIT))).all())
 
-    async def get_stale_player_ids(self) -> list[int]:
-        from db.models.player import Player
+    async def get_stale_player_ids(self):
         from services.render_farm import invites
 
-        signed = invites.linked_players()
-        if not signed:
-            return []
         async with AsyncSessionFactory() as session:
-            with_rows = {row[0] for row in (await session.execute(
-                select(User.player_id).where(User.player_id.isnot(None)).distinct()
-            )).all()}
-            found = await session.execute(select(Player.id, Player.last_full_update).where(Player.id.in_(signed)))
-            return [row[0] for row in found.all() if row[0] not in with_rows and needs_background_refresh(row[1])]
+            return list((await session.scalars(select(Player.id).where(
+                Player.id.in_(invites.linked_players()),
+                ~exists().where(User.player_id == Player.id),
+                or_(Player.last_full_update.is_(None), Player.last_full_update < utcnow() - BACKGROUND_THRESHOLD),
+            ).order_by(Player.id).limit(self.SWEEP_BATCH_LIMIT))).all())
 
-    async def _update_single_player_task(self, player_id: int):
-        from db.models.player import Player
+    async def _due(self, mode, limit):
+        from services.render_farm import invites
 
-        async with self.semaphore:
+        now = utcnow()
+        full = mode == "background_full"
+        stamp = Player.last_full_update if full else Player.last_api_update
+        active_interval = BACKGROUND_THRESHOLD if full else STATS_SWEEP_THRESHOLD
+        inactive_interval = self.INACTIVE_FULL_THRESHOLD if full else self.INACTIVE_STATS_THRESHOLD
+        owners = invites.present()
+        active = or_(Player.last_seen_at >= now - self.ACTIVE_WINDOW,
+                     Player.id.in_({o.player_id for o in owners if o.player_id is not None}),
+                     Player.telegram_id.in_({o.telegram_id for o in owners if o.telegram_id}))
+        excluded = {pid for pid, kind in self.pending if kind == mode}
+        excluded.update(pid for (pid, kind), (_, until) in self.retries.items()
+                        if kind == mode and until > time.monotonic())
+        stmt = select(Player.id).where(
+            or_(exists().where(User.player_id == Player.id), Player.id.in_(invites.linked_players())),
+            or_(stamp.is_(None), stamp < now - inactive_interval,
+                active & (stamp < now - active_interval)),
+        )
+        if excluded:
+            stmt = stmt.where(Player.id.notin_(excluded))
+        async with AsyncSessionFactory() as session:
+            return list((await session.scalars(stmt.order_by(stamp.asc().nullsfirst(), Player.id).limit(limit))).all())
+
+    async def schedule(self):
+        for mode, queue in self.queues.items():
+            free = queue.maxsize - queue.qsize()
+            if free <= 0:
+                continue
+            for pid in await self._due(mode, free):
+                key = (pid, mode)
+                if key not in self.pending:
+                    self.pending.add(key)
+                    self.enqueued_at[key] = time.monotonic()
+                    queue.put_nowait(pid)
+        self.last_schedule = utcnow().isoformat()
+
+    async def _refresh(self, player_id, mode):
+        from db.models.best_score import UserBestScore
+        from db.models.map_attempt import UserMapAttempt
+        from services.oauth.token_manager import token_of
+        from utils.osu.api_client import DATED_STATUSES
+        from services.render_farm import invites
+
+        async with AsyncSessionFactory() as session:
+            player = await session.get(Player, player_id)
+            if player is None:
+                return "gone"
+            now = _bare(utcnow())
+            active = (player.last_seen_at is not None and _bare(player.last_seen_at) >= now - self.ACTIVE_WINDOW) or any(
+                o.player_id == player.id or (o.telegram_id and o.telegram_id == player.telegram_id)
+                for o in invites.present())
+            full = mode == "background_full"
+            interval = (BACKGROUND_THRESHOLD if active else self.INACTIVE_FULL_THRESHOLD) if full else (
+                STATS_SWEEP_THRESHOLD if active else self.INACTIVE_STATS_THRESHOLD)
+            stamp = player.last_full_update if full else player.last_api_update
+            if stamp is not None and _bare(stamp) >= now - interval:
+                return "fresh"
+            versions = (_bare(player.last_api_update), _bare(player.last_full_update))
+            ratings, dates = {}, set()
+            pictures = {"avatar": [], "cover": []}
+            if mode == "background_full":
+                ratings = dict((await session.execute(select(UserBestScore.score_id, UserBestScore.eff_sr)
+                               .where(UserBestScore.player_id == player_id))).all())
+                for model in (UserBestScore, UserMapAttempt):
+                    dates.update((await session.scalars(select(model.beatmap_id).where(
+                        model.player_id == player_id, model.ranked_date.is_(None),
+                        model.status.in_(DATED_STATUSES)).limit(150))).all())
+                rows = (await session.execute(select(User.avatar_url, User.avatar_data.isnot(None),
+                                                     User.cover_url, User.cover_data.isnot(None))
+                                               .where(User.player_id == player_id))).all()
+                pictures = {"avatar": [(r[0], r[1]) for r in rows], "cover": [(r[2], r[3]) for r in rows]}
+            session.expunge(player)
+        async with claim_refresh(player) as acquired:
+            if not acquired:
+                return "busy"
+            token = await token_of(player)
+            prepared = await PreparedProfile.fetch(self.api_client, player, mode, token, ratings, dates, pictures)
             async with AsyncSessionFactory() as session:
-                try:
-                    player = await session.get(Player, player_id)
-                    if not player:
-                        return "gone"
-                    if await refresh_user(player, session, self.api_client, mode="background_full"):
-                        await session.commit()
-                        return "updated"
+                current = await session.scalar(select(Player).where(Player.id == player_id).with_for_update())
+                if current is None or current.osu_user_id != player.osu_user_id:
+                    return "gone"
+                if (_bare(current.last_api_update), _bare(current.last_full_update)) != versions:
+                    return "superseded"
+                if not await apply_refresh(current, session, prepared, mode, oauth_token=""):
                     return "failed"
-                except Exception as e:
-                    logger.error(f"Error in background task for player_id {player_id}: {e}")
-                    return "failed"
+                rows = (await session.scalars(select(User).where(User.player_id == player_id))).all()
+                for user in rows:
+                    for kind in ("avatar", "cover"):
+                        if getattr(user, f"{kind}_url") != getattr(current, f"{kind}_url"):
+                            setattr(user, f"{kind}_data", None)
+                    for name in PROFILE_FIELDS:
+                        setattr(user, name, getattr(current, name))
+                    for kind in ("avatar", "cover"):
+                        url = getattr(current, f"{kind}_url")
+                        if url in prepared.images:
+                            setattr(user, f"{kind}_data", prepared.images[url])
+                started = time.monotonic()
+                await session.commit()
+                self.commit_seconds = time.monotonic() - started
+            return "updated"
 
-    async def _sweep_single_user_task(self, user_id: int):
-        async with self.semaphore:
-            async with AsyncSessionFactory() as session:
-                try:
-                    user = (await session.execute(
-                        select(User).where(User.id == user_id)
-                    )).scalar_one_or_none()
-                    if not user:
-                        return "gone"
-                    if await refresh_user(user, session, self.api_client, mode="stats_only"):
-                        await session.commit()
-                        return "updated"
-                    return "failed"
-                except Exception as e:
-                    logger.debug(f"Stats sweep failed for user_id={user_id}: {e}")
-                    return "failed"
-
-    async def start_loop(self, shutdown_event: asyncio.Event):
-        logger.info("ProfileUpdater engine started.")
-
-        while not shutdown_event.is_set():
+    async def run_job(self, player_id, mode):
+        key = (player_id, mode)
+        self.active[key] = time.monotonic()
+        marker = background_request.set(True)
+        try:
             try:
+                async with asyncio.timeout(self.PROFILE_TIMEOUT):
+                    result = await self._refresh(player_id, mode)
+            except TimeoutError:
+                result = "timeout"
+            except Exception:
+                logger.exception("Profile update failed: player_id=%s mode=%s", player_id, mode)
+                result = "failed"
+            self.counts[result] += 1
+            if result in ("failed", "timeout"):
+                failures = self.retries.get(key, (0, 0))[0] + 1
+                delay = min(self.RETRY_MAX, self.RETRY_BASE * 2 ** min(failures - 1, 10))
+                self.retries[key] = (failures, time.monotonic() + random.uniform(delay * .8, delay))
+            else:
+                self.retries.pop(key, None)
+                if result == "updated":
+                    self.last_success = utcnow().isoformat()
+                    self.last_success_by_mode[mode] = self.last_success
+            elapsed = time.monotonic() - self.active[key]
+            self.durations.append(elapsed)
+            logger.log(30 if result in ("failed", "timeout") else 10,
+                       "Profile update: player_id=%s mode=%s outcome=%s seconds=%.2f",
+                       player_id, mode, result, elapsed)
+            return result
+        finally:
+            background_request.reset(marker)
+            self.active.pop(key, None)
 
+    async def _worker(self, mode):
+        queue = self.queues[mode]
+        while True:
+            pid = await queue.get()
+            self.last_wait_seconds = time.monotonic() - self.enqueued_at.pop((pid, mode), time.monotonic())
+            try:
+                await self.run_job(pid, mode)
+            finally:
+                self.pending.discard((pid, mode))
+                queue.task_done()
+
+    async def start_loop(self, shutdown_event):
+        workers = [asyncio.create_task(self._worker(mode), name=f"profile-{mode}-{i}")
+                   for i, mode in enumerate(("stats_only", "stats_only", "background_full"))]
+        next_snapshot = 0.0
+        next_report = 0.0
+        expected_tick = time.monotonic()
+        try:
+            while not shutdown_event.is_set():
+                self.scheduler_lag_seconds = max(0, time.monotonic() - expected_tick)
+                for i, worker in enumerate(workers):
+                    if worker.done():
+                        logger.error("Profile worker stopped: %s", worker, exc_info=False)
+                        if not worker.cancelled():
+                            worker.exception()
+                        mode = "background_full" if i == 2 else "stats_only"
+                        workers[i] = asyncio.create_task(self._worker(mode), name=f"profile-{mode}-{i}")
                 try:
-                    async with AsyncSessionFactory() as session:
-                        await ensure_period_snapshot(session)
-                except Exception as e:
-                    logger.warning(f"Leaderboard snapshot capture failed: {e}", exc_info=True)
-
-                sweep_ids = await self.get_stats_sweep_ids()
-                if sweep_ids:
-                    started = time.monotonic()
-                    results = await asyncio.gather(
-                        *(self._sweep_single_user_task(uid) for uid in sweep_ids),
-                        return_exceptions=True,
-                    )
-                    _log_round("Stats sweep", results, started)
-
-                stale_ids = await self.get_stale_user_ids()
-
-                if stale_ids:
-                    started = time.monotonic()
-                    tasks = [self._update_single_user_task(uid) for uid in stale_ids]
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    _log_round("Background update", results, started)
-
-                player_ids = await self.get_stale_player_ids()
-                if player_ids:
-                    started = time.monotonic()
-                    results = await asyncio.gather(
-                        *(self._update_single_player_task(pid) for pid in player_ids),
-                        return_exceptions=True,
-                    )
-                    _log_round("App players update", results, started)
-
+                    async with asyncio.timeout(30):
+                        await self.schedule()
+                        if time.monotonic() >= next_snapshot:
+                            async with AsyncSessionFactory() as session:
+                                await ensure_period_snapshot(session)
+                            next_snapshot = time.monotonic() + 300
+                except Exception:
+                    logger.exception("Profile scheduling failed")
+                if time.monotonic() >= next_report:
+                    logger.info("ProfileUpdater health: %s", self.health())
+                    next_report = time.monotonic() + 60
+                expected_tick = time.monotonic() + self.TICK_SECONDS
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=self.TICK_SECONDS)
-                except asyncio.TimeoutError:
-                    continue
+                except TimeoutError:
+                    pass
+        finally:
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            for mode, queue in self.queues.items():
+                while not queue.empty():
+                    pid = queue.get_nowait()
+                    self.pending.discard((pid, mode))
+                    self.enqueued_at.pop((pid, mode), None)
+                    queue.task_done()
 
-            except Exception as e:
-                logger.critical(f"Critical error in ProfileUpdater loop: {e}", exc_info=True)
-                await asyncio.sleep(60)
 
-def _log_round(what: str, results: list, started: float) -> None:
-    """One line per round: how many profiles were refreshed and how many osu! did not give."""
-    counts = Counter("crashed" if isinstance(r, BaseException) else (r or "failed") for r in results)
-    took = time.monotonic() - started
-    line = (f"{what}: {counts['updated']}/{len(results)} updated, {counts['failed']} failed, "
-            f"{counts['crashed']} crashed, {counts['gone']} gone in {took:.0f}s")
-    bad = counts["failed"] + counts["crashed"]
-    if bad and bad * 2 >= len(results):
-        logger.error(line + " — is osu! answering?")
-    elif bad:
-        logger.warning(line)
-    else:
-        logger.info(line)
-    if counts["crashed"]:
-        first = next(r for r in results if isinstance(r, BaseException))
-        logger.error(f"{what}: first crash: {first!r}")
-
-async def periodic_profile_updates(api_client, shutdown_event: asyncio.Event):
-    updater = ProfileUpdater(api_client)
-    await updater.start_loop(shutdown_event)
+async def periodic_profile_updates(api_client, shutdown_event):
+    await ProfileUpdater(api_client).start_loop(shutdown_event)

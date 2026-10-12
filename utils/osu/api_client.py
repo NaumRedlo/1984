@@ -5,12 +5,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 from functools import wraps
 from urllib.parse import quote
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Mapping
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
 from utils.singleflight import SingleFlight
+from services.refresh.runtime import background_request
 
 logger = get_logger("client.osu")
 QueryParams = Union[Dict, List[tuple[str, Any]], tuple[tuple[str, Any], ...]]
@@ -133,9 +134,13 @@ class OsuApiClient:
         self.session: Optional[aiohttp.ClientSession] = None
         self._last_request_time: float = 0
         self._request_lock = asyncio.Lock()
+        self._foreground_waiters = 0
+        self._foreground_done = asyncio.Event()
+        self._foreground_done.set()
         self._closed_until: Dict[Optional[str], float] = {}
         self._sent: deque = deque()
         self._requests = SingleFlight()
+        self.http_errors = Counter()
 
     async def initialize(self):
         if not self.session or self.session.closed:
@@ -183,14 +188,30 @@ class OsuApiClient:
             await asyncio.sleep(closed)
         else:
             self._closed_until.pop(identity, None)
-        async with self._request_lock:
-            elapsed = self._now() - self._last_request_time
-            if elapsed < self.RATE_LIMIT_DELAY:
-                await asyncio.sleep(self.RATE_LIMIT_DELAY - elapsed)
-            self._last_request_time = self._now()
-            self._sent.append(self._last_request_time)
-            while self._sent[0] < self._last_request_time - self.RATE_WINDOW:
-                self._sent.popleft()
+        foreground = not background_request.get()
+        if foreground:
+            self._foreground_waiters += 1
+            self._foreground_done.clear()
+        try:
+            while True:
+                if not foreground:
+                    await self._foreground_done.wait()
+                async with self._request_lock:
+                    if not foreground and self._foreground_waiters:
+                        continue
+                    elapsed = self._now() - self._last_request_time
+                    if elapsed < self.RATE_LIMIT_DELAY:
+                        await asyncio.sleep(self.RATE_LIMIT_DELAY - elapsed)
+                    self._last_request_time = self._now()
+                    self._sent.append(self._last_request_time)
+                    while self._sent[0] < self._last_request_time - self.RATE_WINDOW:
+                        self._sent.popleft()
+                    return
+        finally:
+            if foreground:
+                self._foreground_waiters -= 1
+                if not self._foreground_waiters:
+                    self._foreground_done.set()
 
     async def _make_request(
         self, method: str, endpoint: str, params: Optional[QueryParams] = None, json: Optional[Dict] = None,
@@ -236,6 +257,8 @@ class OsuApiClient:
             async with self.session.request(
                 method, url, headers=headers, params=params, json=json,
             ) as resp:
+                if resp.status >= 400:
+                    self.http_errors[resp.status] += 1
                 if resp.status == 404:
                     logger.debug(f"Resource not found: {endpoint}")
                     return None
@@ -507,7 +530,7 @@ class OsuApiClient:
             return False
 
         raw_scores = await self.get_user_best_scores(user_model.osu_user_id, limit=100, oauth_token=oauth_token)
-        if not raw_scores:
+        if not isinstance(raw_scores, list):
             return False
 
         stmt = select(UserBestScore).where(UserBestScore.player_id == user_model.player_id)
@@ -778,8 +801,11 @@ class OsuApiClient:
             f"users/{user_id}/scores/best",
             params=params,
             bearer_token=oauth_token,
+            strict=True,
         )
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list) or any(not isinstance(score, dict) or not score.get("id") for score in data):
+            raise ValueError(f"Invalid best scores response for user {user_id}")
+        return data
 
     async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int, oauth_token: Optional[str] = None) -> List[Dict]:
         data = await self._make_request(

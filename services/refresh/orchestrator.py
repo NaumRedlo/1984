@@ -1,5 +1,6 @@
 import asyncio
 from typing import Optional
+from contextlib import asynccontextmanager
 
 from utils.logger import get_logger
 from utils.timeutils import utcnow
@@ -9,16 +10,11 @@ logger = get_logger("services.refresh.orchestrator")
 
 _in_flight: set[tuple] = set()
 _in_flight_lock = asyncio.Lock()
-_players: dict[int, asyncio.Lock] = {}
-
-def _one_at_a_time(user) -> asyncio.Lock:
-    player_id = getattr(user, "player_id", None)
-    if player_id is None:
-        return asyncio.Lock()
-    return _players.setdefault(player_id, asyncio.Lock())
+_in_flight_users: set[int] = set()
 
 def _key(user) -> tuple:
-    return (type(user).__name__, user.id)
+    osu_id = getattr(user, "osu_user_id", None)
+    return ("osu", osu_id) if osu_id else (type(user).__name__, user.id)
 
 async def _acquire(key: tuple) -> bool:
     async with _in_flight_lock:
@@ -38,11 +34,29 @@ async def refresh_user(
     mode: RefreshMode = "full",
     oauth_token: Optional[str] = None,
 ) -> bool:
-    key = _key(user)
-    if not await _acquire(key):
-        logger.debug(f"Skipping refresh for {key}: already in-flight")
-        return False
+    async with claim_refresh(user) as acquired:
+        if not acquired:
+            return False
+        return await apply_refresh(user, session, api_client, mode, oauth_token)
 
+
+@asynccontextmanager
+async def claim_refresh(user):
+    key = _key(user)
+    acquired = await _acquire(key)
+    user_id = user.id if type(user).__name__ == "User" else None
+    if acquired and user_id is not None:
+        _in_flight_users.add(user_id)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            if user_id is not None:
+                _in_flight_users.discard(user_id)
+            await _release(key)
+
+
+async def apply_refresh(user, session, api_client, mode="full", oauth_token=None):
     try:
         if oauth_token is None:
             from services.oauth.token_manager import token_of
@@ -57,17 +71,17 @@ async def refresh_user(
             return False
 
         if mode in ("full", "background_full"):
-            async with _one_at_a_time(user):
-                await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token)
+            if not await api_client.sync_user_best_scores(user, session, oauth_token=oauth_token):
+                return False
 
-                try:
-                    from utils.title_progress import refresh_user_titles
-                    await refresh_user_titles(user, session)
-                except Exception as exc:
-                    logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
+            try:
+                from utils.title_progress import refresh_user_titles
+                await refresh_user_titles(user, session)
+            except Exception as exc:
+                logger.warning(f"title refresh failed for user_id={user.id}: {exc}")
 
-                user.last_full_update = utcnow()
-                await session.flush()
+            user.last_full_update = utcnow()
+            await session.flush()
         logger.debug(f"Refresh done ({mode}) for {user.osu_username} (id={user.id})")
         return True
 
@@ -75,8 +89,6 @@ async def refresh_user(
         logger.error(f"Refresh error for user_id={user.id}: {exc}", exc_info=True)
         return False
 
-    finally:
-        await _release(key)
 
 def is_in_flight(user_id: int) -> bool:
-    return ("User", user_id) in _in_flight
+    return user_id in _in_flight_users

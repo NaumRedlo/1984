@@ -97,7 +97,8 @@ def _keep(session, user) -> None:
         _link(session, user)
         return
     state = inspect(user)
-    changed = [name for name in SHARED if state.attrs[name].history.has_changes()]
+    changed = [name for name in (*SHARED, "last_api_update", "last_full_update")
+               if state.attrs[name].history.has_changes()]
     if not changed:
         return
     for name in changed:
