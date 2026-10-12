@@ -955,7 +955,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
 
         async with AsyncSessionFactory() as session:
             body = await players.everyone(session, owner.telegram_id, query=request.query.get("q", ""),
-                                          signed=invites.linked_players(), me=owner.player_id)
+                                          signed=invites.linked_players(), me=owner.player_id,
+                                          online=[held.player_id for held in invites.present() if held.player_id is not None])
         return web.json_response(body)
 
     async def one_player(request: web.Request) -> web.Response:

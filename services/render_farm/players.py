@@ -50,7 +50,9 @@ async def _rows_by_player(session, player_ids: Optional[list[int]] = None) -> di
     return grouped
 
 async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None, signed: Iterable[int] = (),
-                   me: Optional[int] = None) -> dict[str, Any]:
+                   me: Optional[int] = None, online: Iterable[int] = ()) -> dict[str, Any]:
+    signed = set(signed)
+    online = set(online)
     players = {player.id: player for player in (await session.execute(select(Player))).scalars().all()}
     grouped = await _rows_by_player(session, list(players))
     wanted = query.strip().lower()
@@ -87,6 +89,8 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
             you=player_id == me or (bool(viewer) and players[player_id].telegram_id == viewer),
         )
         card["player"] = player_id
+        card["app"] = player_id in signed
+        card["online"] = player_id in online
         people.append(card)
     people.sort(key=lambda card: card["pp"], reverse=True)
     return {"people": people, "at": stamp(naive(now) or utcnow())}

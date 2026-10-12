@@ -71,6 +71,12 @@ async def test_every_player_comes_once_with_what_they_earned_in_every_chat(facto
     async with factory() as s:
         found = await players.everyone(s, 7, query=" KOTO ", now=NOW)
     assert [card["name"] for card in found["people"]] == ["kotofey"]
+    assert all(card["app"] is False and card["online"] is False for card in body["people"])
+    async with factory() as s:
+        marked = await players.everyone(s, 7, now=NOW, signed=[ids["kotofey"]], online=[ids["kotofey"]])
+    by_name = {card["name"]: card for card in marked["people"]}
+    assert (by_name["kotofey"]["app"], by_name["kotofey"]["online"]) == (True, True)
+    assert (by_name["NaumRedlo"]["app"], by_name["NaumRedlo"]["online"]) == (False, False)
 
 async def test_a_player_opens_whichever_chat_they_are_in(factory):
     ids = await _seed(factory)
