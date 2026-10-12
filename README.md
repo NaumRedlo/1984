@@ -1,6 +1,6 @@
 # 🎯 1984 | Global & Competitive Bot
 
-<a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/></a>
+<a href="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml"><img src="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml/badge.svg" alt="tests" /></a> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-blue" alt="licence" /></a> <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue" alt="python 3.11 and 3.12" /> <a href="https://github.com/NaumRedlo/1984/commits/global"><img src="https://img.shields.io/github/last-commit/NaumRedlo/1984/global?label=last%20commit" alt="last commit" /></a> <a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/></a>
 
 A Telegram bot for osu! players, and the replay engine that grew out of it.
 
@@ -114,30 +114,32 @@ a chat with the asker (`scope=all`: of every sharing player), and
 `GET /render/replays/{md5}` hands one over. Switching sharing off removes the
 player's replays.
 
-What else the application asks for:
+A few more things the application leans on the bot for:
 
-- **Who is there.** Dossier says it is open every few seconds
-  (`POST /render/me/presence`), and the answer carries how many people are
-  online. `GET /render/players` lists every player once, across all chats, with
-  the players who have no chat but a linked application; each card says whether
-  the player uses Dossier (`app`) and is online now (`online`). A player with
-  neither a chat nor a linked application is not listed.
+- **Knowing who is around.** Every few seconds Dossier tells the bot it is
+  open (`POST /render/me/presence`) and hears back how many people are online.
+  `GET /render/players` lists every player once, whichever chats they are in,
+  together with people who have no chat at all but do have the application.
+  Each card says whether that player uses Dossier (`app`) and is online right
+  now (`online`). Someone with neither a chat nor the application is simply not
+  listed.
 - **Pools and collections.** `GET /render/catalog/{kind}` (`pool` or
-  `collection`) lists publications, `PUT /render/catalog/{kind}/{key}` publishes
-  or updates one under the signed-in player's name and `DELETE` withdraws it.
-  A pool may carry a backdrop picture, checked for size and kind
+  `collection`) lists what people have published;
+  `PUT /render/catalog/{kind}/{key}` publishes or updates one under the name of
+  whoever is signed in, and `DELETE` takes it back. A pool can bring a backdrop
+  picture along, which is checked for size and kind
   (`services/render_farm/publications.py`).
-- **Maps for a slot.** `GET /render/pools/suggest?low=&high=&mod=` searches the
-  osu! database for osu!standard difficulties in a star range, widened for the
-  speed of DT and HR, and returns at most 40
+- **A map for an empty slot.** `GET /render/pools/suggest?low=&high=&mod=` looks
+  through the osu! database for osu!standard difficulties in a star range,
+  widened for what DT and HR do to the rating, and returns up to 40
   (`services/render_farm/suggestions.py`).
-- **Channel news.** `GET /render/news/channel/{name}` reads the public preview
-  page of a Telegram channel for an application that cannot reach Telegram
-  itself; pages are kept for five minutes, and only public channel names are
-  accepted (`services/render_farm/channels.py`).
-- **Witness.** `POST /render/me/play` takes a play the Witness program saw end,
-  and `POST /render/me/session` the length of a game session, for the feed and
-  for titles (`services/render_farm/witnessed.py`, `witness_sessions.py`).
+- **Channel news.** Not everyone can reach Telegram from where they are, so
+  `GET /render/news/channel/{name}` fetches a channel's public preview page on
+  the application's behalf. A page is kept for five minutes, and only public
+  channel names are accepted (`services/render_farm/channels.py`).
+- **Witness.** `POST /render/me/play` takes a play the Witness program saw end
+  and `POST /render/me/session` how long a session lasted, for the feed and for
+  titles (`services/render_farm/witnessed.py`, `witness_sessions.py`).
 
 Pairing is rate-limited per address, and the address is read from the
 `X-Forwarded-For` entry the proxy in front of the bot added — the last one. If
@@ -279,24 +281,24 @@ project's to relicense:
 |---|---|
 | `assets/fonts/Nunito-*` | Nunito (SIL OFL 1.1, `OFL-Nunito.txt`); static Regular, Bold and ExtraBold from Google Fonts (ExtraBold for bold text, Bold for semibold: drawn smoothed they read as Commissioner's Bold and SemiBold did) |
 | `assets/fonts/MPLUSRounded1c-*` | M PLUS Rounded 1c (SIL OFL 1.1, `OFL-MPLUSRounded1c.txt`) |
-| `assets/flags/` | Country flags from [ppy/osu-resources](https://github.com/ppy/osu-resources) (`Textures/Flags`), CC BY-NC 4.0 |
+| `assets/flags/` | Country flags from [flag-icons](https://github.com/lipis/flag-icons) (MIT, `LICENSE-flag-icons.txt` beside them), drawn to 140×94 |
 | `assets/icons/` | Card icons from [Flaticon](https://www.flaticon.com/) |
 | Dossier's arrow and spinner mark | Not files — paths, after work by [Roundicons](https://www.flaticon.com/authors/roundicons) (break warning) and [Radhe Icon](https://www.flaticon.com/authors/radhe-icon) (spinner centre) on Flaticon |
 
-Two of those carry conditions worth stating plainly rather than burying.
+One of those comes with a condition worth saying out loud.
 
 **Flaticon's free licence requires attribution** wherever the icons are used.
 That is a term of use, not a courtesy, and naming it here is the minimum —
 whether the rendered cards themselves need to carry a credit depends on how
 they are distributed.
 
-**The flags are osu!'s own** and are not free for every use. The files match
-`osu.Game.Resources/Textures/Flags` in ppy/osu-resources byte for byte (checked
-on 12 October 2026 against that repository's file hashes), and that repository
-is licensed CC BY-NC 4.0: attribution is required and commercial use is not
-allowed. Anyone who runs this bot for money has to replace them.
+The flags used to be osu!'s own, from ppy/osu-resources, which is licensed for
+non-commercial use only. They were replaced on 12 October 2026 with the
+flag-icons set so that nothing here depends on that condition. Ascension and
+Tristan da Cunha use that set's own files for them, an unknown country gets its
+placeholder, and two codes it has no flag for (`cq`, `ea`) show none.
 
-If you fork this, check both before redistributing.
+If you fork this, check the icons before redistributing.
 
 ---
 
