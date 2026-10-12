@@ -19,11 +19,16 @@ CONCURRENT = 3
 
 
 class LiveTracker:
+    TOLD_EVERY = 600.0
+
     def __init__(self, api_client, *, clock: Callable[[], float] = time.monotonic):
         self.api_client = api_client
         self.clock = clock
         self.asked: dict[int, float] = {}
         self.nudged: dict[int, list[float]] = {}
+        self.told_at = clock()
+        self.caught_since = 0
+        self.rounds_since = 0
 
     def nudge(self, osu_user_id: int) -> None:
         now = self.clock()
@@ -148,8 +153,13 @@ class LiveTracker:
                     return 0
 
         caught = sum(await asyncio.gather(*(one(osu_user_id) for osu_user_id in chosen)))
-        if caught:
-            logger.info("caught %d plays from %d players", caught, len(chosen))
+        self.caught_since += caught
+        self.rounds_since += 1
+        now = self.clock()
+        if now - self.told_at >= self.TOLD_EVERY:
+            if self.caught_since:
+                logger.info("caught %d plays in %d rounds", self.caught_since, self.rounds_since)
+            self.told_at, self.caught_since, self.rounds_since = now, 0, 0
         return caught
 
     async def run(self, shutdown_event: asyncio.Event) -> None:

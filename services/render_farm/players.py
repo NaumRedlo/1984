@@ -50,10 +50,15 @@ async def _rows_by_player(session, player_ids: Optional[list[int]] = None) -> di
     return grouped
 
 async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None, signed: Iterable[int] = (),
-                   me: Optional[int] = None, online: Iterable[int] = ()) -> dict[str, Any]:
+                   me: Optional[int] = None, online: Iterable[int] = (), signed_telegram: Iterable[int] = (),
+                   online_telegram: Iterable[int] = ()) -> dict[str, Any]:
     signed = set(signed)
     online = set(online)
+    signed_telegram = {int(held) for held in signed_telegram if held}
+    online_telegram = {int(held) for held in online_telegram if held}
     players = {player.id: player for player in (await session.execute(select(Player))).scalars().all()}
+    signed |= {player.id for player in players.values() if player.telegram_id in signed_telegram}
+    online |= {player.id for player in players.values() if player.telegram_id in online_telegram}
     grouped = await _rows_by_player(session, list(players))
     wanted = query.strip().lower()
     chosen = {

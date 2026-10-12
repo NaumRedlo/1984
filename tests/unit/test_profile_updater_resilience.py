@@ -439,3 +439,18 @@ def test_health_exposes_queue_age_and_recent_update_duration():
     health = updater.health()
     assert health["oldest_queued_seconds"] >= 59
     assert health["job_p95_seconds"] == 3
+
+
+def test_health_is_one_short_line_and_trouble_is_named():
+    from tasks.profile_updater import ProfileUpdater
+
+    calm = {"queued": {"stats_only": 0, "background_full": 0}, "active": 0, "oldest_active_seconds": 0, "oldest_queued_seconds": 0,
+            "scheduler_lag_seconds": 0.0, "job_p95_seconds": 4.6, "retrying": 0, "outcomes": {"busy": 3, "updated": 247}, "api_http_errors": {}}
+    troubled, said = ProfileUpdater.health_said(calm)
+    assert troubled is False
+    assert said == "profiles: busy 3, updated 247; queued 0, active 0, p95 4.6 s"
+    for change in [{"retrying": 2}, {"api_http_errors": {429: 5}}, {"queued": {"stats_only": 80}}, {"oldest_queued_seconds": 400}, {"scheduler_lag_seconds": 9.0}]:
+        troubled, said = ProfileUpdater.health_said({**calm, **change})
+        assert troubled is True and "retrying" in said, change
+    assert "osu! answered 429 x5" in ProfileUpdater.health_said({**calm, "api_http_errors": {429: 5}})[1]
+    assert ProfileUpdater.health_said({})[1].startswith("profiles: nothing done yet")

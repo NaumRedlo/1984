@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import time
 from collections import Counter, deque
@@ -33,6 +34,8 @@ def _bare(value):
 class ProfileUpdater:
     CONCURRENT_WORKERS = 3
     TICK_SECONDS = 30
+    REPORT_EVERY = 1800
+    TROUBLE_EVERY = 120
     SWEEP_BATCH_LIMIT = 150
     PROFILE_TIMEOUT = 180
     INACTIVE_STATS_THRESHOLD = timedelta(hours=1)
@@ -75,6 +78,30 @@ class ProfileUpdater:
             "api_http_errors": dict(getattr(self.api_client, "http_errors", {})),
             "last_commit_seconds": round(self.commit_seconds, 3),
         }
+
+    @staticmethod
+    def health_said(health: dict) -> tuple[bool, str]:
+        queued = sum(health.get("queued", {}).values())
+        errors = health.get("api_http_errors") or {}
+        troubled = bool(
+            errors
+            or health.get("retrying", 0)
+            or queued > 50
+            or health.get("oldest_queued_seconds", 0) > 300
+            or health.get("oldest_active_seconds", 0) > 120
+            or health.get("scheduler_lag_seconds", 0) > 5
+        )
+        outcomes = health.get("outcomes") or {}
+        said = "profiles: " + ", ".join(f"{name} {count}" for name, count in sorted(outcomes.items())) if outcomes else "profiles: nothing done yet"
+        said += f"; queued {queued}, active {health.get('active', 0)}, p95 {health.get('job_p95_seconds', 0)} s"
+        if troubled:
+            said += (
+                f"; retrying {health.get('retrying', 0)}, oldest queued {health.get('oldest_queued_seconds', 0)} s, "
+                f"oldest active {health.get('oldest_active_seconds', 0)} s, lag {health.get('scheduler_lag_seconds', 0)} s"
+            )
+            if errors:
+                said += "; osu! answered " + ", ".join(f"{code} x{count}" for code, count in sorted(errors.items(), key=lambda item: str(item[0])))
+        return troubled, said
 
     async def get_stale_user_ids(self):
         cutoff = utcnow() - BACKGROUND_THRESHOLD
@@ -255,6 +282,7 @@ class ProfileUpdater:
                    for i, mode in enumerate(("stats_only", "stats_only", "background_full"))]
         next_snapshot = 0.0
         next_report = 0.0
+        next_trouble = 0.0
         expected_tick = time.monotonic()
         try:
             while not shutdown_event.is_set():
@@ -275,9 +303,11 @@ class ProfileUpdater:
                             next_snapshot = time.monotonic() + 300
                 except Exception:
                     logger.exception("Profile scheduling failed")
-                if time.monotonic() >= next_report:
-                    logger.info("ProfileUpdater health: %s", self.health())
-                    next_report = time.monotonic() + 60
+                troubled, said = self.health_said(self.health())
+                if time.monotonic() >= next_report or (troubled and time.monotonic() >= next_trouble):
+                    logger.log(logging.WARNING if troubled else logging.INFO, "%s", said)
+                    next_report = time.monotonic() + self.REPORT_EVERY
+                    next_trouble = time.monotonic() + self.TROUBLE_EVERY
                 expected_tick = time.monotonic() + self.TICK_SECONDS
                 try:
                     await asyncio.wait_for(shutdown_event.wait(), timeout=self.TICK_SECONDS)

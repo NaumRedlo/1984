@@ -77,6 +77,13 @@ async def test_every_player_comes_once_with_what_they_earned_in_every_chat(facto
     by_name = {card["name"]: card for card in marked["people"]}
     assert (by_name["kotofey"]["app"], by_name["kotofey"]["online"]) == (True, True)
     assert (by_name["NaumRedlo"]["app"], by_name["NaumRedlo"]["online"]) == (False, False)
+    async with factory() as s:
+        naum = await s.get(Player, ids["NaumRedlo"])
+        telegram = naum.telegram_id
+        by_telegram = await players.everyone(s, 7, now=NOW, signed_telegram=[telegram], online_telegram=[telegram, 0])
+    found = {card["name"]: card for card in by_telegram["people"]}
+    assert telegram and (found["NaumRedlo"]["app"], found["NaumRedlo"]["online"]) == (True, True), "a machine paired through Telegram counts as well"
+    assert found["kotofey"]["app"] is False
 
 async def test_a_player_opens_whichever_chat_they_are_in(factory):
     ids = await _seed(factory)
