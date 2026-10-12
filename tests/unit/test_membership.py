@@ -55,8 +55,8 @@ def _user(chat, tg, name, **kw):
 
 async def _seed(factory):
     async with factory() as s:
-        naum, koto, lumen = _user(LOUNGE, 7, "NaumRedlo", render_fps=120, render_dim=4), _user(LOUNGE, 8, "kotofey", render_fps=45, render_dim=2, render_cursor=1), _user(LOUNGE, 9, "lumen")
-        s.add_all([naum, koto, lumen, _user(CREW, 7, "NaumRedlo", render_fps=10)])
+        naum, koto, lumen = _user(LOUNGE, 7, "NaumRedlo", render_skin="neon"), _user(LOUNGE, 8, "kotofey", render_skin="classic"), _user(LOUNGE, 9, "lumen")
+        s.add_all([naum, koto, lumen, _user(CREW, 7, "NaumRedlo", render_skin="crew")])
         await s.flush()
         s.add_all([
             LeaderboardSnapshot(tenant_chat_id=LOUNGE, user_id=koto.id, period_key="2026-W40", player_pp=1000),
@@ -122,7 +122,7 @@ async def test_a_known_player_found_in_a_chat_is_counted_there(factory):
     async with factory() as s:
         row = (await s.execute(select(User).where(User.chat_id == CREW, User.telegram_id == 8))).scalar_one()
         player = (await s.execute(select(Player).where(Player.telegram_id == 8))).scalar_one()
-        assert (row.player_id, row.osu_user_id, row.player_pp, row.render_fps) == (player.id, 80, 1000, None)
+        assert (row.player_id, row.osu_user_id, row.player_pp, row.render_skin) == (player.id, 80, 1000, None)
         assert (await s.execute(select(ChatMember).where(ChatMember.chat_id == CREW, ChatMember.player_id == player.id))).first() is not None
     again = await membership.sweep(_Bot(_everyone({(CREW, 8): "member"})), factory, pause=0, now=NOW)
     assert next(told for told in again if told.chat_id == CREW).added == []
@@ -134,7 +134,7 @@ async def test_whoever_comes_back_gets_their_chat_standing_back(factory):
     assert next(told for told in said if told.chat_id == LOUNGE).added == ["kotofey"]
     async with factory() as s:
         row = (await s.execute(select(User).where(User.chat_id == LOUNGE, User.telegram_id == 8))).scalar_one()
-        assert (row.render_fps, row.render_dim, row.render_cursor) == (45, 2, 1)
+        assert row.render_skin == "classic"
         assert (await s.execute(select(LeftMember))).first() is None
 
 async def test_a_check_changes_nothing(factory):
@@ -162,4 +162,4 @@ async def test_a_chat_everyone_left_is_still_looked_at(factory):
     said = await membership.sweep(_Bot(_everyone()), factory, pause=0, now=NOW)
     assert next(told for told in said if told.chat_id == CREW).added == ["NaumRedlo"]
     async with factory() as s:
-        assert (await s.execute(select(User).where(User.chat_id == CREW, User.telegram_id == 7))).scalar_one().render_fps == 10
+        assert (await s.execute(select(User).where(User.chat_id == CREW, User.telegram_id == 7))).scalar_one().render_skin == "crew"

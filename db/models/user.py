@@ -35,34 +35,17 @@ class User(Base):
 
     share_replays = Column(Boolean, default=False, nullable=True)
 
-    render_size = Column(String(16), nullable=True)
-    render_fps = Column(Integer, nullable=True)
-    render_mute = Column(Boolean, nullable=True)
     render_skin = Column(String(64), nullable=True)
-    render_background = Column(Boolean, nullable=True)
-    render_bare = Column(Boolean, nullable=True)
 
-    render_effects = Column(String(128), nullable=True)
 
-    render_music = Column(Integer, nullable=True)
-    render_hitsounds = Column(Integer, nullable=True)
 
-    render_map_hitsounds = Column(Boolean, nullable=True)
 
-    render_dim = Column(Integer, nullable=True)
 
-    render_meter = Column(Integer, nullable=True)
 
-    render_volume = Column(Integer, nullable=True)
 
-    render_leaderboard = Column(Boolean, nullable=True)
 
-    render_cursor = Column(Integer, nullable=True)
 
-    render_blur = Column(Integer, nullable=True)
 
-    heavy_renders = Column(Integer, nullable=True)
-    heavy_renders_on = Column(String(10), nullable=True)
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)
     avatar_data = Column(LargeBinary, nullable=True)

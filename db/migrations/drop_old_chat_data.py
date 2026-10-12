@@ -13,6 +13,9 @@ OLD = (
     "hps_points", "rank", "season_bonus_hps", "bounties_participated", "duel_wins", "duel_losses", "last_active_bounty_id",
     "duel_user_aim", "duel_user_speed", "duel_user_acc", "duel_user_cons", "duel_skill_calculated_at", "bp", "weekly_tier",
     "weekly_tier_set_at",
+    "render_size", "render_fps", "render_mute", "render_background", "render_bare", "render_effects", "render_music",
+    "render_hitsounds", "render_map_hitsounds", "render_dim", "render_meter", "render_volume", "render_leaderboard",
+    "render_cursor", "render_blur", "heavy_renders", "heavy_renders_on",
 )
 KEPT_IN = os.path.join("data", "removed")
 
@@ -36,5 +39,5 @@ async def run_drop_old_chat_data_migration(engine, *, kept_in: str | None = None
             json.dump([{key: (value.isoformat() if hasattr(value, "isoformat") else value) for key, value in row.items()} for row in rows], out, ensure_ascii=False)
         for name in held:
             await conn.execute(text(f'ALTER TABLE users DROP COLUMN "{name}"'))
-    logger.info("removed %d old chat columns from users; their values are kept in %s", len(held), path)
+    logger.info("removed %d old columns from users; their values are kept in %s", len(held), path)
     return held

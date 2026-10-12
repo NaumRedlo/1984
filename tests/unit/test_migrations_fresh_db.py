@@ -87,3 +87,25 @@ async def test_old_chat_data_is_written_aside_and_then_its_columns_are_gone(tmp_
         assert await run_drop_old_chat_data_migration(engine, kept_in=str(tmp_path / "again.json")) == []
     finally:
         await engine.dispose()
+
+
+async def test_the_cleanup_runs_on_a_database_that_is_not_sqlite_too(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from db.migrations import drop_old_chat_data
+    from db.migrations._utils import existing_columns
+
+    engine = await _fresh_engine()
+    monkeypatch.setattr(drop_old_chat_data, "KEPT_IN", str(tmp_path))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN render_fps INTEGER"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN duel_wins INTEGER DEFAULT 0"))
+        elsewhere = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), begin=engine.begin)
+        await run_all_migrations(elsewhere)
+        async with engine.begin() as conn:
+            left = await existing_columns(conn, "users")
+        assert not {"render_fps", "duel_wins"} & left and "render_skin" in left
+        assert len(list(tmp_path.iterdir())) == 1, "the values were written aside once"
+    finally:
+        await engine.dispose()

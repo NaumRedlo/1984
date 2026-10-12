@@ -117,7 +117,7 @@ async def test_same_osu_account_shares_reservation_and_cancellation_releases_it(
 async def test_one_job_updates_all_chat_rows_and_preserves_preferences(database):
     pid = await add_player(database)
     async with database() as session:
-        session.add(User(chat_id=-2, telegram_id=1, osu_user_id=1, osu_username="p1", render_fps=120))
+        session.add(User(chat_id=-2, telegram_id=1, osu_user_id=1, osu_username="p1", render_skin="neon"))
         await session.commit()
     api = api_for()
     updater = ProfileUpdater(api)
@@ -127,7 +127,7 @@ async def test_one_job_updates_all_chat_rows_and_preserves_preferences(database)
         users = (await session.scalars(select(User).order_by(User.id))).all()
         assert [u.player_pp for u in users] == [4567, 4567]
         assert all(u.last_api_update is not None for u in users)
-        assert users[1].render_fps == 120
+        assert users[1].render_skin == "neon"
     api.get_user_data.assert_awaited_once()
     api._download_image_bytes.assert_not_awaited()
 

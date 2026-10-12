@@ -12,16 +12,6 @@ from db.migrations.add_last_seen import run_last_seen_migration
 from db.migrations.add_bot_settings import run_bot_settings_migration
 from db.migrations.add_render_worker_tokens import run_render_worker_tokens_migration
 from db.migrations.add_share_replays import run_share_replays_migration
-from db.migrations.add_heavy_render_settings import run_heavy_render_migration
-from db.migrations.add_render_effects import run_render_effects_migration
-from db.migrations.add_map_hitsounds import run_map_hitsounds_migration
-from db.migrations.add_render_dim import run_render_dim_migration
-from db.migrations.add_render_meter import run_render_meter_migration
-from db.migrations.add_render_volume import run_render_volume_migration
-from db.migrations.add_render_leaderboard import run_render_leaderboard_migration
-from db.migrations.add_render_cursor import run_render_cursor_migration
-from db.migrations.add_render_blur import run_render_blur_migration
-from db.migrations.add_render_levels import run_render_levels_migration
 from db.migrations.add_render_settings import run_render_settings_migration
 from db.migrations.add_ur_hit_counts import run_ur_hit_counts_migration
 from db.migrations.add_user_first_approved_at import run_user_first_approved_at_migration
@@ -59,6 +49,7 @@ async def run_all_migrations(engine) -> None:
     if engine.dialect.name == "sqlite":
         await _sqlite_history(engine)
     await run_billing_change_migration(engine)
+    await run_drop_old_chat_data_migration(engine)
 
 async def _sqlite_history(engine) -> None:
     await run_migration(engine)
@@ -74,16 +65,6 @@ async def _sqlite_history(engine) -> None:
     await run_bot_settings_migration(engine)
     await run_share_replays_migration(engine)
     await run_render_settings_migration(engine)
-    await run_heavy_render_migration(engine)
-    await run_render_effects_migration(engine)
-    await run_render_levels_migration(engine)
-    await run_map_hitsounds_migration(engine)
-    await run_render_dim_migration(engine)
-    await run_render_meter_migration(engine)
-    await run_render_volume_migration(engine)
-    await run_render_leaderboard_migration(engine)
-    await run_render_cursor_migration(engine)
-    await run_render_blur_migration(engine)
     await run_ur_hit_counts_migration(engine)
     await run_user_first_approved_at_migration(engine)
     await run_drop_crawler_settings_migration(engine)
@@ -130,6 +111,5 @@ async def _sqlite_history(engine) -> None:
     await run_witness_sessions_migration(engine)
     await run_local_scores_migration(engine)
     await run_left_members_migration(engine)
-    await run_drop_old_chat_data_migration(engine)
 
 __all__ = ["run_all_migrations"]
