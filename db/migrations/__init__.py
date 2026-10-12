@@ -1,3 +1,4 @@
+from db.migrations.drop_old_chat_data import run_drop_old_chat_data_migration
 from db.migrations.add_leaderboard_fields import run_migration
 from db.migrations.add_avatar_cover_fields import run_avatar_migration
 from db.migrations.add_beatmapset_id import run_beatmapset_id_migration
@@ -129,5 +130,6 @@ async def _sqlite_history(engine) -> None:
     await run_witness_sessions_migration(engine)
     await run_local_scores_migration(engine)
     await run_left_members_migration(engine)
+    await run_drop_old_chat_data_migration(engine)
 
 __all__ = ["run_all_migrations"]

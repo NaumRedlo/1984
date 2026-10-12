@@ -7,12 +7,8 @@ import db.models
 from db.migrations import run_all_migrations
 
 _LEGACY_USER = (
-    "INSERT INTO users (id, chat_id, telegram_id, osu_username, rank, hps_points,"
-    " season_bonus_hps, bounties_participated, duel_wins, duel_losses, bp,"
-    " duel_user_aim, duel_user_speed, duel_user_acc, duel_user_cons,"
-    " created_at, updated_at)"
-    " VALUES (1, -100, 1, 'legacy', 'Candidate', 0, 0, 0, 0, 0, 0,"
-    " 4, 4, 4, 4, '2020-01-01', '2020-01-01')"
+    "INSERT INTO users (id, chat_id, telegram_id, osu_username, created_at, updated_at)"
+    " VALUES (1, -100, 1, 'legacy', '2020-01-01', '2020-01-01')"
 )
 
 async def _fresh_engine():
@@ -58,5 +54,36 @@ async def test_chain_still_upgrades_a_legacy_database():
         assert {"n_300", "n_100", "n_50", "ur_est"} <= submissions
 
         assert str(first_approved).startswith("2021-05-05")
+    finally:
+        await engine.dispose()
+
+
+async def test_old_chat_data_is_written_aside_and_then_its_columns_are_gone(tmp_path):
+    import json
+
+    from db.migrations._utils import existing_columns
+    from db.migrations.drop_old_chat_data import run_drop_old_chat_data_migration
+
+    engine = await _fresh_engine()
+    kept = tmp_path / "old.json"
+    try:
+        assert await run_drop_old_chat_data_migration(engine, kept_in=str(kept)) == [], "a database made today has nothing to remove"
+        assert not kept.exists()
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN hps_points INTEGER DEFAULT 0"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN duel_wins INTEGER DEFAULT 0"))
+            await conn.execute(text('ALTER TABLE users ADD COLUMN "rank" VARCHAR(50)'))
+            await conn.execute(text(_LEGACY_USER))
+            await conn.execute(text("UPDATE users SET hps_points = 120, duel_wins = 4, rank = 'Candidate' WHERE id = 1"))
+        removed = await run_drop_old_chat_data_migration(engine, kept_in=str(kept))
+        assert sorted(removed) == ["duel_wins", "hps_points", "rank"]
+        async with engine.begin() as conn:
+            left = await existing_columns(conn, "users")
+            name = (await conn.execute(text("SELECT osu_username FROM users WHERE id = 1"))).scalar()
+        assert not {"hps_points", "duel_wins", "rank"} & left and name == "legacy", "the rest of the record is untouched"
+        assert json.loads(kept.read_text(encoding="utf-8")) == [
+            {"id": 1, "chat_id": -100, "telegram_id": 1, "osu_username": "legacy", "hps_points": 120, "rank": "Candidate", "duel_wins": 4}
+        ]
+        assert await run_drop_old_chat_data_migration(engine, kept_in=str(tmp_path / "again.json")) == []
     finally:
         await engine.dispose()

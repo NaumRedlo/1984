@@ -38,11 +38,11 @@ async def _seed_two_groups(factory):
     async with factory() as s:
         s.add_all([
             User(chat_id=CHAT_A, telegram_id=1, osu_username="alice", osu_user_id=1001,
-                 player_pp=5000, hps_points=100, country="US"),
+                 player_pp=5000, country="US"),
             User(chat_id=CHAT_B, telegram_id=1, osu_username="alice", osu_user_id=1001,
-                 player_pp=9000, hps_points=500, country="US"),
+                 player_pp=9000, country="US"),
             User(chat_id=CHAT_A, telegram_id=2, osu_username="bob", osu_user_id=1002,
-                 player_pp=3000, hps_points=300, country="DE"),
+                 player_pp=3000, country="DE"),
         ])
         await s.commit()
 

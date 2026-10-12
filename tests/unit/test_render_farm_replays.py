@@ -50,7 +50,7 @@ async def _seed(factory, sharing=("kotofey", "lumen", "elsewhere")):
             player = Player(osu_user_id=telegram * 10, telegram_id=telegram, osu_username=name, country="ru", share_replays=name in sharing)
             s.add(player)
             await s.flush()
-            user = User(chat_id=chat, telegram_id=telegram, osu_username=name, osu_user_id=telegram * 10, rank="Candidate", player_id=player.id)
+            user = User(chat_id=chat, telegram_id=telegram, osu_username=name, osu_user_id=telegram * 10, player_id=player.id)
             s.add(user)
             await s.flush()
             s.add(ChatMember(chat_id=chat, player_id=player.id, user_id=user.id))

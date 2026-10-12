@@ -70,13 +70,6 @@ class User(Base):
     app_profile = Column(Text, nullable=True)
     app_profile_at = Column(DateTime, nullable=True)
 
-    hps_points = Column(Integer, default=0, nullable=False)
-    rank = Column(String(50), default='Candidate', nullable=False)
-    season_bonus_hps = Column(Integer, default=0, nullable=False)
-    bounties_participated = Column(Integer, default=0, nullable=False)
-    duel_wins = Column(Integer, default=0, nullable=False)
-    duel_losses = Column(Integer, default=0, nullable=False)
-    last_active_bounty_id = Column(String(50), nullable=True)
     active_title_code = Column(String(50), nullable=True)
 
     profile_opens_date = Column(Date, nullable=True)
@@ -96,15 +89,7 @@ class User(Base):
     grade_count_s = Column(Integer, default=0, nullable=True)
     grade_count_ss = Column(Integer, default=0, nullable=True)
 
-    duel_user_aim = Column(Float, default=4.0, nullable=False)
-    duel_user_speed = Column(Float, default=4.0, nullable=False)
-    duel_user_acc = Column(Float, default=4.0, nullable=False)
-    duel_user_cons = Column(Float, default=4.0, nullable=False)
-    duel_skill_calculated_at = Column(DateTime, nullable=True)
 
-    bp = Column(Integer, default=0, nullable=False)
-    weekly_tier = Column(String(2), nullable=True)
-    weekly_tier_set_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
@@ -122,4 +107,4 @@ class User(Base):
     oauth_token_expiry = Column(DateTime, nullable=True)
 
     def __repr__(self):
-        return f"<User(id={self.id}, tg={self.telegram_id}, osu='{self.osu_username}', osu_id={self.osu_user_id}, HP={self.hps_points}, rank='{self.rank}')>"
+        return f"<User(id={self.id}, tg={self.telegram_id}, osu='{self.osu_username}', osu_id={self.osu_user_id})>"

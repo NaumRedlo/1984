@@ -28,7 +28,7 @@ async def factory():
 def _user(tg, name, **kw):
     base = dict(chat_id=CHAT, telegram_id=tg, osu_username=name, osu_user_id=tg,
                 player_pp=1000, accuracy=97.0, play_count=1000, play_time=3600,
-                ranked_score=1_000_000, total_hits=400_000, rank="Candidate")
+                ranked_score=1_000_000, total_hits=400_000)
     base.update(kw)
     return User(**base)
 

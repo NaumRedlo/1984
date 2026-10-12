@@ -420,8 +420,6 @@ async def _profile(session, mine, *, you: bool, now: Optional[datetime] = None) 
         body["recent"].append({"passed": bool(row.passed), **witnessed.said(row)})
     body["recent"].sort(key=lambda play: play["at"] or 0, reverse=True)
     del body["recent"][RECENT:]
-    body["duels"] = [int(mine.duel_wins or 0), int(mine.duel_losses or 0)]
-    body["points"] = int(mine.hps_points or 0)
     body["title_dates"] = {row.title_code: stamp(row.unlocked_at) for row in held if row.unlocked_at}
     body["title_progress"] = {row.title_code: int(row.current_value or 0) for row in progress}
     weeks = (await session.execute(
