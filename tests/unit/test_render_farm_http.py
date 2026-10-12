@@ -100,8 +100,9 @@ async def test_presence_requires_an_enrolled_person_and_refreshes_a_short_lease(
     mine = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     assert (await client.post("/render/me/presence", headers={"Authorization": f"Bearer {token}"})).status == 400
     reply = await client.post("/render/me/presence", headers=mine)
-    assert reply.status == 204
-    assert await reply.read() == b""
+    assert reply.status == 200
+    assert await reply.json() == {"online": 1}
+    assert invites.online(now=129) == 1
     assert invites.present(now=129) == [invites.owner(token)]
     assert invites.present(now=130) == []
     assert (await client.get("/render/me", headers=mine)).status == 200

@@ -66,6 +66,9 @@ def present(*, now: Optional[float] = None) -> list[Owner]:
             here.append(_owners[key])
     return here
 
+def online(*, now: Optional[float] = None) -> int:
+    return len({owner.player_id if owner.player_id is not None else -owner.telegram_id for owner in present(now=now)})
+
 def known(token: str) -> bool:
     return digest(token) in _good
 

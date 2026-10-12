@@ -530,7 +530,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if invites.owner(token) is None:
             return web.json_response({"error": "no one"}, status=404)
         invites.touch(token, keep=invites.PRESENCE_BEAT_FOR)
-        return web.Response(status=204)
+        return web.json_response({"online": invites.online()})
 
     async def me_avatar(request: web.Request) -> web.Response:
         bad = await guard(request)
