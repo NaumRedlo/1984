@@ -4,6 +4,8 @@ from typing import Callable, Optional
 
 from sqlalchemy import or_, select
 
+from services.dossier_accounts import authenticated_player
+
 from db.models.user import User
 from services import recent_plays
 from utils.logger import get_logger
@@ -64,77 +66,42 @@ class LiveTracker:
             found = await session.execute(select(User.osu_user_id).where(User.osu_user_id.isnot(None), User.chat_id < 0).distinct())
             known = [row[0] for row in found.all()]
             signed = invites.linked_players()
-            if signed:
-                alone = await session.execute(select(Player.osu_user_id).where(Player.id.in_(signed)))
-                known += [row[0] for row in alone.all() if row[0] not in known]
-        active = await self.active()
-        for osu_user_id in active:
-            self.asked.pop(osu_user_id, None)
-        return [osu_user_id for osu_user_id in known if osu_user_id not in active]
-
-    async def active(self, session=None) -> set[int]:
-        from db.database import AsyncSessionFactory
-        from db.models.player import Player
-        from services.render_farm import invites
-
-        owners = invites.present()
-        players = {owner.player_id for owner in owners if owner.player_id is not None}
-        telegram = {owner.telegram_id for owner in owners if owner.telegram_id}
-        if not players and not telegram:
-            return set()
-        async def read(session):
-            found = await session.execute(select(Player.osu_user_id).where(or_(Player.id.in_(players), Player.telegram_id.in_(telegram))))
-            active = {row[0] for row in found.all() if row[0] is not None}
-            if telegram:
-                legacy = await session.execute(select(User.osu_user_id).where(User.telegram_id.in_(telegram)))
-                active.update(row[0] for row in legacy.all() if row[0] is not None)
-            return active
-        if session is not None:
-            return await read(session)
-        async with AsyncSessionFactory() as current:
-            return await read(current)
-
-    async def absent(self, osu_user_id: int, session=None) -> bool:
-        if osu_user_id not in await self.active(session):
-            return True
-        self.asked.pop(osu_user_id, None)
-        self.nudged.pop(osu_user_id, None)
-        return False
+            alone = await session.execute(select(Player.osu_user_id).where(
+                or_(Player.id.in_(signed), authenticated_player())))
+            known += [row[0] for row in alone.all() if row[0] not in known]
+        return known
 
     async def catch(self, osu_user_id: int) -> int:
         from bot.handlers.profile.recent import _play_from_score
         from db.database import AsyncSessionFactory
         from utils.title_progress import evaluate_recent_plays
 
-        if not await self.absent(osu_user_id):
-            return 0
         self.asked[osu_user_id] = self.clock()
         scores = await self.api_client.get_user_recent_scores(osu_user_id, limit=RECENT_LIMIT, mode="osu")
-        if not scores or not await self.absent(osu_user_id):
+        if not scores:
             return 0
         synced = 0
         async with recent_plays.serial(osu_user_id), AsyncSessionFactory() as session:
-            if not await self.absent(osu_user_id, session):
-                return 0
             users = (await session.execute(select(User).where(User.osu_user_id == osu_user_id))).scalars().all()
             if not users:
                 from db.models.player import Player
 
                 users = (await session.execute(select(Player).where(Player.osu_user_id == osu_user_id))).scalars().all()
+            from db.models.player import Player
+
+            authenticated = set((await session.scalars(select(Player.id).where(
+                Player.osu_user_id == osu_user_id, authenticated_player()))).all())
             done: set[int] = set()
             for user in users:
                 if user.player_id is not None and user.player_id in done:
                     continue
                 done.add(user.player_id)
-                fresh = await recent_plays.unseen(session, user.player_id, scores, stored=recent_plays.is_linked(user))
+                fresh = await recent_plays.unseen(session, user.player_id, scores, stored=user.player_id in authenticated or recent_plays.is_linked(user))
                 if not fresh:
                     continue
                 plays = [_play_from_score(score) for score in fresh]
                 synced += await self.api_client.sync_user_map_attempts(user, session, fresh)
                 await evaluate_recent_plays(user, plays, session)
-            if not await self.absent(osu_user_id, session):
-                await session.rollback()
-                return 0
             await session.commit()
         return synced
 

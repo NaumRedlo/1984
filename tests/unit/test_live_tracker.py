@@ -137,7 +137,7 @@ def test_old_clients_get_a_longer_lease_and_regular_requests_keep_the_short_leas
     assert invites.present(now=340) == []
 
 
-async def test_an_online_player_is_skipped_even_when_nudged_and_returns_when_offline(database, monkeypatch):
+async def test_an_online_player_still_polls_without_resetting_its_schedule(database, monkeypatch):
     clock = _Clock()
     monkeypatch.setattr(invites, "monotonic", clock)
     async with database() as session:
@@ -157,19 +157,19 @@ async def test_an_online_player_is_skipped_even_when_nudged_and_returns_when_off
     invites.touch("alone", keep=invites.PRESENCE_BEAT_FOR)
     tracker.nudge(70)
     clock.now += 6
-    assert await tracker.known() == []
-    assert tracker.due([]) == []
-    assert tracker.nudged == {}
-    assert await tracker.catch(70) == 0
-    assert client.asked == []
-    clock.now += 24
     assert sorted(await tracker.known()) == [70, 80]
     assert 70 in tracker.due(await tracker.known())
     await tracker.catch(70)
     assert client.asked == [(70, 20, "osu")]
+    clock.now += 24
+    assert sorted(await tracker.known()) == [70, 80]
+    tracker.nudged.clear()
+    assert 70 not in tracker.due(await tracker.known())
 
 
-async def test_a_player_coming_online_during_the_api_request_is_not_written(database):
+async def test_a_player_coming_online_during_the_api_request_is_written(database, monkeypatch):
+    import utils.title_progress
+    monkeypatch.setattr(utils.title_progress, "evaluate_recent_plays", AsyncMock(return_value=[]))
     async with database() as session:
         session.add(User(chat_id=-1, telegram_id=7, osu_username="Naum", osu_user_id=70))
         await session.commit()
@@ -180,11 +180,11 @@ async def test_a_player_coming_online_during_the_api_request_is_not_written(data
         return [{"id": 1, "beatmap": {}, "statistics": {}, "passed": True}]
     client.get_user_recent_scores = recent
     tracker = LiveTracker(client)
-    assert await tracker.catch(70) == 0
-    assert client.synced == []
+    assert await tracker.catch(70) == 1
+    assert client.synced == [-1]
 
 
-async def test_a_player_coming_online_during_a_write_rolls_back_the_attempt(database, monkeypatch):
+async def test_a_player_coming_online_during_a_write_keeps_the_attempt(database, monkeypatch):
     import utils.title_progress
     monkeypatch.setattr(utils.title_progress, "evaluate_recent_plays", AsyncMock(return_value=[]))
     async with database() as session:
@@ -198,12 +198,15 @@ async def test_a_player_coming_online_during_a_write_rolls_back_the_attempt(data
         invites.touch("mac", keep=invites.PRESENCE_BEAT_FOR)
         return 1
     client.sync_user_map_attempts = sync
-    assert await LiveTracker(client).catch(70) == 0
+    tracker = LiveTracker(client)
+    assert await tracker.catch(70) == 1
+    assert await tracker.catch(70) == 0
     async with database() as session:
-        assert (await session.execute(select(UserMapAttempt))).scalars().all() == []
+        assert len((await session.execute(select(UserMapAttempt))).scalars().all()) == 1
 
 
-async def test_offline_fallback_does_not_copy_witness_results_but_keeps_other_plays(database, monkeypatch):
+@pytest.mark.parametrize("online", [False, True])
+async def test_fallback_does_not_copy_witness_results_but_keeps_other_plays(database, monkeypatch, online):
     import utils.title_progress
     evaluate = AsyncMock(return_value=[])
     monkeypatch.setattr(utils.title_progress, "evaluate_recent_plays", evaluate)
@@ -216,6 +219,9 @@ async def test_offline_fallback_does_not_copy_witness_results_but_keeps_other_pl
             beatmap_id=100, played_at=at, score=100000, max_combo=500,
             count_100=2, count_50=0, count_miss=0, passed=True, mods="HD"))
         await session.commit()
+    if online:
+        invites.remember("mac", invites.Owner(7, "Naum"))
+        invites.touch("mac")
     raw = {"id": 1, "beatmap": {"id": 100}, "created_at": at.isoformat(), "score": 100000,
            "statistics": {"count_100": 2, "count_50": 0, "count_miss": 0}, "max_combo": 500,
            "passed": True, "mods": ["HD", "CL"]}
@@ -235,3 +241,22 @@ async def test_offline_fallback_does_not_copy_witness_results_but_keeps_other_pl
     assert await tracker.catch(70) == 0
     assert client.synced == []
     evaluate.assert_not_awaited()
+
+
+async def test_persisted_app_account_is_polled_and_deduplicated_without_memory(database, monkeypatch):
+    from db.models.render_worker_token import RenderWorkerToken
+    import utils.title_progress
+    monkeypatch.setattr(utils.title_progress, "evaluate_recent_plays", AsyncMock(return_value=[]))
+    async with database() as session:
+        player = Player(osu_user_id=80, osu_username="alone")
+        session.add(player)
+        await session.flush()
+        session.add(RenderWorkerToken(digest="a" * 64, player_id=player.id))
+        session.add(UserMapAttempt(player_id=player.id, score_id=1, beatmap_id=100, pp=10))
+        await session.commit()
+    client = _Client([{"id": 1, "beatmap": {"id": 100}, "statistics": {}, "passed": True}])
+    tracker = LiveTracker(client)
+    assert await tracker.known() == [80]
+    assert await tracker.catch(80) == 0
+    assert client.asked == [(80, 20, "osu")]
+    assert client.synced == []

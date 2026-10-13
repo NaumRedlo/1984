@@ -121,16 +121,18 @@ class ProfileUpdater:
                                                func.min(User.id)).limit(self.SWEEP_BATCH_LIMIT))).all())
 
     async def get_stale_player_ids(self):
+        from services.dossier_accounts import authenticated_player
         from services.render_farm import invites
 
         async with AsyncSessionFactory() as session:
             return list((await session.scalars(select(Player.id).where(
-                Player.id.in_(invites.linked_players()),
+                or_(Player.id.in_(invites.linked_players()), authenticated_player()),
                 ~exists().where(User.player_id == Player.id),
                 or_(Player.last_full_update.is_(None), Player.last_full_update < utcnow() - BACKGROUND_THRESHOLD),
             ).order_by(Player.id).limit(self.SWEEP_BATCH_LIMIT))).all())
 
     async def _due(self, mode, limit):
+        from services.dossier_accounts import authenticated_player
         from services.render_farm import invites
 
         now = utcnow()
@@ -146,7 +148,8 @@ class ProfileUpdater:
         excluded.update(pid for (pid, kind), (_, until) in self.retries.items()
                         if kind == mode and until > time.monotonic())
         stmt = select(Player.id).where(
-            or_(exists().where(User.player_id == Player.id), Player.id.in_(invites.linked_players())),
+            or_(exists().where(User.player_id == Player.id),
+                Player.id.in_(invites.linked_players()), authenticated_player()),
             or_(stamp.is_(None), stamp < now - inactive_interval,
                 active & (stamp < now - active_interval)),
         )

@@ -454,3 +454,34 @@ def test_health_is_one_short_line_and_trouble_is_named():
         assert troubled is True and "retrying" in said, change
     assert "osu! answered 429 x5" in ProfileUpdater.health_said({**calm, "api_http_errors": {429: 5}})[1]
     assert ProfileUpdater.health_said({})[1].startswith("profiles: nothing done yet")
+
+
+@pytest.mark.parametrize("kind", ["app", "legacy_app", "oauth", "legacy_oauth", "revoked", "unlinked"])
+async def test_persisted_authorization_schedules_app_only_profiles(database, kind):
+    from db.models.render_worker_token import RenderWorkerToken
+    from db.models.oauth_token import OAuthToken
+    async with database() as session:
+        player = Player(osu_user_id=1, osu_username="p1", telegram_id=42)
+        session.add(player)
+        await session.flush()
+        pid = player.id
+        if kind in {"app", "legacy_app", "revoked"}:
+            session.add(RenderWorkerToken(digest="b" * 64,
+                player_id=None if kind == "legacy_app" else pid,
+                issued_to=42 if kind == "legacy_app" else None,
+                revoked_at=utcnow() if kind == "revoked" else None))
+        elif kind in {"oauth", "legacy_oauth"}:
+            session.add(OAuthToken(player_id=pid if kind == "oauth" else None,
+                telegram_id=42 if kind == "legacy_oauth" else None, access_token_enc=b"test"))
+        await session.commit()
+    updater = ProfileUpdater(api_for())
+    expected = [] if kind in {"revoked", "unlinked"} else [pid]
+    assert await updater._due("stats_only", 10) == expected
+    assert await updater._due("background_full", 10) == expected
+    assert await updater.get_stale_player_ids() == expected
+    if expected:
+        assert await updater.run_job(pid, "stats_only") == "updated"
+        async with database() as session:
+            player = await session.get(Player, pid)
+            assert player.player_pp == 4567
+            assert player.last_api_update is not None
