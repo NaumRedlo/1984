@@ -73,49 +73,59 @@ def _on_bright(data):
     return Image.open(BytesIO(buf.getvalue())).convert("RGB")
 
 
-def test_the_score_is_written_low_in_the_free_room_of_the_header_and_nowhere_else():
+def test_the_score_stands_beside_the_grade_and_the_title_gives_it_room():
     plain = _picture(_sample())
     left, top, right, bottom = _changed(plain, _picture(dict(_sample(), total_score=1087654321)))
-    assert 640 <= left and right <= 1086
-    assert 150 <= top and bottom <= 258
+    assert 640 <= left and right <= 1110
+    assert 80 <= top and bottom <= 232
     assert _changed(plain, _picture(dict(_sample(), total_score=0))) is None
 
 
-def test_the_score_stands_in_the_middle_of_its_room_however_long_it_is():
+def test_the_score_keeps_its_right_edge_by_the_grade_however_long_it_is():
     plain = _picture(_sample())
     short = _changed(plain, _picture(dict(_sample(), total_score=184320)))
     long = _changed(plain, _picture(dict(_sample(), total_score=1087654321)))
-    assert long[0] < short[0] and long[2] > short[2]
-    assert abs((long[0] + long[2]) - (short[0] + short[2])) <= 6
-    assert abs((long[1] + long[3]) - (short[1] + short[3])) <= 2
+    assert long[0] < short[0]
+    assert abs(long[2] - short[2]) <= 2
 
 
 def test_the_score_lies_on_a_dark_ground_that_fades_out_instead_of_ending_in_an_edge():
     plain = _on_bright(_sample())
     scored = _on_bright(dict(_sample(), total_score=184320))
-    left, top, right, bottom = _changed(plain, scored)
-    middle = (left + right) // 2
     light = lambda picture, at: sum(picture.getpixel(at))
-    darkened = [light(plain, (x, 203)) - light(scored, (x, 203)) for x in range(left, right)]
-    assert max(darkened) - darkened[middle - left] <= 4
-    assert 30 <= darkened[middle - left] <= 70
+    row = [light(plain, (x, 192)) - light(scored, (x, 192)) for x in range(plain.width)]
+    touched = [x for x, darker in enumerate(row) if darker]
+    darkened = row[touched[0]:touched[-1] + 1]
+    middle = len(darkened) // 2
+    assert 760 <= touched[0] and touched[-1] <= 1110
+    assert max(darkened) - darkened[middle] <= 4
+    assert 30 <= darkened[middle] <= 70
     assert 0 <= darkened[2] <= 8 and 0 <= darkened[-3] <= 8
     assert max(abs(after - before) for before, after in zip(darkened, darkened[1:])) <= 4
+
+
+def test_mods_stand_in_the_row_of_map_facts_and_the_overflow_is_counted():
+    plain = _picture(dict(_sample(), mods=""))
+    left, top, right, bottom = _changed(plain, _picture(_sample()))
+    assert 360 <= left and right <= 1084
+    assert 200 <= top and bottom <= 240
+    many = _changed(plain, _picture(dict(_sample(), mods="HDHRDTFLNFSDEZ")))
+    assert many[2] <= 1084
 
 
 def test_the_place_among_the_best_sits_in_the_top_right_corner_of_the_player_panel():
     plain = _picture(_sample())
     left, top, right, bottom = _changed(plain, _picture(dict(_sample(), top_place=12)))
-    assert 1120 <= left and right <= 1244
+    assert 180 <= left and right <= 330
     assert 408 <= top and bottom <= 436
     assert _changed(plain, _picture(dict(_sample(), top_place=None))) is None
 
 
-def test_the_client_is_named_under_the_player_and_changes_nothing_outside_the_panel():
+def test_the_player_panel_comes_first_and_names_the_client_under_the_player():
     plain = _picture(_sample())
     for client in ("lazer", "stable"):
         left, top, right, bottom = _changed(plain, _picture(dict(_sample(), score_client=client)))
-        assert 968 <= left and right <= 1256
+        assert 24 <= left and right <= 330
         assert 398 <= top and 600 <= bottom <= 630
     assert _changed(_picture(dict(_sample(), score_client="lazer")), _picture(dict(_sample(), score_client="stable"))) is not None
     assert _changed(plain, _picture(dict(_sample(), score_client="unknown"))) is None

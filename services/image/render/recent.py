@@ -133,7 +133,7 @@ _RECENT_STRINGS = {
         "no_data": "NO DATA", "failed": "FAILED",
         "great": "GREAT", "good": "GOOD", "fruits": "FRUITS", "drops": "DROPS",
         "droplets": "DROPLETS", "max": "MAX", "KEYS": "KEYS",
-        "top_place": "TOP #{n}",
+        "top_place": "TOP #{n}", "score": "SCORE",
     },
     "ru": {
         "header": "ПОСЛЕДНИЙ РЕЗУЛЬТАТ", "header_shared": "РЕЗУЛЬТАТ", "header_top": "ЛУЧШИЙ РЕЗУЛЬТАТ #{n}",
@@ -144,7 +144,7 @@ _RECENT_STRINGS = {
         "no_data": "НЕТ ДАННЫХ", "failed": "ФЕЙЛ",
         "great": "GREAT", "good": "GOOD", "fruits": "ФРУКТЫ", "drops": "КАПЛИ",
         "droplets": "КАПЕЛЬКИ", "max": "MAX", "KEYS": "КЛАВИШИ",
-        "top_place": "ТОП #{n}",
+        "top_place": "ТОП #{n}", "score": "ОЧКИ",
     },
 }
 
@@ -184,6 +184,7 @@ class RecentCardMixin:
                 "val": (NUM_BOLD, 32, self.font_big), "val2": (NUM_BOLD, 26, self.font_stat_value),
                 "lbl": (SANS_SEMI, 13, self.font_stat_label), "small": (SANS_REG, 15, self.font_small),
                 "grade": (NUM_BOLD, 76, self.font_vs), "player": (SANS_BOLD, 20, self.font_label),
+                "score": (NUM_BOLD, 40, self.font_big),
             }
             fonts = {}
             for k, (path, size, fb) in specs.items():
@@ -200,6 +201,7 @@ class RecentCardMixin:
         f_chip, f_pill, f_section = F["chip"], F["pill"], F["section"]
         f_val, f_val2, f_lbl = F["val"], F["val2"], F["lbl"]
         f_small, f_grade, f_player = F["small"], F["grade"], F["player"]
+        f_score = F["score"]
 
         lang = (data.get("lang") or "en").lower()
         S = _RECENT_STRINGS.get(lang, _RECENT_STRINGS["en"])
@@ -298,7 +300,12 @@ class RecentCardMixin:
         draw = ImageDraw.Draw(img)
 
         mx = cov_x + cov_w + 26
-        mid_right = ring_cx - ring_r - 24
+        total_score = int(data.get("total_score") or 0)
+        score_shown = f"{total_score:,}".replace(",", " ") if total_score > 0 else ""
+        score_right = ring_cx - ring_r - 28
+        score_w = self._text_size(draw, score_shown, f_score)[0] if score_shown else 0
+        mid_right = score_right - score_w - 32 if score_shown else ring_cx - ring_r - 24
+        chips_right = ring_cx - ring_r - 16
         mid_w = mid_right - mx
 
         mav_sz = 28
@@ -354,38 +361,19 @@ class RecentCardMixin:
             cx += spw + 22
         draw = ImageDraw.Draw(img)
 
-        total_score = int(data.get("total_score") or 0)
-        if total_score > 0:
-            shown = f"{total_score:,}".replace(",", " ")
-            pad_x, pad_y, soft = 20, 9, 14
-            fits = next((f for f in (f_val, f_val2, f_chip) if self._text_size(draw, shown, f)[0] <= mid_right - cx - 2 * pad_x), None)
-            if fits is not None:
-                score_w = self._text_size(draw, shown, fits)[0]
-                cap_top, cap_bottom = draw.textbbox((0, 0), "H", font=fits)[1::2]
-                score_cx, half_h = (cx + mid_right) / 2, (cap_bottom - cap_top) / 2
-                box = (int(score_cx - score_w / 2 - pad_x), int(chip_cy - half_h - pad_y),
-                       int(score_cx + score_w / 2 + pad_x), int(chip_cy + half_h + pad_y))
-                reach = soft * 3
-                shade = Image.new("RGBA", (box[2] - box[0] + 2 * reach, box[3] - box[1] + 2 * reach), (0, 0, 0, 0))
-                ImageDraw.Draw(shade).rounded_rectangle((reach, reach, shade.width - reach, shade.height - reach),
-                                                        radius=(box[3] - box[1]) // 2, fill=(0, 0, 0, 105))
-                shade = shade.filter(ImageFilter.GaussianBlur(soft))
-                keep = (max(box[0] - reach, M), max(box[1] - reach, hero_y), min(box[2] + reach, M + hero_w), min(box[3] + reach, hero_y + hero_h))
-                shade = shade.crop((keep[0] - (box[0] - reach), keep[1] - (box[1] - reach), keep[2] - (box[0] - reach), keep[3] - (box[1] - reach)))
-                img.paste(shade, (keep[0], keep[1]), shade)
-                draw = ImageDraw.Draw(img)
-                self._text_mid(draw, score_cx, chip_cy, shown, fits, TEXT_PRIMARY, align="center")
-
-        mods = data.get("mods", "")
-        mod_list = self._normalize_mods(mods)
+        mod_list = self._normalize_mods(data.get("mods", ""))
         if mod_list:
-            mh, mw, gsz = 36, 44, 32
-            my = hero_y + pad
-            bx = mid_right
-            for m in reversed(mod_list):
-                bx -= mw
+            mh, mw, gsz = 30, 40, 26
+            bx = cx
+            for i, m in enumerate(mod_list):
+                rest = len(mod_list) - i
+                all_fit = bx + rest * mw + (rest - 1) * 6 <= chips_right
+                if not all_fit and bx + mw + 52 > chips_right:
+                    self._text_mid(ImageDraw.Draw(img), bx, chip_cy, f"+{rest}", f_chip, TEXT_PRIMARY)
+                    break
+                my = int(chip_cy - mh / 2)
                 col = MOD_COLORS.get(m, (100, 100, 120))
-                self._aa_rounded_fill(img, (bx, my, bx + mw, my + mh), radius=9, fill=col)
+                self._aa_rounded_fill(img, (bx, my, bx + mw, my + mh), radius=8, fill=col)
                 glyph = load_mod_icon(m, size=gsz)
                 ink = mod_ink(col)
                 if glyph:
@@ -394,8 +382,28 @@ class RecentCardMixin:
                     img.paste(tinted, (bx + (mw - glyph.width) // 2, my + (mh - glyph.height) // 2), tinted)
                 else:
                     self._text_center(ImageDraw.Draw(img), bx + mw // 2, my + mh // 2 - 8, m, f_pill, ink)
-                bx -= 6
+                bx += mw + 6
             draw = ImageDraw.Draw(img)
+
+        if score_shown:
+            label_cy, value_cy = ring_cy - 24, ring_cy + 10
+            label_w = self._text_size(draw, S["score"], f_lbl)[0]
+            cap_top, cap_bottom = draw.textbbox((0, 0), "H", font=f_score)[1::2]
+            half_h = (cap_bottom - cap_top) / 2
+            pad_x, pad_y, soft = 20, 10, 14
+            box = (int(score_right - max(score_w, label_w) - pad_x), int(label_cy - 10 - pad_y),
+                   int(score_right + pad_x), int(value_cy + half_h + pad_y))
+            reach = soft * 3
+            shade = Image.new("RGBA", (box[2] - box[0] + 2 * reach, box[3] - box[1] + 2 * reach), (0, 0, 0, 0))
+            ImageDraw.Draw(shade).rounded_rectangle((reach, reach, shade.width - reach, shade.height - reach),
+                                                    radius=18, fill=(0, 0, 0, 105))
+            shade = shade.filter(ImageFilter.GaussianBlur(soft))
+            keep = (max(box[0] - reach, M), max(box[1] - reach, hero_y), min(box[2] + reach, M + hero_w), min(box[3] + reach, hero_y + hero_h))
+            shade = shade.crop((keep[0] - (box[0] - reach), keep[1] - (box[1] - reach), keep[2] - (box[0] - reach), keep[3] - (box[1] - reach)))
+            img.paste(shade, (keep[0], keep[1]), shade)
+            draw = ImageDraw.Draw(img)
+            self._text_mid(draw, score_right, label_cy, S["score"], f_lbl, TEXT_SECONDARY, align="right")
+            self._text_mid(draw, score_right, value_cy, score_shown, f_score, TEXT_PRIMARY, align="right")
 
         stats_y, stats_h = hero_y + hero_h + 16, 108
         panel(M, stats_y, W - 2 * M, stats_h)
@@ -406,7 +414,7 @@ class RecentCardMixin:
             ("300", n300, (120, 220, 130)), ("100", n100, (230, 205, 90)),
             ("50", n50, (210, 150, 90)), ("miss", misses, ACCENT_RED),
         ]
-        weights = [1.5, 1.7, 1.4] + [1.0] * len(counts)
+        weights = [1.2, 1.5, 1.6, 2.2]
         tot = sum(weights)
         xs, acc_x = [], inner_x
         for wgt in weights:
@@ -414,6 +422,14 @@ class RecentCardMixin:
             acc_x += inner_w * wgt / tot
         xs.append(inner_x + inner_w)
         centers = [(xs[i] + xs[i + 1]) / 2 for i in range(len(weights))]
+        hit_cols = [max(self._text_size(draw, S.get(key, key), f_lbl)[0], self._text_size(draw, str(val), f_val2)[0])
+                    for key, val, _ in counts]
+        hit_gap = 34
+        hit_x = centers[3] - (sum(hit_cols) + hit_gap * (len(hit_cols) - 1)) / 2
+        hit_centers = []
+        for col_w in hit_cols:
+            hit_centers.append(hit_x + col_w / 2)
+            hit_x += col_w + hit_gap
         lbl_cy = stats_y + 24
         val_cy = stats_y + 54
 
@@ -472,19 +488,19 @@ class RecentCardMixin:
         for i, (key, val, col) in enumerate(counts):
             lbl = S.get(key, key)
             col = tuple(col)
-            c = centers[3 + i]
+            c = hit_centers[i]
             self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
             self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center")
 
         mid_y = stats_y + stats_h + 16
         mid_h = H - mid_y - 22
         gap = 16
-        perf_w = int((W - 2 * M - 2 * gap) * 0.50)
-        det_w = int((W - 2 * M - 2 * gap) * 0.26)
+        perf_w = int((W - 2 * M - 2 * gap) * 0.49)
+        det_w = int((W - 2 * M - 2 * gap) * 0.255)
         ply_w = (W - 2 * M - 2 * gap) - perf_w - det_w
-        perf_x = M
+        ply_x = M
+        perf_x = ply_x + ply_w + gap
         det_x = perf_x + perf_w + gap
-        ply_x = det_x + det_w + gap
 
         panel(perf_x, mid_y, perf_w, mid_h)
         self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, RECENT_ACCENT)
