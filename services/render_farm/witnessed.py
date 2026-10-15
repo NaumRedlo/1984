@@ -72,7 +72,9 @@ def _count(said: dict, key: str, most: int = COUNT_MOST) -> Optional[int]:
 
 def _words(said: dict, key: str) -> str:
     value = said.get(key)
-    return value.strip()[:WORDS_MOST] if isinstance(value, str) else ""
+    if not isinstance(value, str):
+        return ""
+    return "".join(c for c in value if c.isprintable() or c == " ").strip()[:WORDS_MOST]
 
 STATUSES = ("ranked", "approved", "qualified", "loved", "pending", "unsubmitted")
 STARS_MOST = 30.0

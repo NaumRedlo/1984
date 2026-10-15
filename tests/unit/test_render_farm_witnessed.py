@@ -89,6 +89,21 @@ async def test_a_play_is_kept_once_and_its_map_learnt_afterwards(factory):
         row = await s.get(WitnessedPlay, play)
         assert (row.star_rating, row.bpm, row.length, row.map_max_combo, row.status) == (7.07, 200.0, 250, 650, "ranked")
 
+async def test_a_name_read_as_a_null_from_the_game_is_kept_empty_and_learnt_from_osu(factory):
+    told = witnessed.read(_told(version="\x00", artist="x\x00i\n", title=""), NOW)
+    assert (told["version"], told["artist"], told["title"]) == ("", "xi", "")
+    naum, _, _ = await _seed(factory)
+    player = await _player(factory, naum)
+    async with factory() as s:
+        verdict, row = await witnessed.keep(s, player, _told(version="\x00", title=""), now=NOW)
+        assert verdict == witnessed.KEPT and row.version == "" and "\x00" not in row.title
+        play = row.id
+    async with factory() as s:
+        assert await witnessed.learn(s, _Osu(), play) is True
+    async with factory() as s:
+        row = await s.get(WitnessedPlay, play)
+        assert (row.version, row.title) == ("FOUR DIMENSIONS", "Blue Zenith")
+
 def test_what_the_client_knows_of_a_map_is_believed_only_when_it_could_be_true():
     told = witnessed.facts_told({"stars": 6.254, "bpm": 180.0, "length": 120, "status": "ranked", "ar": 9})
     assert told == {"stars": 6.25, "bpm": 180.0, "length": 120, "status": "ranked"}
