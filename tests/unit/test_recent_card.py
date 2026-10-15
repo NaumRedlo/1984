@@ -63,16 +63,6 @@ def _changed(one, other):
     return ImageChops.difference(one, other).getbbox()
 
 
-def _on_bright(data):
-    from io import BytesIO
-
-    from PIL import Image
-
-    cover = Image.new("RGBA", (900, 500), (250, 235, 170, 255))
-    buf = CardRenderer().generate_recent_card(data, cover, None, None, None, [0.5] * 64)
-    return Image.open(BytesIO(buf.getvalue())).convert("RGB")
-
-
 def test_the_score_stands_beside_the_grade_and_the_title_gives_it_room():
     plain = _picture(_sample())
     left, top, right, bottom = _changed(plain, _picture(dict(_sample(), total_score=1087654321)))
@@ -87,21 +77,6 @@ def test_the_score_keeps_its_right_edge_by_the_grade_however_long_it_is():
     long = _changed(plain, _picture(dict(_sample(), total_score=1087654321)))
     assert long[0] < short[0]
     assert abs(long[2] - short[2]) <= 2
-
-
-def test_the_score_lies_on_a_dark_ground_that_fades_out_instead_of_ending_in_an_edge():
-    plain = _on_bright(_sample())
-    scored = _on_bright(dict(_sample(), total_score=184320))
-    light = lambda picture, at: sum(picture.getpixel(at))
-    row = [light(plain, (x, 192)) - light(scored, (x, 192)) for x in range(plain.width)]
-    touched = [x for x, darker in enumerate(row) if darker]
-    darkened = row[touched[0]:touched[-1] + 1]
-    middle = len(darkened) // 2
-    assert 760 <= touched[0] and touched[-1] <= 1110
-    assert max(darkened) - darkened[middle] <= 4
-    assert 30 <= darkened[middle] <= 70
-    assert 0 <= darkened[2] <= 8 and 0 <= darkened[-3] <= 8
-    assert max(abs(after - before) for before, after in zip(darkened, darkened[1:])) <= 4
 
 
 def test_mods_hang_under_the_hit_counts_and_the_overflow_is_counted():

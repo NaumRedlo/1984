@@ -362,21 +362,6 @@ class RecentCardMixin:
 
         if score_shown:
             label_cy, value_cy = ring_cy - 24, ring_cy + 10
-            label_w = self._text_size(draw, S["score"], f_lbl)[0]
-            cap_top, cap_bottom = draw.textbbox((0, 0), "H", font=f_score)[1::2]
-            half_h = (cap_bottom - cap_top) / 2
-            pad_x, pad_y, soft = 20, 10, 14
-            box = (int(score_right - max(score_w, label_w) - pad_x), int(label_cy - 10 - pad_y),
-                   int(score_right + pad_x), int(value_cy + half_h + pad_y))
-            reach = soft * 3
-            shade = Image.new("RGBA", (box[2] - box[0] + 2 * reach, box[3] - box[1] + 2 * reach), (0, 0, 0, 0))
-            ImageDraw.Draw(shade).rounded_rectangle((reach, reach, shade.width - reach, shade.height - reach),
-                                                    radius=18, fill=(0, 0, 0, 105))
-            shade = shade.filter(ImageFilter.GaussianBlur(soft))
-            keep = (max(box[0] - reach, M), max(box[1] - reach, hero_y), min(box[2] + reach, M + hero_w), min(box[3] + reach, hero_y + hero_h))
-            shade = shade.crop((keep[0] - (box[0] - reach), keep[1] - (box[1] - reach), keep[2] - (box[0] - reach), keep[3] - (box[1] - reach)))
-            img.paste(shade, (keep[0], keep[1]), shade)
-            draw = ImageDraw.Draw(img)
             self._text_mid(draw, score_right, label_cy, S["score"], f_lbl, TEXT_SECONDARY, align="right")
             self._text_mid(draw, score_right, value_cy, score_shown, f_score, TEXT_PRIMARY, align="right")
 
