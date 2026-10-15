@@ -104,13 +104,13 @@ def test_the_score_lies_on_a_dark_ground_that_fades_out_instead_of_ending_in_an_
     assert max(abs(after - before) for before, after in zip(darkened, darkened[1:])) <= 4
 
 
-def test_mods_stand_in_the_row_of_map_facts_and_the_overflow_is_counted():
+def test_mods_hang_under_the_hit_counts_and_the_overflow_is_counted():
     plain = _picture(dict(_sample(), mods=""))
     left, top, right, bottom = _changed(plain, _picture(_sample()))
-    assert 360 <= left and right <= 1084
-    assert 200 <= top and bottom <= 240
-    many = _changed(plain, _picture(dict(_sample(), mods="HDHRDTFLNFSDEZ")))
-    assert many[2] <= 1084
+    assert 840 <= left and right <= 1232
+    assert 340 <= top and bottom <= 374
+    many = _changed(plain, _picture(dict(_sample(), mods="HDHRDTFLNFSDEZPFSOTDBLCLMR")))
+    assert 840 <= many[0] and many[2] <= 1232 and many[3] <= 374
 
 
 def test_the_place_among_the_best_sits_in_the_top_right_corner_of_the_player_panel():

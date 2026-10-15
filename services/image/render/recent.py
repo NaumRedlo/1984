@@ -305,7 +305,6 @@ class RecentCardMixin:
         score_right = ring_cx - ring_r - 28
         score_w = self._text_size(draw, score_shown, f_score)[0] if score_shown else 0
         mid_right = score_right - score_w - 32 if score_shown else ring_cx - ring_r - 24
-        chips_right = ring_cx - ring_r - 16
         mid_w = mid_right - mx
 
         mav_sz = 28
@@ -361,30 +360,6 @@ class RecentCardMixin:
             cx += spw + 22
         draw = ImageDraw.Draw(img)
 
-        mod_list = self._normalize_mods(data.get("mods", ""))
-        if mod_list:
-            mh, mw, gsz = 30, 40, 26
-            bx = cx
-            for i, m in enumerate(mod_list):
-                rest = len(mod_list) - i
-                all_fit = bx + rest * mw + (rest - 1) * 6 <= chips_right
-                if not all_fit and bx + mw + 52 > chips_right:
-                    self._text_mid(ImageDraw.Draw(img), bx, chip_cy, f"+{rest}", f_chip, TEXT_PRIMARY)
-                    break
-                my = int(chip_cy - mh / 2)
-                col = MOD_COLORS.get(m, (100, 100, 120))
-                self._aa_rounded_fill(img, (bx, my, bx + mw, my + mh), radius=8, fill=col)
-                glyph = load_mod_icon(m, size=gsz)
-                ink = mod_ink(col)
-                if glyph:
-                    tinted = Image.new("RGBA", glyph.size, ink + (255,))
-                    tinted.putalpha(glyph.split()[3])
-                    img.paste(tinted, (bx + (mw - glyph.width) // 2, my + (mh - glyph.height) // 2), tinted)
-                else:
-                    self._text_center(ImageDraw.Draw(img), bx + mw // 2, my + mh // 2 - 8, m, f_pill, ink)
-                bx += mw + 6
-            draw = ImageDraw.Draw(img)
-
         if score_shown:
             label_cy, value_cy = ring_cy - 24, ring_cy + 10
             label_w = self._text_size(draw, S["score"], f_lbl)[0]
@@ -424,7 +399,7 @@ class RecentCardMixin:
         centers = [(xs[i] + xs[i + 1]) / 2 for i in range(len(weights))]
         hit_cols = [max(self._text_size(draw, S.get(key, key), f_lbl)[0], self._text_size(draw, str(val), f_val2)[0])
                     for key, val, _ in counts]
-        hit_gap = 34
+        hit_gap = max(10, min(34, (xs[4] - xs[3] - 24 - sum(hit_cols)) / max(1, len(hit_cols) - 1)))
         hit_x = centers[3] - (sum(hit_cols) + hit_gap * (len(hit_cols) - 1)) / 2
         hit_centers = []
         for col_w in hit_cols:
@@ -491,6 +466,34 @@ class RecentCardMixin:
             c = hit_centers[i]
             self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
             self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center")
+
+        mod_list = self._normalize_mods(data.get("mods", ""))
+        if mod_list:
+            mh, mw, gsz, mgap = 24, 34, 20, 5
+            room = xs[4] - xs[3] - 16
+            fit = max(1, int((room + mgap) // (mw + mgap)))
+            shown_mods = mod_list if len(mod_list) <= fit else mod_list[:fit - 1]
+            more = len(mod_list) - len(shown_mods)
+            more_txt = f"+{more}" if more else ""
+            more_w = self._text_size(draw, more_txt, f_pill)[0] + 6 if more else 0
+            row_w = len(shown_mods) * mw + (len(shown_mods) - 1) * mgap + (mgap + more_w if more else 0)
+            bx = int(centers[3] - row_w / 2)
+            my = stats_y + stats_h - 34
+            for m in shown_mods:
+                col = MOD_COLORS.get(m, (100, 100, 120))
+                self._aa_rounded_fill(img, (bx, my, bx + mw, my + mh), radius=7, fill=col)
+                glyph = load_mod_icon(m, size=gsz)
+                ink = mod_ink(col)
+                if glyph:
+                    tinted = Image.new("RGBA", glyph.size, ink + (255,))
+                    tinted.putalpha(glyph.split()[3])
+                    img.paste(tinted, (bx + (mw - glyph.width) // 2, my + (mh - glyph.height) // 2), tinted)
+                else:
+                    self._text_center(ImageDraw.Draw(img), bx + mw // 2, my + mh // 2 - 8, m, f_pill, ink)
+                bx += mw + mgap
+            if more:
+                self._text_mid(ImageDraw.Draw(img), bx, my + mh / 2, more_txt, f_pill, TEXT_PRIMARY)
+            draw = ImageDraw.Draw(img)
 
         mid_y = stats_y + stats_h + 16
         mid_h = H - mid_y - 22
