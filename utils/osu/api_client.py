@@ -961,18 +961,6 @@ class OsuApiClient:
             params.update(extra_params)
         return await self._make_request("GET", "beatmapsets/search", params=params)
 
-    async def download_osu_file(self, beatmap_id: Union[int, str]) -> Optional[bytes]:
-        import aiohttp
-        url = f"https://osu.ppy.sh/osu/{beatmap_id}"
-        try:
-            async with aiohttp.ClientSession() as sess:
-                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status == 200:
-                        return await resp.read()
-        except Exception as e:
-            logger.warning(f"download_osu_file({beatmap_id}): {e}")
-        return None
-
     @staticmethod
     async def try_get_oauth_token(telegram_id: int) -> Optional[str]:
         try:
