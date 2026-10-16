@@ -264,6 +264,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             if beatmap_id and played_in == 0:
                 buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}"))
             rows = [buttons]
+            if played_in == 0 and score.get("id") and (score.get("has_replay") or score.get("replay")):
+                rows.append([InlineKeyboardButton(text=t("rs.kb.render", lang), callback_data=f"rrs:{score['id']}")])
             kb = InlineKeyboardMarkup(inline_keyboard=rows)
 
             sent = await message.answer_photo(photo=photo, reply_markup=kb)
@@ -285,5 +287,32 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
             await wait_msg.edit_text(error_text, parse_mode="HTML")
         else:
             await message.answer(error_text, parse_mode="HTML")
+
+@router.callback_query(lambda callback: (callback.data or "").startswith("rrs:"))
+async def render_recent(callback: types.CallbackQuery, osu_api_client=None, **_):
+    from services.render_farm import orders
+    lang = (await get_language(callback.from_user.id)).lower()
+    try:
+        score_id = int((callback.data or "").split(":", 1)[1])
+    except ValueError:
+        await callback.answer()
+        return
+    if osu_api_client is None or callback.message is None:
+        await callback.answer(t("common.api_not_ready", lang), show_alert=True)
+        return
+    await callback.answer(t("rs.render_asked", lang))
+    token = await get_valid_token(callback.from_user.id)
+
+    async def fetch(path: str) -> bool:
+        replay = await osu_api_client.download_replay(score_id, oauth_token=token)
+        if replay is None and token:
+            replay = await osu_api_client.download_replay(score_id)
+        if not replay:
+            return False
+        with open(path, "wb") as kept:
+            kept.write(replay)
+        return True
+
+    await orders.order(callback.bot, callback.message, callback.from_user, fetch, lang, osu_api_client, missing="rs.render_no_replay")
 
 __all__ = ["router"]

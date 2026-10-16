@@ -154,6 +154,9 @@ CATALOG = {
     },
     "rs.misses": {"en": " ({n} misses)", "ru": " ({n} миссов)"},
     "rs.fc": {"en": " (FC)", "ru": " (FC)"},
+    "rs.kb.render": {"en": "Render video", "ru": "Отрендерить видео"},
+    "rs.render_asked": {"en": "Fetching the replay…", "ru": "Забираю реплей…"},
+    "rs.render_no_replay": {"en": "osu! did not give the replay of this play.", "ru": "osu! не отдал реплей этой игры."},
     "rs.fetch_failed": {
         "en": "Couldn't fetch the last score from the osu! API.",
         "ru": "Не удалось получить последний скор из osu! API.",

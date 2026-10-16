@@ -61,44 +61,55 @@ def status_of(job: Job, lang: str) -> str:
 
 async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
     person = message.from_user
-    if person is None or message.document is None:
+    document = message.document
+    if person is None or document is None:
         return
+    if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
+        await message.reply(t("farm.too_big", lang))
+        return
+
+    async def fetch(path: str) -> bool:
+        try:
+            await bot.download(document, destination=path)
+            return True
+        except Exception as exc:
+            logger.warning("could not take a replay from %s: %s", person.id, exc)
+            return False
+
+    await order(bot, message, person, fetch, lang, osu_api_client)
+
+async def order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable") -> None:
     if queue.open_for(person.id) + _receiving[person.id] >= settings.RENDER_ORDERS_EACH:
         await message.reply(t("farm.too_many", lang, n=settings.RENDER_ORDERS_EACH))
         return
     _receiving[person.id] += 1
     try:
-        await _take(bot, message, lang, osu_api_client)
+        await _order(bot, message, person, fetch, lang, osu_api_client, missing)
     finally:
         _receiving[person.id] -= 1
         if not _receiving[person.id]:
             del _receiving[person.id]
 
-async def _take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
-    document = message.document
-    person = message.from_user
-    if document is None or person is None:
-        return
+async def _order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable") -> None:
     if message.chat.type == "private" and not await members.shares_a_group(bot, person.id):
         await message.reply(t("farm.members_only", lang))
         return
     async with AsyncSessionFactory() as session:
         player = (await session.execute(select(Player.id).where(Player.telegram_id == person.id))).scalar_one_or_none()
     in_app = player is not None and (person.id in invites.linked() or player in invites.linked_players())
-    if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
-        await message.reply(t("farm.too_big", lang))
-        return
     workdir = tempfile.mkdtemp(prefix="order-")
     job = None
     handed = False
     try:
         path = os.path.join(workdir, "replay.osr")
         try:
-            await bot.download(document, destination=path)
+            if not await fetch(path):
+                await message.reply(t(missing, lang))
+                return
             with open(path, "rb") as source:
                 head = header(source.read())
         except Exception as exc:
-            logger.warning("could not take a replay from %s: %s", person.id, exc)
+            logger.warning("could not read a replay from %s: %s", person.id, exc)
             await message.reply(t("farm.unreadable", lang))
             return
         if head is None:
