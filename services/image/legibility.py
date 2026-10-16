@@ -5,6 +5,7 @@ from PIL import Image, ImageChops
 
 FLOOR = 4.5
 COVER_CEILING = 0.075
+BRIGHT_PART = 98
 QUIET_CHROMA = 48
 LIGHTEST = (245, 243, 246)
 GROUND = (14, 12, 16)
@@ -62,19 +63,23 @@ def readable(colour, under: Optional[float], floor: float = FLOOR):
     return LIGHTEST + tail
 
 def calm(art: Image.Image, ceiling: float = COVER_CEILING) -> Image.Image:
-    rgb = art.convert("RGB")
-    seen = rgb.point(_TO_LINEAR_8 * 3).convert("L", matrix=(0.2126, 0.7152, 0.0722, 0))
-    cap = ceiling * 255
-    knee = cap * 0.55
-    gains = []
-    for level in range(256):
-        if level <= knee:
-            gains.append(255)
-            continue
-        soft = knee + (cap - knee) * (1 - math.exp(-(level - knee) / (cap - knee)))
-        gains.append(round(255 * _encoded(soft / 255) / _encoded(level / 255)))
-    gain = seen.point(gains)
-    calmed = ImageChops.multiply(rgb, Image.merge("RGB", (gain, gain, gain)))
+    import numpy as np
+
+    rgb = np.asarray(art.convert("RGB"), dtype=np.float32) / 255.0
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    seen = linear @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    high = float(np.percentile(seen, BRIGHT_PART)) if seen.size else 0.0
+    if high <= ceiling and float(seen.max(initial=0.0)) <= ceiling * 1.1:
+        return art.copy()
+    linear = linear * min(1.0, ceiling / max(high, 1e-6))
+    seen = linear @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    knee = ceiling * 0.8
+    over = np.maximum(seen - knee, 0.0)
+    softened = knee + (ceiling * 1.1 - knee) * (1.0 - np.exp(-over / (ceiling * 1.1 - knee)))
+    gain = np.where(seen > knee, softened / np.maximum(seen, 1e-6), 1.0)
+    linear = linear * gain[..., None]
+    encoded = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(np.maximum(linear, 0.0), 1 / 2.4) - 0.055)
+    calmed = Image.fromarray(np.clip(np.round(encoded * 255.0), 0, 255).astype(np.uint8), "RGB")
     if art.mode == "RGBA":
         calmed = calmed.convert("RGBA")
         calmed.putalpha(art.getchannel("A"))
