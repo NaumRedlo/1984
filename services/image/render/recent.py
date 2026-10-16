@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from services.image import legibility
+from services.image import tint
 from services.image.constants import (
     status_colours,
     TEXT_PRIMARY,
@@ -162,7 +163,13 @@ class RecentCardMixin:
         player_cover: Optional[Image.Image] = None,
         strains: Optional[List[float]] = None,
     ) -> BytesIO:
+        tint.wear(data.get("palette"))
+        try:
+            return self._recent_card(data, cover, mapper_avatar, player_avatar, player_cover, strains)
+        finally:
+            tint.wear(None)
 
+    def _recent_card(self, data, cover, mapper_avatar, player_avatar, player_cover, strains) -> BytesIO:
         W, H = 1280, 652
         M = 24
         img = Image.new("RGB", (W, H), RECENT_BG)
@@ -255,7 +262,7 @@ class RecentCardMixin:
             img.paste(_hicon, (hx, int(round(head_cy - _hicon.height / 2))), _hicon)
             draw = ImageDraw.Draw(img)
             hx += icon_w
-        self._text_mid(draw, hx, head_cy, head_txt, f_head, RECENT_ACCENT)
+        self._text_mid(draw, hx, head_cy, head_txt, f_head, tint.tone(RECENT_ACCENT))
         played_at = data.get("played_at", "")
         date_str = ""
         if played_at:
@@ -397,7 +404,7 @@ class RecentCardMixin:
             bw = (xs[cx_i + 1] - xs[cx_i]) - 34
             bx0 = int(centers[cx_i] - bw / 2)
             by = stats_y + stats_h - 26
-            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=RECENT_TRACK)
+            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=tint.tone(RECENT_TRACK))
             fw = max(int(bw * max(0.0, min(1.0, frac))), 0)
             if fw > 0:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
@@ -428,7 +435,7 @@ class RecentCardMixin:
 
         self._text_mid(draw, centers[1], lbl_cy, S["accuracy"], f_lbl, TEXT_SECONDARY, align="center")
         self._text_mid(draw, centers[1], val_cy, f"{acc:.2f}%", f_val, TEXT_PRIMARY, align="center")
-        bar(1, acc / 100.0, RECENT_LINE)
+        bar(1, acc / 100.0, tint.tone(RECENT_LINE))
 
         self._text_mid(draw, centers[2], lbl_cy, S["combo"], f_lbl, TEXT_SECONDARY, align="center")
         combo_str = f"{combo}x"
@@ -436,14 +443,14 @@ class RecentCardMixin:
         combo_w, _ = self._text_size(draw, combo_str, f_val)
         max_w, _ = self._text_size(draw, max_str, f_chip)
         combo_x0 = int(centers[2] - (combo_w + max_w) / 2)
-        self._text_mid(draw, combo_x0, val_cy, combo_str, f_val, RECENT_LINE)
+        self._text_mid(draw, combo_x0, val_cy, combo_str, f_val, tint.tone(RECENT_LINE))
         if max_str:
             v_top, v_bottom = draw.textbbox((0, 0), "H", font=f_val)[1::2]
             c_top, c_bottom = draw.textbbox((0, 0), "H", font=f_chip)[1::2]
             baseline = val_cy - (v_top + v_bottom) / 2 + v_bottom
             self._draw_text(draw, (combo_x0 + combo_w + 2, int(round(baseline - c_bottom))),
                                    max_str, f_chip, TEXT_SECONDARY)
-        bar(2, (combo / map_max_combo) if map_max_combo else 0.0, RECENT_LINE)
+        bar(2, (combo / map_max_combo) if map_max_combo else 0.0, tint.tone(RECENT_LINE))
 
         for i, (key, val, col) in enumerate(counts):
             lbl = S.get(key, key)
@@ -491,13 +498,13 @@ class RecentCardMixin:
         det_x = perf_x + perf_w + gap
 
         panel(perf_x, mid_y, perf_w, mid_h)
-        self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, RECENT_ACCENT)
+        self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, tint.tone(RECENT_ACCENT))
         self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
                               strains, completion, is_passed, f_lbl, S)
         draw = ImageDraw.Draw(img)
 
         panel(det_x, mid_y, det_w, mid_h)
-        self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, RECENT_ACCENT)
+        self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, tint.tone(RECENT_ACCENT))
         params = data.get("details") or [
             ("CS", "cs", data.get("cs", 0.0), 1), ("AR", "ar", data.get("ar", 0.0), 1),
             ("OD", "od", data.get("od", 0.0), 1), ("HP", "hp", data.get("hp", 0.0), 1)]
@@ -518,7 +525,7 @@ class RecentCardMixin:
             bw = det_w - 36
             by = ry + 26
             frac = min(float(val) / 10.0, 1.0)
-            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=RECENT_TRACK)
+            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=tint.tone(RECENT_TRACK))
             t = frac
             col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
             if frac > 0:
@@ -532,13 +539,13 @@ class RecentCardMixin:
             mask = self._rounded_mask((ply_w, mid_h), 14)
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, RECENT_ACCENT)
+        self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, tint.tone(RECENT_ACCENT))
         top_place = int(data.get("top_place") or 0)
         if top_place > 0:
             place_txt = S["top_place"].format(n=top_place)
             place_w = self._text_size(draw, place_txt, f_pill)[0] + 18
             place_right, place_cy = ply_x + ply_w - 14, mid_y + 24
-            self._aa_rounded_fill(img, (place_right - place_w, place_cy - 12, place_right, place_cy + 12), radius=12, fill=RECENT_ACCENT)
+            self._aa_rounded_fill(img, (place_right - place_w, place_cy - 12, place_right, place_cy + 12), radius=12, fill=tint.tone(RECENT_ACCENT))
             self._text_mid(ImageDraw.Draw(img), place_right - place_w / 2, place_cy, place_txt, f_pill, (255, 255, 255), align="center")
             draw = ImageDraw.Draw(img)
         played_in = data.get("score_client") if data.get("score_client") in ("lazer", "stable") else None
@@ -549,7 +556,7 @@ class RecentCardMixin:
             circle = self._circle_crop(player_avatar, pav)
             img.paste(circle, (pav_x, pav_y), circle)
         self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
-                                 outline=RECENT_ACCENT, width=3)
+                                 outline=tint.tone(RECENT_ACCENT), width=3)
         draw = ImageDraw.Draw(img)
         self._text_center(draw, pcx, pav_y + pav + 12, S["played_by"], f_lbl, TEXT_SECONDARY)
         uname = username
@@ -557,7 +564,7 @@ class RecentCardMixin:
             uname = uname[:-1]
         if uname != username:
             uname += ".."
-        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE)
+        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, tint.tone(RECENT_LINE))
         if played_in:
             self._text_center(draw, pcx, pav_y + pav + 60, played_in, f_lbl, TEXT_SECONDARY)
 
@@ -615,10 +622,10 @@ class RecentCardMixin:
         box = (wdt, wdt, big - wdt, big - wdt)
 
         d.ellipse(box, fill=(10, 9, 13, 165))
-        d.ellipse(box, outline=RECENT_TRACK + (255,), width=wdt)
+        d.ellipse(box, outline=tint.tone(RECENT_TRACK + (255,)), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
 
-        arc_col = ACCENT_RED if (not passed or grade == "F") else GRADE_COLORS.get(grade, RECENT_ACCENT)
+        arc_col = ACCENT_RED if (not passed or grade == "F") else GRADE_COLORS.get(grade, tint.tone(RECENT_ACCENT))
         mid = big / 2
         rad = mid - 1.5 * wdt
         cap = wdt / 2
@@ -677,7 +684,7 @@ class RecentCardMixin:
             pts.append((plot_x + plot_w * frac, y + h - h * v))
 
         self._aa_graph_curve(img, plot_x, y, plot_w, h, pts,
-                             line_color=RECENT_LINE, line_width=3, fill_color=RECENT_ACCENT + (70,))
+                             line_color=tint.tone(RECENT_LINE), line_width=3, fill_color=tint.tone(RECENT_ACCENT + (70,)))
         draw = ImageDraw.Draw(img)
 
         if show_axis:
@@ -736,7 +743,7 @@ class RecentCardMixin:
         w, h = pad + size + 8 + tw + pad + 2, 30
         y0 = int(cy - h / 2)
         self._aa_rounded_fill(img, (x, y0, x + w, y0 + h), radius=h // 2, fill=(40, 34, 44))
-        icon = _ruleset_icon(ruleset, size, RECENT_ACCENT)
+        icon = _ruleset_icon(ruleset, size, tint.tone(RECENT_ACCENT))
         img.paste(icon, (x + pad, int(round(cy - size / 2))), icon)
         self._text_mid(ImageDraw.Draw(img), x + pad + size + 8, cy, label, font, TEXT_PRIMARY)
 
@@ -834,6 +841,13 @@ def _details(ruleset: int, beatmap: dict, mods: list, adjusted: dict, key_count)
         return [("CS", "cs", adjusted["cs"], 1), ("AR", "ar", adjusted["ar"], 1), ("HP", "hp", adjusted["hp"], 1)]
     keys = key_count or (float(beatmap.get("cs") or 0) if beatmap.get("mode") == "mania" else 0)
     return [("KEYS", "cs", float(keys or 0), 0), ("OD", "od", od, 1), ("HP", "hp", hp, 1)]
+
+async def _palette(osu_id) -> Optional[dict]:
+    try:
+        from services.render_farm.billing import palette_of, player_of_osu
+        return await palette_of(await player_of_osu(osu_id), osu_id)
+    except Exception:
+        return None
 
 async def build_recent_card_data(
     raw_score: dict,
@@ -980,6 +994,7 @@ async def build_recent_card_data(
 
         "player_id": player_id,
         "player_cover_url": player_cover_url,
+        "palette": await _palette(player_id),
 
         "count_300": count_300,
         "count_100": count_100,

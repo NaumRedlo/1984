@@ -152,11 +152,13 @@ async def _build_page_data(
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
         try:
-            from services.render_farm.billing import worn_mark
+            from services.render_farm.billing import palette_of, worn_mark
             base["dossier_mark"] = await worn_mark(_get("player_id", None), osu_user_id or None)
+            base["palette"] = await palette_of(_get("player_id", None), osu_user_id or None)
         except Exception:
             logger.exception("profile: the Dossier mark was not read")
             base["dossier_mark"] = None
+            base["palette"] = None
         best_pp = None
         if is_registered:
             from sqlalchemy import func

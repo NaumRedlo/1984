@@ -37,3 +37,29 @@ def test_a_profile_shows_the_mark_and_as_many_hearts_as_the_support_level():
     one, three = picture(is_supporter=True, support_level=1), picture(is_supporter=True, support_level=3)
     left, top, right, bottom = ImageChops.difference(one, three).getbbox()
     assert bottom < 200
+
+
+def test_cards_take_the_colour_of_the_tier_and_keep_neutral_and_other_colours():
+    from services.image import tint
+
+    red, grey, green = (226, 72, 72), (140, 140, 160), (120, 220, 130)
+    assert tint.tone(red) == red
+    tint.wear({"rank": 1, "stage": 1})
+    try:
+        blue = tint.tone(red)
+        assert blue[2] > blue[0], "the accent turns blue"
+        assert tint.tone(grey) == grey and tint.tone(green) == green
+        assert tint.tone(red + (55,))[3] == 55
+        flat = tint.tones(red, red)
+        assert flat[0] == flat[1], "the first stage is one flat colour"
+        tint.wear({"rank": 1, "stage": 4})
+        start, end = tint.tones(red, red)
+        assert start != end, "the last stage shimmers along a bar"
+    finally:
+        tint.wear(None)
+    assert tint.tone(red) == red
+
+
+def test_the_creator_cards_are_purple_at_the_last_stage():
+    assert asyncio.run(billing.palette_of(None, billing.CREATORS[0])) == {"rank": 2, "stage": 4}
+    assert asyncio.run(billing.palette_of(None, 123)) is None

@@ -38,6 +38,7 @@ class BillingBadge(Base):
     show_badge = Column(Boolean, nullable=False, default=True)
     show_title = Column(Boolean, nullable=False, default=True)
     title_offer = Column(String(36), nullable=True)
+    tint_cards = Column(Boolean, nullable=True)
     updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 

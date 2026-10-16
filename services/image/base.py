@@ -395,6 +395,8 @@ class BaseCardRenderer:
         self, img: Image.Image, avatar: Optional[Image.Image], x: int, y: int, size: int,
         *, ring=MAPPER_RING, width: int = 2, glow: int = 6,
     ) -> ImageDraw.ImageDraw:
+        from services.image import tint
+        ring = tint.tone(ring)
         ss = 4
         pad = width + glow * 2
         full = size + 2 * pad

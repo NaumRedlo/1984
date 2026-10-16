@@ -13,11 +13,18 @@ router = Router(name="settings_account")
 
 async def _account_view(tg_id: int, lang: str = "en"):
     from services.oauth.token_manager import has_oauth
+    from services.render_farm.billing import held_of
     async with get_db_session() as session:
         user = await get_registered_identity_user(session, tg_id)
         linked = bool(user and user.osu_user_id)
         name = user.osu_username if user else None
+        player_id = getattr(user, "player_id", None) if user else None
+        osu_id = user.osu_user_id if user else None
     oauth = await has_oauth(tg_id) if linked else False
+    try:
+        held = await held_of(player_id, osu_id) if linked else None
+    except Exception:
+        held = None
 
     if not linked:
         text = t("sts.acc.not_linked", lang)
@@ -25,7 +32,14 @@ async def _account_view(tg_id: int, lang: str = "en"):
 
     oauth_status = t("sts.acc.oauth_yes" if oauth else "sts.acc.oauth_no", lang)
     text = t("sts.acc.linked", lang, name=escape_html(name), status=oauth_status)
+    if held is None:
+        text += t("sts.acc.sub_none", lang)
+    else:
+        tier = escape_html(held["name"] or t("sts.acc.sub_creator", lang))
+        text += t("sts.acc.sub" if held["active"] else "sts.acc.sub_ended", lang, name=tier, stage=held["stage"])
     rows = []
+    if held is not None and held["active"]:
+        rows.append([InlineKeyboardButton(text=t("sts.kb.tint_on" if held["tint_cards"] else "sts.kb.tint_off", lang), callback_data="st:acc:tint")])
     if oauth:
         rows.append([InlineKeyboardButton(text=t("sts.kb.relink", lang), callback_data="st:acc:relink")])
     else:
@@ -44,6 +58,26 @@ async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None, lang: s
     except Exception:
         pass
     await callback.answer()
+
+@router.callback_query(F.data == "st:acc:tint")
+async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    from services.render_farm import subscriptions
+    from services.render_farm.billing import held_of
+    async with get_db_session() as session:
+        user = await get_registered_identity_user(session, callback.from_user.id)
+        player_id = getattr(user, "player_id", None) if user else None
+        osu_id = user.osu_user_id if user else None
+    held = await held_of(player_id, osu_id) if player_id else None
+    if held is None or not held["active"]:
+        await callback.answer()
+        return
+    await subscriptions.tint_cards(player_id, not held["tint_cards"])
+    text, kb = await _account_view(callback.from_user.id, lang)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer(t("sts.done", lang))
 
 def _language_kb(current: str, lang: str = "en") -> InlineKeyboardMarkup:
     def mark(code):

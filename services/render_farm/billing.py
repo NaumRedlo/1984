@@ -81,17 +81,56 @@ async def worn_mark(player_id, osu_id=None) -> dict | None:
     return {"rank": int(made["rank"]), "stage": int(made["stage"])}
 
 
-async def worn_mark_of_osu(osu_id) -> dict | None:
+async def _prices():
+    try:
+        return await shared_catalogue().prices()
+    except LavaError:
+        return ()
+
+
+async def held_of(player_id, osu_id=None) -> dict | None:
+    creator = osu_id in CREATORS
+    if not player_id and not creator:
+        return None
+    made = await subscriptions.badge(int(player_id), await _prices()) if player_id else None
+    async with AsyncSessionFactory() as session:
+        choice = await session.get(subscriptions.BillingBadge, int(player_id)) if player_id else None
+    if made is None and not creator:
+        return None
+    rank, stage = (CREATOR_MARK["rank"], CREATOR_MARK["stage"]) if creator else (made["tier"]["rank"], made["stage"])
+    return {
+        "rank": rank,
+        "stage": stage,
+        "name": "" if made is None else made["tier"]["name"],
+        "active": True if made is None else made["active"],
+        "tint_cards": subscriptions.tints(choice),
+    }
+
+
+async def palette_of(player_id, osu_id=None) -> dict | None:
+    held = await held_of(player_id, osu_id)
+    if held is None or held["rank"] is None or not held["tint_cards"] or not held["active"]:
+        return None
+    return {"rank": held["rank"], "stage": held["stage"]}
+
+
+async def player_of_osu(osu_id) -> int | None:
     if not osu_id:
         return None
-    if osu_id in CREATORS:
-        return dict(CREATOR_MARK)
     from sqlalchemy import select
 
     from db.models.player import Player
 
     async with AsyncSessionFactory() as session:
-        player_id = (await session.execute(select(Player.id).where(Player.osu_user_id == int(osu_id)))).scalars().first()
+        return (await session.execute(select(Player.id).where(Player.osu_user_id == int(osu_id)))).scalars().first()
+
+
+async def worn_mark_of_osu(osu_id) -> dict | None:
+    if not osu_id:
+        return None
+    if osu_id in CREATORS:
+        return dict(CREATOR_MARK)
+    player_id = await player_of_osu(osu_id)
     return await worn_mark(player_id) if player_id else None
 
 

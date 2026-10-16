@@ -5,6 +5,7 @@ from typing import Dict, Optional, List
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from services.image import tint
 from services.image import colors
 from services.image.constants import (
     SANS_BOLD,
@@ -233,6 +234,13 @@ class ProfileCardMixin:
         cover: Optional[Image.Image] = None,
         top_bg_images: Optional[List[Optional[Image.Image]]] = None,
     ) -> BytesIO:
+        tint.wear(data.get("palette"))
+        try:
+            return self._profile_dashboard(data, avatar, cover, top_bg_images)
+        finally:
+            tint.wear(None)
+
+    def _profile_dashboard(self, data, avatar, cover, top_bg_images) -> BytesIO:
         W, H = DASH_W, DASH_H
         img, draw = self._create_canvas(W, H)
         draw.rectangle([(0, 0), (W, H)], fill=COL_BG)
@@ -286,7 +294,7 @@ class ProfileCardMixin:
             self._aa_rounded_outline(img, box, radius=radius, outline=border, width=1)
 
     def _pf_section_title(self, draw, x, y, text, fonts):
-        self._draw_text(draw, (x, y), text, fonts["title"], COL_RED)
+        self._draw_text(draw, (x, y), text, fonts["title"], tint.tone(COL_RED))
 
     def _pf_hero(self, img, data, avatar, cover, fonts):
         S = _pf_lang(data)
@@ -305,7 +313,7 @@ class ProfileCardMixin:
         ax, ay = 46, 46
         glow = Image.new("RGBA", (d + 80, d + 80), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        gd.ellipse((40 - 16, 40 - 16, 40 + d + 16, 40 + d + 16), fill=(228, 72, 72, 150))
+        gd.ellipse((40 - 16, 40 - 16, 40 + d + 16, 40 + d + 16), fill=tint.tone((228, 72, 72, 150)))
         glow = glow.filter(ImageFilter.GaussianBlur(18))
         img.paste(glow, (ax - 40, ay - 40), glow)
         if avatar:
@@ -315,7 +323,7 @@ class ProfileCardMixin:
             img.paste(av, (ax, ay), cmask)
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
-        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=(228, 76, 76), width=7)
+        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=tint.tone((228, 76, 76)), width=7)
         draw = ImageDraw.Draw(img)
 
         nx = ax + d + 28
@@ -337,7 +345,7 @@ class ProfileCardMixin:
             elif kind == "handle":
                 self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
             elif kind == "title":
-                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or COL_RED)
+                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or tint.tone(COL_RED))
             else:
                 self._pf_country_line(img, data, nx, cy, fonts, S)
             draw = ImageDraw.Draw(img)
@@ -349,7 +357,7 @@ class ProfileCardMixin:
         self._draw_text(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], COL_MUTED)
         self._draw_text(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
         self._draw_text(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
-        self._draw_text(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], COL_CORAL)
+        self._draw_text(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], tint.tone(COL_CORAL))
 
     def _pf_country_line(self, img, data, x, cy, fonts, S):
         flag = load_flag(str(data.get("country", "") or ""), height=30)
@@ -407,7 +415,7 @@ class ProfileCardMixin:
 
         pp = data.get("pp", 0) or 0
         cols = [
-            (72, S["performance"], f"{_sp(int(pp))}pp" if pp else "—", COL_CORAL),
+            (72, S["performance"], f"{_sp(int(pp))}pp" if pp else "—", tint.tone(COL_CORAL)),
             (286, S["accuracy"], f"{(data.get('accuracy', 0) or 0):.2f}%", COL_WHITE),
             (496, S["play_count"], _sp(data.get("play_count", 0) or 0), COL_WHITE),
         ]
@@ -421,7 +429,7 @@ class ProfileCardMixin:
         self._draw_text(draw, (lx, y_lbl), S["level"], fonts["stat_lbl"], COL_MUTED)
         lvl_str = str(level)
         lvw, lvh = self._text_size(draw, lvl_str, fonts["stat_val"])
-        self._draw_text(draw, (lx, y_val), lvl_str, fonts["stat_val"], COL_CORAL)
+        self._draw_text(draw, (lx, y_val), lvl_str, fonts["stat_val"], tint.tone(COL_CORAL))
 
         pct = f"{int(prog)}%"
         pct_w = self._text_size(draw, pct, fonts["count"])[0]
@@ -437,10 +445,10 @@ class ProfileCardMixin:
         self._aa_rounded_fill(img, (bar_x0, bar_y, bar_x1, bar_y + bar_h), radius=5, fill=COL_TRACK)
         inner = int((bar_x1 - bar_x0) * max(0, min(100, prog)) / 100)
         if inner > 6:
-            self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, (200, 52, 52), (240, 124, 96), radius=5)
+            self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, *tint.tones((200, 52, 52), (240, 124, 96)), radius=5)
         draw = ImageDraw.Draw(img)
 
-        self._text_mid(draw, 968, bar_cy, pct, fonts["count"], COL_CORAL, align="right")
+        self._text_mid(draw, 968, bar_cy, pct, fonts["count"], tint.tone(COL_CORAL), align="right")
 
         jx = 1020
         lines = (14, 34, 62, 82)
@@ -517,7 +525,7 @@ class ProfileCardMixin:
                 a, b = 0, self._text_size(draw, text, font)[1]
             return int(cy - (a + b) / 2)
 
-        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], COL_RED)
+        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], tint.tone(COL_RED))
         lw, _ = self._text_size(draw, label, fonts["total"])
         self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"], cy_val)), val, fonts["ps_val"], COL_WHITE)
 
@@ -624,7 +632,7 @@ class ProfileCardMixin:
 
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], COL_RED)
+        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], tint.tone(COL_RED))
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
         gx0 = cx0 + 42
@@ -684,10 +692,10 @@ class ProfileCardMixin:
 
         smooth = self._smooth_points(coords)
         self._aa_graph_curve(img, x, y, w, h, smooth,
-                             line_color=(236, 92, 92), line_width=3, fill_color=(228, 72, 72, 55))
+                             line_color=tint.tone((236, 92, 92)), line_width=3, fill_color=tint.tone((228, 72, 72, 55)))
         draw = ImageDraw.Draw(img)
         ex, ey = coords[-1]
-        draw.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=(245, 120, 120))
+        draw.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=tint.tone((245, 120, 120)))
 
         labels = [S["axis_90d"], S["axis_60d"], S["axis_30d"], S["axis_now"]]
         for i, lbl in enumerate(labels):

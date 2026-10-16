@@ -174,6 +174,7 @@ def badge_of(rows, choice, prices, at: datetime) -> dict | None:
         "served_days": served.days,
         "show_badge": True if choice is None else bool(choice.show_badge),
         "show_title": True if choice is None else bool(choice.show_title),
+        "tint_cards": tints(choice),
         "active": any(has_access(row, at) for row in rows),
     }
 
@@ -202,6 +203,20 @@ async def badges(player_ids, prices) -> dict[int, dict]:
             if made is not None and (made["show_badge"] or made["show_title"]):
                 shown[player_id] = {"rank": made["tier"]["rank"] if made["show_badge"] else None, "stage": made["stage"], "title": made["title"] if made["show_title"] else None}
         return shown
+
+
+def tints(choice) -> bool:
+    return choice is None or choice.tint_cards is None or bool(choice.tint_cards)
+
+
+async def tint_cards(player_id: int, on: bool) -> None:
+    async with AsyncSessionFactory() as session:
+        choice = await session.get(BillingBadge, player_id)
+        if choice is None:
+            choice = BillingBadge(player_id=player_id, show_badge=True, show_title=True)
+            session.add(choice)
+        choice.tint_cards = bool(on)
+        await session.commit()
 
 
 async def wear(player_id: int, show_badge, show_title, title_offer, prices) -> dict:
