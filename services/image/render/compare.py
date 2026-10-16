@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 from PIL import Image, ImageDraw
 
+from services.image import tint
 from services.image import legibility
 from services.image.constants import (
     HEADER_BG,
@@ -84,16 +85,16 @@ class CompareCardMixin:
         if avatar1:
             a1 = rounded_rect_crop(avatar1, av_size, radius=14)
             img.paste(a1, (av1_x, av_y), a1)
-            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette1"), ACCENT_RED), width=2)
         else:
-            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
+            self._aa_rounded_outline(img, (av1_x, av_y, av1_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette1"), ACCENT_RED), width=2, fill=(50, 50, 70))
 
         if avatar2:
             a2 = rounded_rect_crop(avatar2, av_size, radius=14)
             img.paste(a2, (av2_x, av_y), a2)
-            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2)
+            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette2"), ACCENT_RED), width=2)
         else:
-            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=ACCENT_RED, width=2, fill=(50, 50, 70))
+            self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette2"), ACCENT_RED), width=2, fill=(50, 50, 70))
 
         draw = ImageDraw.Draw(img)
 

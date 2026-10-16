@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from services.image import tint
 from services.image import legibility
 from services.image.constants import (
     SANS_BOLD,
@@ -136,6 +137,13 @@ class TopPlaysCardMixin:
     def generate_top_plays_card(self, data: Dict, avatar: Optional[Image.Image] = None,
                                  covers: Optional[List[Optional[Image.Image]]] = None,
                                  player_cover: Optional[Image.Image] = None) -> BytesIO:
+        tint.wear(data.get("palette"))
+        try:
+            return self._top_plays_card(data, avatar, covers, player_cover)
+        finally:
+            tint.wear(None)
+
+    def _top_plays_card(self, data, avatar, covers, player_cover) -> BytesIO:
         W, H = TP_W, TP_H
         img, draw = self._create_canvas(W, H)
         draw.rectangle([(0, 0), (W, H)], fill=COL_BG)
@@ -182,7 +190,7 @@ class TopPlaysCardMixin:
         start_x = (TP_W - total_w) // 2
         cy = (HEAD_Y0 + STRIP_Y0) // 2
         if sparkle:
-            tinted = Image.new("RGBA", sparkle.size, (228, 76, 76, 255))
+            tinted = Image.new("RGBA", sparkle.size, tint.tone((228, 76, 76, 255)))
             tinted.putalpha(sparkle.split()[3])
             img.paste(tinted, (start_x, int(round(cy - sparkle.height / 2))), tinted)
             draw = ImageDraw.Draw(img)
@@ -207,7 +215,7 @@ class TopPlaysCardMixin:
         d = 56
         ax, ay = INNER_L + 18, STRIP_Y0 + (STRIP_Y1 - STRIP_Y0 - d) // 2
         glow = Image.new("RGBA", (d + 40, d + 40), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse((20 - 8, 20 - 8, 20 + d + 8, 20 + d + 8), fill=(228, 72, 72, 120))
+        ImageDraw.Draw(glow).ellipse((20 - 8, 20 - 8, 20 + d + 8, 20 + d + 8), fill=tint.tone((228, 72, 72, tint.glow(120))))
         glow = glow.filter(ImageFilter.GaussianBlur(8))
         img.paste(glow, (ax - 20, ay - 20), glow)
         if avatar:
@@ -217,7 +225,7 @@ class TopPlaysCardMixin:
             img.paste(av, (ax, ay), cmask)
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
-        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=(228, 76, 76), width=3)
+        self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 3)
         draw = ImageDraw.Draw(img)
 
         tx = ax + d + 16
@@ -269,7 +277,7 @@ class TopPlaysCardMixin:
         base = pp_cy + (big_bot - big_top) / 2
         lbl_top, lbl_bot = draw.textbbox((0, 0), "H", font=fonts["pp_lbl"])[1::2]
         self._text_mid(draw, pp_right, base - (lbl_bot - lbl_top) / 2, "pp", fonts["pp_lbl"], COL_MUTED, align="right")
-        pp_left = self._text_mid(draw, pp_right - suffix_w - 4, pp_cy, pp_txt, fonts["pp_big"], COL_CORAL,
+        pp_left = self._text_mid(draw, pp_right - suffix_w - 4, pp_cy, pp_txt, fonts["pp_big"], tint.tone(COL_CORAL),
                                  align="right") - pp_w
         if client:
             self._text_mid(draw, pp_right, base + 14, client, fonts["client"], COL_MUTED, align="right")

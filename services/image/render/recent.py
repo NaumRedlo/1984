@@ -565,7 +565,7 @@ class RecentCardMixin:
             uname = uname[:-1]
         if uname != username:
             uname += ".."
-        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, tint.tone(RECENT_LINE))
+        self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, TEXT_PRIMARY)
         if played_in:
             self._text_center(draw, pcx, pav_y + pav + 60, played_in, f_lbl, TEXT_SECONDARY)
 

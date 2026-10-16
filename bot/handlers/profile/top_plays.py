@@ -150,6 +150,8 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     )
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
+    from services.render_farm.billing import card_palette
+    data["palette"] = await card_palette(name=payload["username"])
     buf = await card_renderer.generate_top_plays_card_async(data)
     kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False),
                        subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"), nav_id=payload["nav_id"])

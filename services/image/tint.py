@@ -49,6 +49,15 @@ def tone(colour):
     return _turned(colour)
 
 
+def tone_for(palette: Optional[dict], colour):
+    held = worn()
+    wear(palette)
+    try:
+        return _turned(colour)
+    finally:
+        wear(held)
+
+
 def title_colour(palette: Optional[dict]):
     if not palette or palette.get("rank") is None:
         return None

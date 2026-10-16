@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFilter
 
+from services.image import tint
 from services.image.render.profile import (
     CARD_M, COL_BG, COL_CARD, COL_CARD_BORDER, COL_CORAL, COL_GREEN, COL_MUTED, COL_RED, COL_WHITE, _sp,
 )
@@ -56,6 +57,13 @@ class UpdateCardMixin:
 
     def generate_update_card(self, data: Dict, avatar: Optional[Image.Image] = None,
                              covers: Optional[List[Optional[Image.Image]]] = None) -> BytesIO:
+        tint.wear(data.get("palette"))
+        try:
+            return self._update_card(data, avatar, covers)
+        finally:
+            tint.wear(None)
+
+    def _update_card(self, data, avatar, covers) -> BytesIO:
         S = _lang(data)
         rows = data.get("rows") or []
         body_rows = max(1, len(rows))
@@ -71,7 +79,7 @@ class UpdateCardMixin:
 
         cy = CARD_M + head_h // 2 + 6
         draw = ImageDraw.Draw(img)
-        arrow = load_icon("arrowup", 20, colour=COL_RED)
+        arrow = load_icon("arrowup", 20, colour=tint.tone(COL_RED))
         title_w = self._text_size(draw, S["header"], fonts["h_title"])[0]
         start = (W - title_w - (30 if arrow else 0)) // 2
         if arrow:
@@ -79,7 +87,7 @@ class UpdateCardMixin:
             start += 30
         self._text_mid(ImageDraw.Draw(img), start, cy, S["header"], fonts["h_title"], COL_WHITE)
         ruleset = int(data.get("ruleset") or 0)
-        icon = _ruleset_icon(ruleset, 22, COL_RED)
+        icon = _ruleset_icon(ruleset, 22, tint.tone(COL_RED))
         img.paste(icon, (x0, int(cy - 11)), icon)
         self._text_mid(ImageDraw.Draw(img), x0 + 30, cy, rulesets.TITLES[ruleset], fonts["row_meta"], COL_MUTED)
 
@@ -88,7 +96,7 @@ class UpdateCardMixin:
         d = 52
         ax, ay = x0 + 16, sy0 + (strip_h - d) // 2
         glow = Image.new("RGBA", (d + 40, d + 40), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse((12, 12, 28 + d, 28 + d), fill=(228, 72, 72, 110))
+        ImageDraw.Draw(glow).ellipse((12, 12, 28 + d, 28 + d), fill=tint.tone((228, 72, 72, tint.glow(110))))
         glow = glow.filter(ImageFilter.GaussianBlur(8))
         img.paste(glow, (ax - 20, ay - 20), glow)
         if avatar:
@@ -98,7 +106,7 @@ class UpdateCardMixin:
             img.paste(av, (ax, ay), mask)
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
-        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=(228, 76, 76), width=3)
+        self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 3)
         draw = ImageDraw.Draw(img)
         mid = sy0 + strip_h / 2
         self._text_mid(draw, ax + d + 16, mid - 12, str(data.get("username") or "?"), fonts["name"], COL_WHITE)
@@ -124,7 +132,7 @@ class UpdateCardMixin:
             draw = ImageDraw.Draw(img)
             self._text_mid(draw, cx, ty0 + 24, label, fonts["pp_lbl"], COL_MUTED, align="center")
             self._text_mid(draw, cx, ty0 + 52, value, fonts["pp_big"] if i == 0 else fonts["row_title"],
-                           COL_CORAL if i == 0 else COL_WHITE, align="center")
+                           tint.tone(COL_CORAL) if i == 0 else COL_WHITE, align="center")
             if first:
                 text, colour = "—", COL_MUTED
             else:
@@ -135,7 +143,7 @@ class UpdateCardMixin:
         ny = ty0 + stats_h + 14
         draw = ImageDraw.Draw(img)
         head = S["new"] + (f" · {data.get('new_count')}" if data.get("new_count") else "")
-        self._text_mid(draw, x0 + 4, ny + 10, head, fonts["row_meta"], COL_RED)
+        self._text_mid(draw, x0 + 4, ny + 10, head, fonts["row_meta"], tint.tone(COL_RED))
         ry = body_y
         if not rows:
             self._pf_panel(img, (x0, ry, x1, ry + _ROW_H), radius=ROW_CORNER_R)

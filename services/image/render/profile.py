@@ -293,6 +293,24 @@ class ProfileCardMixin:
         if border:
             self._aa_rounded_outline(img, box, radius=radius, outline=border, width=1)
 
+    def _pf_title(self, img, draw, x, cy, title, font, data):
+        palette = data.get("title_palette")
+        colour = data.get("title_color") or tint.tone(COL_RED)
+        if not palette or int(palette.get("stage") or 1) < 2:
+            self._text_mid(draw, x, cy, title, font, colour)
+            return
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        right = self._text_mid(ImageDraw.Draw(layer), x, cy, title, font, (255, 255, 255))
+        left, top, _, bottom = layer.getbbox() or (int(x), 0, right, 1)
+        held = tint.worn()
+        tint.wear(palette)
+        try:
+            fill = tint.strip(max(1, right - left), max(1, bottom - top), (226, 72, 72), diagonal=True)
+        finally:
+            tint.wear(held)
+        mask = layer.getchannel("A").crop((left, top, left + fill.width, top + fill.height))
+        img.paste(fill, (left, top), mask)
+
     def _pf_section_title(self, draw, x, y, text, fonts):
         self._draw_text(draw, (x, y), text, fonts["title"], COL_WHITE)
 
@@ -345,7 +363,7 @@ class ProfileCardMixin:
             elif kind == "handle":
                 self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
             elif kind == "title":
-                self._text_mid(draw, nx, cy, title, fonts["atitle"], data.get("title_color") or tint.tone(COL_RED))
+                self._pf_title(img, draw, nx, cy, title, fonts["atitle"], data)
             else:
                 self._pf_country_line(img, data, nx, cy, fonts, S)
             draw = ImageDraw.Draw(img)

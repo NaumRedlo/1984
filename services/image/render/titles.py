@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from services.image import tint
 from services.image.constants import (
     SANS_BOLD,
     NUM_BOLD,
@@ -232,6 +233,13 @@ class TitlesCardMixin:
         return f
 
     def generate_titles_card(self, data: Dict, avatar: Optional[Image.Image] = None) -> BytesIO:
+        tint.wear(data.get("palette"))
+        try:
+            return self._titles_card(data, avatar)
+        finally:
+            tint.wear(None)
+
+    def _titles_card(self, data, avatar):
         W, H = TT_W, TT_H
         img, draw = self._create_canvas(W, H)
         draw.rectangle([(0, 0), (W, H)], fill=COL_BG)
@@ -266,7 +274,7 @@ class TitlesCardMixin:
         total_w = sum(w for _, _, w in widths) + gap * (len(widths) - 1)
         tx = INNER_R - total_w
         for code, lbl, w in widths:
-            col = COL_RED if code == "all" else RARITY_META[code]["color"]
+            col = tint.tone(COL_RED) if code == "all" else RARITY_META[code]["color"]
             box = (tx, ty, tx + w, ty + th)
 
             if code == active:
@@ -292,7 +300,7 @@ class TitlesCardMixin:
         d = 86
         ax, ay = cx0, y
         glow = Image.new("RGBA", (d + 60, d + 60), (0, 0, 0, 0))
-        ImageDraw.Draw(glow).ellipse((30 - 10, 30 - 10, 30 + d + 10, 30 + d + 10), fill=(228, 72, 72, 130))
+        ImageDraw.Draw(glow).ellipse((30 - 10, 30 - 10, 30 + d + 10, 30 + d + 10), fill=tint.tone((228, 72, 72, tint.glow(130))))
         glow = glow.filter(ImageFilter.GaussianBlur(12))
         img.paste(glow, (ax - 30, ay - 30), glow)
         if avatar:
@@ -302,7 +310,7 @@ class TitlesCardMixin:
             img.paste(av, (ax, ay), cmask)
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
-        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=(228, 76, 76), width=4)
+        self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 4)
         draw = ImageDraw.Draw(img)
 
         tx = ax + d + 16
@@ -321,23 +329,23 @@ class TitlesCardMixin:
         unlocked = s.get("unlocked", 0)
         total = s.get("total", 0)
         pct = s.get("overall_pct", 0.0)
-        self._draw_text(draw, (cx0, y), S["unlocked_hdr"], fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["unlocked_hdr"], fonts["sec"], COL_WHITE)
         y += 28
         num = str(unlocked)
-        self._draw_text(draw, (cx0, y), num, fonts["big_num"], COL_CORAL)
+        self._draw_text(draw, (cx0, y), num, fonts["big_num"], tint.tone(COL_CORAL))
         nw, _ = self._text_size(draw, num, fonts["big_num"])
         self._draw_text(draw, (cx0 + nw + 8, y + 18), f"/ {total}", fonts["big_den"], COL_MUTED)
-        self._text_right(draw, cx1, y + 21, f"{int(pct)}%", fonts["pct"], COL_CORAL)
+        self._text_right(draw, cx1, y + 21, f"{int(pct)}%", fonts["pct"], tint.tone(COL_CORAL))
         y += 58
         bar_h = 10
         self._aa_rounded_fill(img, (cx0, y, cx1, y + bar_h), radius=5, fill=COL_TRACK)
         inner = int((cx1 - cx0) * max(0, min(100, pct)) / 100)
         if inner > 6:
-            self._pf_hgrad(img, cx0, y, inner, bar_h, (200, 52, 52), (240, 124, 96), radius=5)
+            self._pf_hgrad(img, cx0, y, inner, bar_h, *tint.tones((200, 52, 52), (240, 124, 96)), radius=5)
         draw = ImageDraw.Draw(img)
 
         y += 34
-        self._draw_text(draw, (cx0, y), S["rarest_hdr"], fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["rarest_hdr"], fonts["sec"], COL_WHITE)
         y += 26
         rarest = s.get("rarest")
         rh = 64
@@ -355,11 +363,11 @@ class TitlesCardMixin:
             self._text_center(draw, (cx0 + cx1) // 2, y + rh // 2 - 8, S["none_yet"], fonts["rare_sub"], COL_MUTED)
 
         y += rh + 26
-        self._draw_text(draw, (cx0, y), S["stats_hdr"], fonts["sec"], COL_RED)
+        self._draw_text(draw, (cx0, y), S["stats_hdr"], fonts["sec"], COL_WHITE)
         y += 30
         by = s.get("by_rarity", {}) or {}
         lang = data.get("lang") or "en"
-        rows = [(S["all_titles"], COL_CORAL, unlocked, total)]
+        rows = [(S["all_titles"], tint.tone(COL_CORAL), unlocked, total)]
         for r in RARITY_ORDER:
             b = by.get(r, {"unlocked": 0, "total": 0})
             rows.append((rarity_label_for(r, lang), RARITY_META[r]["color"], b["unlocked"], b["total"]))
@@ -604,7 +612,7 @@ class TitlesCardMixin:
                             nm, fonts["bot_val"], _mix(nxt["color"], COL_WHITE, 0.2))
         else:
             self._draw_text(draw, (x, self._tt_cy(S["all_unlocked"], fonts["bot_val"], emb_c)),
-                            S["all_unlocked"], fonts["bot_val"], COL_CORAL)
+                            S["all_unlocked"], fonts["bot_val"], tint.tone(COL_CORAL))
 
         x = zx1 + 22
         rx = INNER_R - 22
@@ -618,7 +626,7 @@ class TitlesCardMixin:
             self._aa_rounded_fill(img, (x, bar_y, rx, bar_y + 8), radius=4, fill=COL_TRACK)
             inner = int((rx - x) * max(0, min(100, prog)) / 100)
             if inner > 4:
-                self._pf_hgrad(img, x, bar_y, inner, 8, (200, 52, 52), (240, 124, 96), radius=4)
+                self._pf_hgrad(img, x, bar_y, inner, 8, *tint.tones((200, 52, 52), (240, 124, 96)), radius=4)
             draw = ImageDraw.Draw(img)
 
 def build_titles_card_data(

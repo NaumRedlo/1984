@@ -203,6 +203,9 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                         "ranked_score": rs_diff,
                     },
                 }
+                from services.render_farm.billing import card_palette
+                compare_data["palette1"] = await card_palette(name=user1["username"])
+                compare_data["palette2"] = await card_palette(name=user2["username"])
                 buf = await card_renderer.generate_compare_card_async(compare_data)
                 photo = BufferedInputFile(buf.read(), filename="compare.png")
                 await wait_msg.delete()

@@ -126,6 +126,23 @@ async def player_of_osu(osu_id) -> int | None:
         return (await session.execute(select(Player.id).where(Player.osu_user_id == int(osu_id)))).scalars().first()
 
 
+async def card_palette(osu_id=None, name=None) -> dict | None:
+    try:
+        from sqlalchemy import func, select
+
+        from db.models.player import Player
+
+        player_id = await player_of_osu(osu_id) if osu_id else None
+        if player_id is None and name:
+            async with AsyncSessionFactory() as session:
+                found = (await session.execute(select(Player.id, Player.osu_user_id).where(func.lower(Player.osu_username) == str(name).lower()))).first()
+            if found is not None:
+                player_id, osu_id = found
+        return await palette_of(player_id, int(osu_id) if osu_id else None)
+    except Exception:
+        return None
+
+
 async def worn_mark_of_osu(osu_id) -> dict | None:
     if not osu_id:
         return None

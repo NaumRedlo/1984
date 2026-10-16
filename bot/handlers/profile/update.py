@@ -116,6 +116,8 @@ async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_
             "rows": rows, "new_count": len(changes.new_scores),
             "more": max(0, len(changes.new_scores) - ROWS_SHOWN),
         }
+        from services.render_farm.billing import card_palette
+        data["palette"] = await card_palette(target.osu_id, data["username"])
         buf = await card_renderer.generate_update_card_async(data)
         await message.answer_photo(photo=BufferedInputFile(buf.read(), filename="update.png"))
         await discard_status(wait)

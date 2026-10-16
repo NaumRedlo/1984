@@ -90,6 +90,8 @@ async def _render(message, uid: int, flt: str, page: int, payload: dict, *, edit
     payload["cur_flt"] = data["filter"]
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
+    from services.render_farm.billing import card_palette
+    data["palette"] = await card_palette(name=payload["username"])
     buf = await asyncio.to_thread(card_renderer.generate_titles_card, data, payload.get("avatar"))
     kb = _titles_keyboard(uid, data["filter"], data["page"], data["total_pages"], payload.get("lang", "en"))
     file = BufferedInputFile(buf.getvalue(), filename="titles.png")
