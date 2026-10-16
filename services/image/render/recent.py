@@ -558,14 +558,6 @@ class RecentCardMixin:
         if uname != username:
             uname += ".."
         self._text_center(draw, pcx, pav_y + pav + 30, uname, f_player, RECENT_LINE)
-        mark = data.get("dossier_mark")
-        if mark:
-            from services.image.utils import load_badge
-            badge = load_badge(mark.get("rank", 0), mark.get("stage", 1), 30)
-            if badge is not None:
-                name_w = self._text_size(draw, uname, f_player)[0]
-                img.paste(badge, (int(pcx + name_w / 2 + 4), int(pav_y + pav + 26)), badge)
-                draw = ImageDraw.Draw(img)
         if played_in:
             self._text_center(draw, pcx, pav_y + pav + 60, played_in, f_lbl, TEXT_SECONDARY)
 
@@ -843,13 +835,6 @@ def _details(ruleset: int, beatmap: dict, mods: list, adjusted: dict, key_count)
     keys = key_count or (float(beatmap.get("cs") or 0) if beatmap.get("mode") == "mania" else 0)
     return [("KEYS", "cs", float(keys or 0), 0), ("OD", "od", od, 1), ("HP", "hp", hp, 1)]
 
-async def _dossier_mark(osu_id) -> Optional[dict]:
-    try:
-        from services.render_farm.billing import worn_mark_of_osu
-        return await worn_mark_of_osu(osu_id)
-    except Exception:
-        return None
-
 async def build_recent_card_data(
     raw_score: dict,
     *,
@@ -995,7 +980,6 @@ async def build_recent_card_data(
 
         "player_id": player_id,
         "player_cover_url": player_cover_url,
-        "dossier_mark": await _dossier_mark(player_id),
 
         "count_300": count_300,
         "count_100": count_100,

@@ -34,6 +34,18 @@ def _tg_handle(from_user) -> Optional[str]:
     username = getattr(from_user, "username", None) if from_user else None
     return f"@{username}" if username else None
 
+async def _handle_of(bot, chat_id: int, telegram_id: Optional[int]) -> Optional[str]:
+    if not telegram_id:
+        return None
+    try:
+        return _tg_handle((await bot.get_chat_member(chat_id, telegram_id)).user)
+    except Exception:
+        pass
+    try:
+        return _tg_handle(await bot.get_chat(telegram_id))
+    except Exception:
+        return None
+
 async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: int, query: Optional[str] = None):
     if not query:
         user = await get_registered_user(session, tg_id, chat_id)
@@ -265,6 +277,8 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 if status == "unregistered":
                     user = user_data
                     public_lookup = True
+                else:
+                    tg_handle = await _handle_of(message.bot, message.chat.id, getattr(user, "telegram_id", None))
 
             is_self = not public_lookup and getattr(user, "telegram_id", None) == tg_id
             if is_self:
