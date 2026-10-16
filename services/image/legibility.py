@@ -62,24 +62,38 @@ def readable(colour, under: Optional[float], floor: float = FLOOR):
             return lifted + tail
     return LIGHTEST + tail
 
-def calm(art: Image.Image, ceiling: float = COVER_CEILING) -> Image.Image:
-    import numpy as np
+def _seen(rgb: Image.Image) -> Image.Image:
+    return rgb.point(_TO_LINEAR_8 * 3).convert("L", matrix=(0.2126, 0.7152, 0.0722, 0))
 
-    rgb = np.asarray(art.convert("RGB"), dtype=np.float32) / 255.0
-    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
-    seen = linear @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    high = float(np.percentile(seen, BRIGHT_PART)) if seen.size else 0.0
-    if high <= ceiling and float(seen.max(initial=0.0)) <= ceiling * 1.1:
+def calm(art: Image.Image, ceiling: float = COVER_CEILING) -> Image.Image:
+    rgb = art.convert("RGB")
+    counts = _seen(rgb).histogram()
+    total = sum(counts)
+    if not total:
         return art.copy()
-    linear = linear * min(1.0, ceiling / max(high, 1e-6))
-    seen = linear @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    knee = ceiling * 0.8
-    over = np.maximum(seen - knee, 0.0)
-    softened = knee + (ceiling * 1.1 - knee) * (1.0 - np.exp(-over / (ceiling * 1.1 - knee)))
-    gain = np.where(seen > knee, softened / np.maximum(seen, 1e-6), 1.0)
-    linear = linear * gain[..., None]
-    encoded = np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(np.maximum(linear, 0.0), 1 / 2.4) - 0.055)
-    calmed = Image.fromarray(np.clip(np.round(encoded * 255.0), 0, 255).astype(np.uint8), "RGB")
+    wanted, run, high = total * BRIGHT_PART / 100, 0, 0
+    for level, count in enumerate(counts):
+        run += count
+        if run >= wanted:
+            high = level
+            break
+    brightest = max(level for level, count in enumerate(counts) if count)
+    top = ceiling * 1.1
+    if high <= ceiling * 255 and brightest <= top * 255:
+        return art.copy()
+    gain = min(1.0, ceiling * 255 / max(high, 1))
+    rgb = rgb.point([round(255 * _encoded(min(1.0, _TO_LINEAR[v] * gain))) for v in range(256)] * 3)
+    knee = ceiling * 0.8 * 255
+    cap = top * 255
+    gains = []
+    for level in range(256):
+        if level <= knee:
+            gains.append(255)
+            continue
+        soft = knee + (cap - knee) * (1 - math.exp(-(level - knee) / (cap - knee)))
+        gains.append(round(255 * _encoded(soft / 255) / _encoded(level / 255)))
+    shade = _seen(rgb).point(gains)
+    calmed = ImageChops.multiply(rgb, Image.merge("RGB", (shade, shade, shade)))
     if art.mode == "RGBA":
         calmed = calmed.convert("RGBA")
         calmed.putalpha(art.getchannel("A"))
