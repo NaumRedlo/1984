@@ -205,17 +205,20 @@ async def badges(player_ids, prices) -> dict[int, dict]:
         return shown
 
 
-def tints(choice) -> bool:
-    return choice is None or choice.tint_cards is None or bool(choice.tint_cards)
+def tints(choice, what: str = "tint_cards") -> bool:
+    value = None if choice is None else getattr(choice, what)
+    return value is None or bool(value)
 
 
-async def tint_cards(player_id: int, on: bool) -> None:
+async def tint(player_id: int, what: str, on: bool) -> None:
+    if what not in ("tint_cards", "tint_titles"):
+        raise ValueError(what)
     async with AsyncSessionFactory() as session:
         choice = await session.get(BillingBadge, player_id)
         if choice is None:
             choice = BillingBadge(player_id=player_id, show_badge=True, show_title=True)
             session.add(choice)
-        choice.tint_cards = bool(on)
+        setattr(choice, what, bool(on))
         await session.commit()
 
 

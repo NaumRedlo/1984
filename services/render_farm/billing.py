@@ -104,12 +104,13 @@ async def held_of(player_id, osu_id=None) -> dict | None:
         "name": "" if made is None else made["tier"]["name"],
         "active": True if made is None else made["active"],
         "tint_cards": subscriptions.tints(choice),
+        "tint_titles": subscriptions.tints(choice, "tint_titles"),
     }
 
 
-async def palette_of(player_id, osu_id=None) -> dict | None:
+async def palette_of(player_id, osu_id=None, what: str = "tint_cards") -> dict | None:
     held = await held_of(player_id, osu_id)
-    if held is None or held["rank"] is None or not held["tint_cards"] or not held["active"]:
+    if held is None or held["rank"] is None or not held[what] or not held["active"]:
         return None
     return {"rank": held["rank"], "stage": held["stage"]}
 

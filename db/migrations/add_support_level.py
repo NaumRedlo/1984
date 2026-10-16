@@ -10,3 +10,4 @@ async def run_support_level_migration(engine) -> None:
                 await add_column(conn, model.__table__.c["support_level"])
         if await table_exists(conn, BillingBadge.__tablename__):
             await add_column(conn, BillingBadge.__table__.c["tint_cards"])
+            await add_column(conn, BillingBadge.__table__.c["tint_titles"])

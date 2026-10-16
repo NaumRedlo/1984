@@ -49,6 +49,18 @@ def tone(colour):
     return _turned(colour)
 
 
+def title_colour(palette: Optional[dict]):
+    if not palette or palette.get("rank") is None:
+        return None
+    held = worn()
+    wear(palette)
+    try:
+        line = stops((226, 72, 72))
+        return _along(line, 0.5) if len(line) > 2 else line[0][1]
+    finally:
+        wear(held)
+
+
 def tones(start, end):
     palette = worn()
     if palette is None:

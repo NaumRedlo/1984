@@ -39,7 +39,8 @@ async def _account_view(tg_id: int, lang: str = "en"):
         text += t("sts.acc.sub" if held["active"] else "sts.acc.sub_ended", lang, name=tier, stage=held["stage"])
     rows = []
     if held is not None and held["active"]:
-        rows.append([InlineKeyboardButton(text=t("sts.kb.tint_on" if held["tint_cards"] else "sts.kb.tint_off", lang), callback_data="st:acc:tint")])
+        rows.append([InlineKeyboardButton(text=t("sts.kb.tint_on" if held["tint_cards"] else "sts.kb.tint_off", lang), callback_data="st:acc:tint:tint_cards")])
+        rows.append([InlineKeyboardButton(text=t("sts.kb.titles_on" if held["tint_titles"] else "sts.kb.titles_off", lang), callback_data="st:acc:tint:tint_titles")])
     if oauth:
         rows.append([InlineKeyboardButton(text=t("sts.kb.relink", lang), callback_data="st:acc:relink")])
     else:
@@ -59,8 +60,12 @@ async def cb_account(callback: types.CallbackQuery, tenant_chat_id=None, lang: s
         pass
     await callback.answer()
 
-@router.callback_query(F.data == "st:acc:tint")
+@router.callback_query(F.data.startswith("st:acc:tint:"))
 async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    what = callback.data.rsplit(":", 1)[1]
+    if what not in ("tint_cards", "tint_titles"):
+        await callback.answer()
+        return
     from services.render_farm import subscriptions
     from services.render_farm.billing import held_of
     async with get_db_session() as session:
@@ -71,7 +76,7 @@ async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, la
     if held is None or not held["active"]:
         await callback.answer()
         return
-    await subscriptions.tint_cards(player_id, not held["tint_cards"])
+    await subscriptions.tint(player_id, what, not held[what])
     text, kb = await _account_view(callback.from_user.id, lang)
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")

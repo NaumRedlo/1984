@@ -155,6 +155,11 @@ async def _build_page_data(
             from services.render_farm.billing import palette_of, worn_mark
             base["dossier_mark"] = await worn_mark(_get("player_id", None), osu_user_id or None)
             base["palette"] = await palette_of(_get("player_id", None), osu_user_id or None)
+            if base.get("title"):
+                from services.image.tint import title_colour
+                tinted = title_colour(await palette_of(_get("player_id", None), osu_user_id or None, "tint_titles"))
+                if tinted:
+                    base["title_color"] = tinted
         except Exception:
             logger.exception("profile: the Dossier mark was not read")
             base["dossier_mark"] = None

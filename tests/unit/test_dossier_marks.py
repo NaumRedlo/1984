@@ -63,3 +63,13 @@ def test_cards_take_the_colour_of_the_tier_and_keep_neutral_and_other_colours():
 def test_the_creator_cards_are_purple_at_the_last_stage():
     assert asyncio.run(billing.palette_of(None, billing.CREATORS[0])) == {"rank": 2, "stage": 4}
     assert asyncio.run(billing.palette_of(None, 123)) is None
+
+
+def test_a_title_takes_the_subscription_colour_only_when_asked():
+    from services.image import tint
+
+    assert tint.title_colour(None) is None
+    purple = tint.title_colour({"rank": 2, "stage": 1})
+    assert purple[2] > purple[1], "a purple tier makes a purple title"
+    assert tint.worn() is None, "naming the colour leaves no palette worn"
+    assert asyncio.run(billing.palette_of(None, billing.CREATORS[0], "tint_titles")) == {"rank": 2, "stage": 4}
