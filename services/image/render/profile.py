@@ -313,7 +313,7 @@ class ProfileCardMixin:
         ax, ay = 46, 46
         glow = Image.new("RGBA", (d + 80, d + 80), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        gd.ellipse((40 - 16, 40 - 16, 40 + d + 16, 40 + d + 16), fill=tint.tone((228, 72, 72, 150)))
+        gd.ellipse((40 - 16, 40 - 16, 40 + d + 16, 40 + d + 16), fill=tint.tone((228, 72, 72, tint.glow(150))))
         glow = glow.filter(ImageFilter.GaussianBlur(18))
         img.paste(glow, (ax - 40, ay - 40), glow)
         if avatar:
@@ -323,7 +323,7 @@ class ProfileCardMixin:
             img.paste(av, (ax, ay), cmask)
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
-        self._aa_ellipse_outline(img, (ax, ay, ax + d, ay + d), outline=tint.tone((228, 76, 76)), width=7)
+        self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 7)
         draw = ImageDraw.Draw(img)
 
         nx = ax + d + 28
@@ -445,7 +445,10 @@ class ProfileCardMixin:
         self._aa_rounded_fill(img, (bar_x0, bar_y, bar_x1, bar_y + bar_h), radius=5, fill=COL_TRACK)
         inner = int((bar_x1 - bar_x0) * max(0, min(100, prog)) / 100)
         if inner > 6:
-            self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, *tint.tones((200, 52, 52), (240, 124, 96)), radius=5)
+            if tint.shimmers():
+                img.paste(tint.strip(inner, bar_h, (226, 72, 72)), (bar_x0, bar_y), self._rounded_mask((inner, bar_h), 5))
+            else:
+                self._pf_hgrad(img, bar_x0, bar_y, inner, bar_h, *tint.tones((200, 52, 52), (240, 124, 96)), radius=5)
         draw = ImageDraw.Draw(img)
 
         self._text_mid(draw, 968, bar_cy, pct, fonts["count"], tint.tone(COL_CORAL), align="right")

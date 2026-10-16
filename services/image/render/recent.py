@@ -406,7 +406,9 @@ class RecentCardMixin:
             by = stats_y + stats_h - 26
             draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=tint.tone(RECENT_TRACK))
             fw = max(int(bw * max(0.0, min(1.0, frac))), 0)
-            if fw > 0:
+            if fw > 0 and tint.shimmers():
+                img.paste(tint.strip(fw, 6, RECENT_LINE), (bx0, by), self._rounded_mask((fw, 6), 3))
+            elif fw > 0:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
 
         pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
@@ -555,8 +557,7 @@ class RecentCardMixin:
         if player_avatar:
             circle = self._circle_crop(player_avatar, pav)
             img.paste(circle, (pav_x, pav_y), circle)
-        self._aa_ellipse_outline(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2),
-                                 outline=tint.tone(RECENT_ACCENT), width=3)
+        self._tinted_ring(img, (pav_x - 2, pav_y - 2, pav_x + pav + 2, pav_y + pav + 2), RECENT_ACCENT, 3)
         draw = ImageDraw.Draw(img)
         self._text_center(draw, pcx, pav_y + pav + 12, S["played_by"], f_lbl, TEXT_SECONDARY)
         uname = username

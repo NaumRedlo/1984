@@ -278,6 +278,18 @@ class BaseCardRenderer:
         layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(layer, (x0, y0), layer)
 
+    def _tinted_ring(self, img: Image.Image, box: tuple[int, int, int, int], colour, width: int) -> None:
+        from services.image import tint
+        if not tint.shimmers():
+            self._aa_ellipse_outline(img, box, outline=tint.tone(colour), width=width)
+            return
+        ss = self._AA_OUTLINE_SS
+        x0, y0, x1, y1 = box
+        mask = Image.new("L", ((x1 - x0) * ss, (y1 - y0) * ss), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, mask.width - 1, mask.height - 1), outline=255, width=width * ss)
+        mask = mask.resize((x1 - x0, y1 - y0), Image.LANCZOS)
+        img.paste(tint.strip(x1 - x0, y1 - y0, colour, diagonal=True), (x0, y0), mask)
+
     def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
         self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)
 
