@@ -329,8 +329,11 @@ class ProfileCardMixin:
         for kind, step in lines:
             if kind == "name":
                 nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE)
+                mark = data.get("dossier_mark")
+                if mark:
+                    nr = self._pf_dossier_mark(img, nr + 12, int(round(cy)), mark)
                 if data.get("is_supporter"):
-                    self._pf_supporter_badge(img, nr + 14, int(round(cy)))
+                    self._pf_supporter_badge(img, nr + 14, int(round(cy)), int(data.get("support_level") or 1))
             elif kind == "handle":
                 self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
             elif kind == "title":
@@ -365,8 +368,18 @@ class ProfileCardMixin:
             cname = S["unknown_country"]
         self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
 
-    def _pf_supporter_badge(self, img, x, cy):
-        ph, pw = 40, 64
+    def _pf_dossier_mark(self, img, x, cy, mark):
+        from services.image.utils import load_badge
+        side = 52
+        badge = load_badge(mark.get("rank", 0), mark.get("stage", 1), side)
+        if badge is None:
+            return x
+        img.paste(badge, (x, cy - side // 2), badge)
+        return x + side - 6
+
+    def _pf_supporter_badge(self, img, x, cy, level=1):
+        hearts = max(1, min(3, level))
+        ph, pw = 42, 68 + (hearts - 1) * 34
         y0 = cy - ph // 2
         glow = Image.new("RGBA", (pw + 40, ph + 40), (0, 0, 0, 0))
         ImageDraw.Draw(glow).rounded_rectangle(
@@ -374,11 +387,16 @@ class ProfileCardMixin:
         glow = glow.filter(ImageFilter.GaussianBlur(10))
         img.paste(glow, (x - 20, y0 - 20), glow)
         self._aa_rounded_fill(img, (x, y0, x + pw, y0 + ph), radius=ph // 2, fill=COL_HEART)
-        heart = load_icon("heart", 26)
+        heart = load_icon("heart", 32)
         if heart:
             white = Image.new("RGBA", heart.size, (255, 255, 255, 255))
             white.putalpha(heart.split()[3])
-            img.paste(white, (x + (pw - heart.width) // 2, y0 + (ph - heart.height) // 2), white)
+            gap = 2
+            row = hearts * heart.width + (hearts - 1) * gap
+            hx = x + (pw - row) // 2
+            for _ in range(hearts):
+                img.paste(white, (hx, y0 + (ph - heart.height) // 2), white)
+                hx += heart.width + gap
 
     def _pf_stats_strip(self, img, data, fonts):
         S = _pf_lang(data)

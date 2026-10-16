@@ -171,3 +171,11 @@ def draw_cover_background(img: Image.Image, cover: Image.Image, y: int, h: int, 
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 128))
     cropped = legibility.calm(Image.alpha_composite(cropped, overlay))
     img.paste(cropped.convert("RGB"), (x, y))
+
+
+def load_badge(rank: int, stage: int, size: int) -> Optional[Image.Image]:
+    from services.image.constants import ASSETS_DIR
+    path = os.path.join(ASSETS_DIR, "badges", f"tier{max(0, min(4, int(rank)))}-stage{max(1, min(4, int(stage)))}.png")
+    if not os.path.isfile(path):
+        return None
+    return Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)

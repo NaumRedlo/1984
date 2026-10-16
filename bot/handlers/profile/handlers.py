@@ -133,11 +133,18 @@ async def _build_page_data(
             base["total_maps"] = ext.get("total_maps", 0)
             base["is_online"] = ext.get("is_online", False)
             base["is_supporter"] = ext.get("is_supporter", False)
+            base["support_level"] = ext.get("support_level", 0)
             base["join_date"] = ext.get("join_date")
             base["last_visit"] = ext.get("last_visit")
             base["avatar_url"] = ext.get("avatar_url") or base["avatar_url"]
             base["cover_url"] = ext.get("cover_url") or base["cover_url"]
 
+        try:
+            from services.render_farm.billing import worn_mark
+            base["dossier_mark"] = await worn_mark(_get("player_id", None), osu_user_id or None)
+        except Exception:
+            logger.exception("profile: the Dossier mark was not read")
+            base["dossier_mark"] = None
         best_pp = None
         if is_registered:
             from sqlalchemy import func

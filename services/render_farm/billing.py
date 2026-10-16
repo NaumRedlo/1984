@@ -52,10 +52,52 @@ class Catalogue:
             return self._prices
 
 
+_shared: Catalogue | None = None
+
+CREATORS = (17_397_924,)
+CREATOR_MARK = {"rank": 2, "stage": 4}
+
+
+def shared_catalogue() -> Catalogue:
+    global _shared
+    if _shared is None:
+        selected = frozenset(value.strip() for value in os.getenv("LAVA_TOP_PRODUCT_IDS", "").split(",") if value.strip())
+        _shared = Catalogue(LavaConfig.from_env(), selected)
+    return _shared
+
+
+async def worn_mark(player_id, osu_id=None) -> dict | None:
+    if osu_id in CREATORS:
+        return dict(CREATOR_MARK)
+    if not player_id:
+        return None
+    try:
+        prices = await shared_catalogue().prices()
+    except LavaError:
+        prices = ()
+    made = (await subscriptions.badges([player_id], prices)).get(int(player_id))
+    if not made or made.get("rank") is None:
+        return None
+    return {"rank": int(made["rank"]), "stage": int(made["stage"])}
+
+
+async def worn_mark_of_osu(osu_id) -> dict | None:
+    if not osu_id:
+        return None
+    if osu_id in CREATORS:
+        return dict(CREATOR_MARK)
+    from sqlalchemy import select
+
+    from db.models.player import Player
+
+    async with AsyncSessionFactory() as session:
+        player_id = (await session.execute(select(Player.id).where(Player.osu_user_id == int(osu_id)))).scalars().first()
+    return await worn_mark(player_id) if player_id else None
+
+
 def routes(guard, who, catalogue=None, provider=None):
     if catalogue is None:
-        selected = frozenset(value.strip() for value in os.getenv("LAVA_TOP_PRODUCT_IDS", "").split(",") if value.strip())
-        catalogue = Catalogue(LavaConfig.from_env(), selected)
+        catalogue = shared_catalogue()
     provider = provider or subscriptions.Provider(catalogue.config)
 
     async def account(request):
