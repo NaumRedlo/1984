@@ -478,6 +478,7 @@ def friends_from(raw: Any) -> list[dict[str, Any]]:
             "online": bool(user.get("is_online")),
             "seen": seen_at,
             "avatar": user.get("avatar_url") or "",
+            "supporter": bool(user.get("is_supporter")),
             "mutual": bool(item.get("mutual")) if "target" in item else False,
         })
     out.sort(key=lambda f: (not f["online"], -(f["seen"] or 0), f["name"].lower()))
