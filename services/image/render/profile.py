@@ -50,7 +50,7 @@ COL_CORAL = colors.ACCENT_PP
 COL_WHITE = colors.TEXT_PRIMARY
 COL_MUTED = colors.TEXT_MUTED
 COL_GREEN = colors.POSITIVE
-COL_TRACK = colors.TRACK
+COL_TRACK = colors.GREY_TRACK
 COL_DIVIDER = colors.DIVIDER
 COL_HEART = colors.HEART
 
@@ -294,7 +294,7 @@ class ProfileCardMixin:
             self._aa_rounded_outline(img, box, radius=radius, outline=border, width=1)
 
     def _pf_section_title(self, draw, x, y, text, fonts):
-        self._draw_text(draw, (x, y), text, fonts["title"], tint.tone(COL_RED))
+        self._draw_text(draw, (x, y), text, fonts["title"], COL_WHITE)
 
     def _pf_hero(self, img, data, avatar, cover, fonts):
         S = _pf_lang(data)
@@ -528,7 +528,7 @@ class ProfileCardMixin:
                 a, b = 0, self._text_size(draw, text, font)[1]
             return int(cy - (a + b) / 2)
 
-        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], tint.tone(COL_RED))
+        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], COL_MUTED)
         lw, _ = self._text_size(draw, label, fonts["total"])
         self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"], cy_val)), val, fonts["ps_val"], COL_WHITE)
 
@@ -635,7 +635,7 @@ class ProfileCardMixin:
 
         div_y = MID_Y0 + 56 + len(rows) * step + 6
         draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
-        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], tint.tone(COL_RED))
+        self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], COL_WHITE)
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
         gx0 = cx0 + 42

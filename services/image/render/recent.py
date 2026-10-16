@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from services.image import legibility
 from services.image import tint
+from services.image.colors import GREY_TRACK
 from services.image.constants import (
     status_colours,
     TEXT_PRIMARY,
@@ -15,7 +16,6 @@ from services.image.constants import (
     ACCENT_GREEN,
     RECENT_ACCENT,
     RECENT_LINE,
-    RECENT_TRACK,
     RECENT_BG,
     RECENT_PANEL,
     GRADE_COLORS,
@@ -404,7 +404,7 @@ class RecentCardMixin:
             bw = (xs[cx_i + 1] - xs[cx_i]) - 34
             bx0 = int(centers[cx_i] - bw / 2)
             by = stats_y + stats_h - 26
-            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=tint.tone(RECENT_TRACK))
+            draw.rounded_rectangle((bx0, by, bx0 + bw, by + 6), radius=3, fill=GREY_TRACK)
             fw = max(int(bw * max(0.0, min(1.0, frac))), 0)
             if fw > 0 and tint.shimmers():
                 img.paste(tint.strip(fw, 6, RECENT_LINE), (bx0, by), self._rounded_mask((fw, 6), 3))
@@ -500,13 +500,13 @@ class RecentCardMixin:
         det_x = perf_x + perf_w + gap
 
         panel(perf_x, mid_y, perf_w, mid_h)
-        self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, tint.tone(RECENT_ACCENT))
+        self._draw_text(draw, (perf_x + 18, mid_y + 14), S["section_perf"], f_section, TEXT_PRIMARY)
         self._draw_perf_graph(img, perf_x + 18, mid_y + 44, perf_w - 36, mid_h - 64,
                               strains, completion, is_passed, f_lbl, S)
         draw = ImageDraw.Draw(img)
 
         panel(det_x, mid_y, det_w, mid_h)
-        self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, tint.tone(RECENT_ACCENT))
+        self._draw_text(draw, (det_x + 18, mid_y + 14), S["section_details"], f_section, TEXT_PRIMARY)
         params = data.get("details") or [
             ("CS", "cs", data.get("cs", 0.0), 1), ("AR", "ar", data.get("ar", 0.0), 1),
             ("OD", "od", data.get("od", 0.0), 1), ("HP", "hp", data.get("hp", 0.0), 1)]
@@ -527,7 +527,7 @@ class RecentCardMixin:
             bw = det_w - 36
             by = ry + 26
             frac = min(float(val) / 10.0, 1.0)
-            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=tint.tone(RECENT_TRACK))
+            draw.rounded_rectangle((det_x + 18, by, det_x + 18 + bw, by + 5), radius=2, fill=GREY_TRACK)
             t = frac
             col = (int(90 * (1 - t) + 230 * t), int(200 * (1 - t) + 90 * t), 90)
             if frac > 0:
@@ -541,7 +541,7 @@ class RecentCardMixin:
             mask = self._rounded_mask((ply_w, mid_h), 14)
             img.paste(pc.convert("RGB"), (ply_x, mid_y), mask)
             draw = ImageDraw.Draw(img)
-        self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, tint.tone(RECENT_ACCENT))
+        self._draw_text(draw, (ply_x + 18, mid_y + 14), S["section_player"], f_section, TEXT_PRIMARY)
         top_place = int(data.get("top_place") or 0)
         if top_place > 0:
             place_txt = S["top_place"].format(n=top_place)
@@ -623,7 +623,7 @@ class RecentCardMixin:
         box = (wdt, wdt, big - wdt, big - wdt)
 
         d.ellipse(box, fill=(10, 9, 13, 165))
-        d.ellipse(box, outline=tint.tone(RECENT_TRACK + (255,)), width=wdt)
+        d.ellipse(box, outline=GREY_TRACK + (255,), width=wdt)
         sweep = 360.0 * max(0.0, min(1.0, completion))
 
         arc_col = ACCENT_RED if (not passed or grade == "F") else GRADE_COLORS.get(grade, tint.tone(RECENT_ACCENT))
