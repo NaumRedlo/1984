@@ -30,6 +30,7 @@ class User(Base):
     total_score = Column(BigInteger, default=0, nullable=True)
     is_supporter = Column(Boolean, nullable=True)
     was_supporter = Column(Boolean, default=False, nullable=True)
+    support_level = Column(Integer, nullable=True)
 
     best_scores_baseline_at = Column(DateTime, nullable=True)
 

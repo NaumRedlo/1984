@@ -139,6 +139,7 @@ def person(user, *, titles: Iterable[str], top: list, moved: list[int], gained: 
         "s": int(user.grade_count_s or 0),
         "joined": stamp(user.join_date),
         "supporter": bool(user.is_supporter),
+        "support_level": int(getattr(user, "support_level", None) or 0),
         "title": user.active_title_code,
         "titles": sorted(titles),
         "streak": int(user.active_streak or 0),
@@ -479,6 +480,7 @@ def friends_from(raw: Any) -> list[dict[str, Any]]:
             "seen": seen_at,
             "avatar": user.get("avatar_url") or "",
             "supporter": bool(user.get("is_supporter")),
+            "support_level": int(user.get("support_level") or 0),
             "mutual": bool(item.get("mutual")) if "target" in item else False,
         })
     out.sort(key=lambda f: (not f["online"], -(f["seen"] or 0), f["name"].lower()))

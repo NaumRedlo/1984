@@ -17,6 +17,7 @@ SHARED = (
     "total_score",
     "is_supporter",
     "was_supporter",
+    "support_level",
     "avatar_url",
     "cover_url",
     "active_title_code",
@@ -42,8 +43,8 @@ SHARED = (
     "last_seen_at",
 )
 
-OWN = SHARED[:16]
-PROGRESS = SHARED[16:]
+OWN = SHARED[:17]
+PROGRESS = SHARED[17:]
 
 class Player(Base):
     __tablename__ = "players"
@@ -64,6 +65,7 @@ class Player(Base):
     total_score = Column(BigInteger, nullable=True)
     is_supporter = Column(Boolean, nullable=True)
     was_supporter = Column(Boolean, nullable=True)
+    support_level = Column(Integer, nullable=True)
     avatar_url = Column(String(512), nullable=True)
     cover_url = Column(String(512), nullable=True)
     active_title_code = Column(String(50), nullable=True)

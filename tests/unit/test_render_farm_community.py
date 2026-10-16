@@ -164,12 +164,13 @@ def test_friends_are_read_in_either_shape_online_first():
     users = [
         {"id": 1, "username": "moonlit", "country_code": "jp", "is_online": False,
          "last_visit": "2026-09-23T10:00:00+00:00", "statistics": {"pp": 7000.4, "global_rank": 20000}},
-        {"id": 2, "username": "Riv3r", "country_code": "RU", "is_online": True, "is_supporter": True, "statistics": {"pp": 9000, "global_rank": 9000}},
+        {"id": 2, "username": "Riv3r", "country_code": "RU", "is_online": True, "is_supporter": True, "support_level": 3, "statistics": {"pp": 9000, "global_rank": 9000}},
     ]
     listed = community.friends_from(users)
     assert [f["name"] for f in listed] == ["Riv3r", "moonlit"]
     assert listed[1]["country"] == "JP" and listed[1]["pp"] == 7000 and listed[1]["seen"] == 1790157600
     assert (listed[0]["supporter"], listed[1]["supporter"]) == (True, False)
+    assert (listed[0]["support_level"], listed[1]["support_level"]) == (3, 0)
     relations = [{"target": users[1], "mutual": True}]
     assert community.friends_from(relations)[0]["mutual"] is True
 

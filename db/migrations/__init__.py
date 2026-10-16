@@ -44,11 +44,13 @@ from db.migrations.add_left_members import run_left_members_migration
 from db.migrations.move_progress_to_players import run_player_progress_migration
 from db.migrations.add_app_accounts import run_app_accounts_migration
 from db.migrations.add_billing_change import run_billing_change_migration
+from db.migrations.add_support_level import run_support_level_migration
 
 async def run_all_migrations(engine) -> None:
     if engine.dialect.name == "sqlite":
         await _sqlite_history(engine)
     await run_billing_change_migration(engine)
+    await run_support_level_migration(engine)
     await run_drop_old_chat_data_migration(engine)
 
 async def _sqlite_history(engine) -> None:
