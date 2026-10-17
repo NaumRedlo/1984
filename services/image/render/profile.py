@@ -407,23 +407,29 @@ class ProfileCardMixin:
         g.ellipse((edge, edge, big - 1 - edge, big - 1 - edge), fill=tint.tone((228, 76, 76)))
         white = (255, 255, 255, 255)
         c = big / 2
-        r = big / 2 - edge
+        r = (big / 2 - edge) * 0.72
+        stroke = r * 0.16
+
+        def disc(x, y, radius):
+            g.ellipse((c + x - radius, c + y - radius, c + x + radius, c + y + radius), fill=white)
+
+        def bar(x, half, wide=r * 0.21):
+            g.rounded_rectangle((c + x - wide / 2, c - half, c + x + wide / 2, c + half), radius=wide / 2, fill=white)
+
+        g.ellipse((c - r, c - r, c + r, c + r), outline=white, width=round(stroke))
         if ruleset == 3:
-            ring = r * 0.62
-            g.ellipse((c - ring, c - ring, c + ring, c + ring), outline=white, width=int(r * 0.11))
-            bar = r * 0.13
-            for dx, h in ((-r * 0.27, r * 0.34), (0.0, r * 0.52), (r * 0.27, r * 0.34)):
-                g.rounded_rectangle((c + dx - bar / 2, c - h, c + dx + bar / 2, c + h), radius=bar / 2, fill=white)
+            bar(0.0, r * 0.63)
+            bar(-r * 0.33, r * 0.33)
+            bar(r * 0.33, r * 0.33)
         elif ruleset == 1:
-            ring = r * 0.62
-            g.ellipse((c - ring, c - ring, c + ring, c + ring), outline=white, width=int(r * 0.11))
-            inner = r * 0.36
-            g.ellipse((c - inner, c - inner, c + inner, c + inner), fill=white)
-            g.rectangle((c - r * 0.05, c - inner, c + r * 0.05, c + inner), fill=tint.tone((228, 76, 76)))
+            inner = r * 0.63
+            g.ellipse((c - inner, c - inner, c + inner, c + inner), outline=white, width=round(r * 0.19))
+            bar(0.0, inner - r * 0.05)
+        elif ruleset == 2:
+            for x, y in ((-r * 0.13, -r * 0.32), (r * 0.23, 0.0), (-r * 0.13, r * 0.32)):
+                disc(x, y, r * 0.17)
         else:
-            dot = r * 0.2
-            for dx, dy in ((-r * 0.3, r * 0.18), (r * 0.3, r * 0.18), (0.0, -r * 0.3)):
-                g.ellipse((c + dx - dot, c + dy - dot, c + dx + dot, c + dy + dot), fill=white)
+            disc(0.0, 0.0, r * 0.5)
         badge = badge.resize((side, side), Image.LANCZOS)
         img.paste(badge, (cx - side // 2, cy - side // 2), badge)
 
