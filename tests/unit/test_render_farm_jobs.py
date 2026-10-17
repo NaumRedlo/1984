@@ -161,6 +161,23 @@ async def test_telegram_video_replies_to_the_original_message_in_the_original_to
     status.edit_text.assert_not_awaited()
     assert not path.exists()
 
+@pytest.mark.asyncio
+async def test_a_video_kept_in_the_app_is_also_sent_to_the_chat(tmp_path, monkeypatch):
+    monkeypatch.setattr(orders.app_storage, "APP_VIDEOS_DIR", str(tmp_path))
+    bot = AsyncMock()
+    asked = types.Message(message_id=81, date=datetime.now(timezone.utc), chat=types.Chat(id=7, type="private")).as_(bot)
+    status = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
+    kept = tmp_path / "42.mp4"
+    kept.write_bytes(VIDEO)
+    job = RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=7, in_app=True, ruleset=3)
+    job.payload = {"bytes": len(VIDEO), "video": 42}
+    await orders.deliver(bot, job, asked, status, "ru")
+    sent = bot.await_args.args[0]
+    assert isinstance(sent, SendVideo)
+    assert "Dossier" in sent.caption and "osu!mania" in sent.caption
+    status.delete.assert_awaited_once()
+    assert kept.exists()
+
 def test_a_skin_on_the_server_is_described_by_its_hash(tmp_path, monkeypatch):
     monkeypatch.setattr(skins.settings, "RENDER_SKINS_DIR", str(tmp_path))
     (tmp_path / "Rafis.osk").write_bytes(b"a skin")

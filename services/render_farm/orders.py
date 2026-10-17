@@ -12,7 +12,7 @@ from sqlalchemy import select
 from config import settings
 from db.database import AsyncSessionFactory
 from db.models.player import Player
-from services.render_farm import invites, members, skins
+from services.render_farm import app_storage, invites, members, skins
 from services.render_farm.queue import STANDARD, Job, State, queue
 from services.render_farm.roster import roster
 from utils.i18n import t
@@ -179,22 +179,30 @@ async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
+def _telegram_most() -> int:
+    return 2000 * 1024 * 1024 if settings.TELEGRAM_BOT_API_URL else 48 * 1024 * 1024
+
 async def deliver(bot: Bot, job: Job, asked: types.Message, status: types.Message, lang: str) -> None:
     payload = job.payload or {}
-    if job.in_app:
-        try:
-            await status.edit_text(t("farm.in_app", lang, title=job.title))
-        except Exception as exc:
-            logger.warning("could not update app delivery status for job %s: %s", job.id, exc)
-        logger.info("job %s appeared in the app for %s", job.id, job.requester)
-        return
-    path = payload.get("path")
     meta = payload.get("meta") or {}
     duration = meta.get("duration")
+    caption = t("farm.caption", lang, title=job.title, worker=job.worker_name or "?")
+    if job.ruleset == 3:
+        caption += t("farm.mania_caption", lang)
+    if job.in_app:
+        kept = app_storage.path_for(payload["video"]) if payload.get("video") is not None else None
+        path = str(kept) if kept is not None and kept.is_file() and kept.stat().st_size <= _telegram_most() else None
+        caption += t("farm.also_in_app", lang)
+    else:
+        path = payload.get("path")
     try:
+        if path is None:
+            await status.edit_text(t("farm.in_app", lang, title=job.title))
+            logger.info("job %s appeared in the app for %s", job.id, job.requester)
+            return
         await asked.reply_video(
             types.FSInputFile(path, filename="render.mp4"),
-            caption=(t("farm.caption", lang, title=job.title, worker=job.worker_name or "?") + (t("farm.mania_caption", lang) if job.ruleset == 3 else ""))[:1024],
+            caption=caption[:1024],
             supports_streaming=True,
             width=STANDARD["width"],
             height=STANDARD["height"],
@@ -204,15 +212,15 @@ async def deliver(bot: Bot, job: Job, asked: types.Message, status: types.Messag
             await status.delete()
         except Exception:
             pass
-        logger.info("job %s delivered to %s", job.id, job.chat_id)
+        logger.info("job %s delivered to %s%s", job.id, job.chat_id, " and the app" if job.in_app else "")
     except Exception as exc:
         logger.warning("could not deliver job %s: %s", job.id, exc)
         try:
-            await status.edit_text(t("farm.undelivered", lang, title=job.title))
+            await status.edit_text(t("farm.in_app" if job.in_app else "farm.undelivered", lang, title=job.title))
         except Exception:
             pass
     finally:
-        if path:
+        if path and not job.in_app:
             try:
                 os.unlink(path)
             except OSError:

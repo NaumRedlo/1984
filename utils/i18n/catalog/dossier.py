@@ -124,6 +124,10 @@ CATALOG = {
         "en": "osu!mania rendering is experimental and often differs from what happened in the game: grades, combo and holds may not match. Only workers with a recent Dossier take these replays, so it may wait longer.",
         "ru": "Рендер osu!mania экспериментальный и часто расходится с тем, что было в игре: оценки, комбо и холды могут не совпадать. Такие реплеи берут только воркеры со свежим Dossier, поэтому ждать может дольше.",
     },
+    "farm.also_in_app": {
+        "en": "\nAlso in Dossier for 3 days",
+        "ru": "\nТакже лежит в Dossier 3 дня",
+    },
     "farm.mania_caption": {
         "en": "\nosu!mania render, experimental: may differ from the game",
         "ru": "\nРендер osu!mania экспериментальный: может расходиться с игрой",
