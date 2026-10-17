@@ -202,3 +202,30 @@ async def test_a_play_stored_without_its_stars_is_asked_about_once_the_board_is_
     assert {row["username"]: row["eff_sr"] for row in result.rows} == {"Fast": 9.8, "Plain": None, "Sharp": 7.3}
     mods = [t for t in result.data["titles"] if t["kind"] == "mods"]
     assert mods[0]["who"] == "Fast" and mods[0]["value"] == "DT,CL"
+
+async def test_a_converted_map_is_ranked_only_by_plays_of_the_asked_mode(factory):
+    from services.leaderboard.service import build_map_leaderboard
+
+    class Osu:
+        async def get_beatmap(self, beatmap_id):
+            return {"id": beatmap_id, "mode": "osu", "status": "ranked", "version": "Extra", "difficulty_rating": 7.0,
+                    "beatmapset": {"id": 1, "artist": "xi", "title": "Blue Zenith", "creator": "F"}}
+
+        async def effective_sr(self, beatmap_id, mods, stars, checksum=None, ruleset=0):
+            return 4.5 if ruleset == 3 else stars
+
+    async with factory() as session:
+        one = User(chat_id=CHAT, telegram_id=1, osu_user_id=2, osu_username="Clicker")
+        two = User(chat_id=CHAT, telegram_id=3, osu_user_id=4, osu_username="Keys")
+        session.add_all([one, two])
+        await session.flush()
+        session.add(UserMapAttempt(player_id=one.player_id, score_id=1, beatmap_id=MAP, pp=300.0, score=1))
+        session.add(UserMapAttempt(player_id=two.player_id, score_id=2, beatmap_id=MAP, pp=200.0, score=1, ruleset=3))
+        await session.commit()
+        mania = await build_map_leaderboard(session, Osu(), MAP, CHAT, sync=False, ruleset=3)
+        osu = await build_map_leaderboard(session, Osu(), MAP, CHAT, sync=False)
+
+    assert [r["username"] for r in mania.rows] == ["Keys"]
+    assert mania.data["ruleset"] == 3 and mania.data["star_rating"] == 4.5
+    assert [r["username"] for r in osu.rows] == ["Clicker"]
+    assert osu.data["ruleset"] == 0

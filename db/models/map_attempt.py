@@ -40,6 +40,7 @@ class UserMapAttempt(Base):
     ranked_date = Column(DateTime, nullable=True)
     passed = Column(Boolean, nullable=True)
     played_at = Column(DateTime, nullable=True)
+    ruleset = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

@@ -101,6 +101,7 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
         return
     lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     user_input = (trigger_args.args or "").strip() if trigger_args else ""
+    ruleset, user_input = await rulesets.chosen(user_input, message.from_user.id if message.from_user else None)
     beatmap_id = None
     map_title = None
     map_version = None
@@ -125,7 +126,7 @@ async def show_map_leaderboard(message: types.Message, trigger_args: TriggerArgs
         return
 
     await _send_map_leaderboard(message, int(beatmap_id), osu_api_client, map_title, map_version,
-                                tenant_chat_id=tenant_chat_id, lang=lang)
+                                tenant_chat_id=tenant_chat_id, lang=lang, ruleset=ruleset)
 
 @router.callback_query(F.data.startswith("lbm:"))
 async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
@@ -148,35 +149,36 @@ async def map_leaderboard_callback(callback: CallbackQuery, osu_api_client=None,
 
     beatmap_id = int(parts[1])
     page = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
-    is_page_nav = len(parts) >= 3
+    ruleset = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 0
+    is_page_nav = len(parts) >= 3 and parts[2].isdigit()
 
     await callback.answer()
     if is_page_nav:
         await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=page, edit=True,
-                                    tenant_chat_id=tenant_chat_id, lang=lang)
+                                    tenant_chat_id=tenant_chat_id, lang=lang, ruleset=ruleset)
     else:
         await _send_map_leaderboard(callback.message, beatmap_id, osu_api_client, page=0,
-                                    tenant_chat_id=tenant_chat_id, lang=lang)
+                                    tenant_chat_id=tenant_chat_id, lang=lang, ruleset=ruleset)
 
 def _build_lbm_keyboard(beatmap_id: int, beatmapset_id: int, page: int, total_pages: int,
-                        lang: str = "en") -> InlineKeyboardMarkup:
-    beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#osu/{beatmap_id}"
+                        lang: str = "en", ruleset: int = 0) -> InlineKeyboardMarkup:
+    beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset_id}#{rulesets.RULESETS.get(ruleset, 'osu')}/{beatmap_id}"
     rows = []
 
     if total_pages > 1:
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton(text="◀", callback_data=f"lbm:{beatmap_id}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text="◀", callback_data=f"lbm:{beatmap_id}:{page - 1}:{ruleset}"))
         nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="lbm:noop"))
         if page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="▶", callback_data=f"lbm:{beatmap_id}:{page + 1}"))
+            nav.append(InlineKeyboardButton(text="▶", callback_data=f"lbm:{beatmap_id}:{page + 1}:{ruleset}"))
         rows.append(nav)
     rows.append([InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api_client, map_title=None,
                                 map_version=None, page: int = 0, edit: bool = False, tenant_chat_id=None,
-                                lang: str = "en"):
+                                lang: str = "en", ruleset=None):
     chat_id = tenant_chat_id if tenant_chat_id is not None else message.chat.id
     wait_msg = None
     if not edit:
@@ -184,7 +186,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
     async with get_db_session() as session:
         try:
-            result = await build_map_leaderboard(session, osu_api_client, beatmap_id, chat_id, sync=not edit)
+            result = await build_map_leaderboard(session, osu_api_client, beatmap_id, chat_id, sync=not edit, ruleset=ruleset)
             rows = result.rows
             beatmapset_id = result.beatmapset_id
             total_pages = result.total_pages
@@ -217,7 +219,7 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
 
             data["lang"] = lang
 
-            kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang)
+            kb = _build_lbm_keyboard(beatmap_id, beatmapset_id, page, total_pages, lang, data.get("ruleset") or 0)
 
             try:
                 photo = await card_renderer.generate_map_leaderboard_v2_async(data)

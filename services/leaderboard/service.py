@@ -4,13 +4,14 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from aiogram.types import BufferedInputFile
-from sqlalchemy import select, desc, asc, func, and_
+from sqlalchemy import select, desc, asc, func, and_, or_
 
 from db.models.user import User
 from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.i18n import t
+from utils.osu import rulesets
 from utils.osu.mod_utils import NEUTRAL_MODS, mod_tokens, mods_hardness
 from utils.logger import get_logger
 
@@ -484,18 +485,20 @@ def _with_map(score: dict, beatmap_id: int, known: Optional[dict]) -> None:
     if not score.get("beatmapset"):
         score["beatmapset"] = (known or {}).get("beatmapset") or {}
 
-async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id: int) -> None:
+async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id: int, ruleset: int = 0) -> None:
     now = datetime.now(timezone.utc)
-    cooldown_key = (chat_id, beatmap_id)
+    cooldown_key = (chat_id, beatmap_id, ruleset)
     last_sync = _sync_cooldown.get(cooldown_key)
     if last_sync and (now - last_sync) < SYNC_COOLDOWN:
         return
     _sync_cooldown[cooldown_key] = now
 
     known = await beatmap_facts(osu_api_client, beatmap_id, now)
-    public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50)
+    mode = rulesets.RULESETS.get(ruleset) if ruleset else None
+    asked = {"mode": mode} if mode else {}
+    public_scores = await osu_api_client.get_beatmap_scores(beatmap_id, limit=50, **asked)
     if not public_scores:
-        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, known=known)
+        await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, known=known, mode=mode)
         try:
             await session.commit()
         except Exception:
@@ -522,7 +525,8 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         except Exception:
             pass
 
-    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()), known=known)
+    await _sync_remaining_user_scores(session, osu_api_client, beatmap_id, chat_id, skip_osu_ids=set(scores_by_user.keys()), known=known,
+                                      mode=mode)
 
     try:
         await session.commit()
@@ -530,7 +534,7 @@ async def _sync_beatmap_scores(session, osu_api_client, beatmap_id: int, chat_id
         await session.rollback()
 
 async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, chat_id: int, skip_osu_ids: set = None,
-                                      known: Optional[dict] = None) -> None:
+                                      known: Optional[dict] = None, mode: Optional[str] = None) -> None:
     from services.oauth.token_manager import get_valid_token
     from db.models.oauth_token import OAuthToken
 
@@ -549,7 +553,7 @@ async def _sync_remaining_user_scores(session, osu_api_client, beatmap_id: int, 
             if user_model.telegram_id in oauth_tg_ids:
                 token = await get_valid_token(user_model.telegram_id)
             scores = await osu_api_client.get_user_beatmap_scores(
-                beatmap_id, user_model.osu_user_id, oauth_token=token
+                beatmap_id, user_model.osu_user_id, oauth_token=token, **({"mode": mode} if mode else {})
             )
         except Exception:
             continue
@@ -586,7 +590,7 @@ def _ranks_by_score(status) -> bool:
 HARDER_THAN_PLAIN = 1.005
 
 async def _fill_stars_with_mods(osu_api_client, beatmap_id: int, rows: list[dict[str, Any]], stars: Optional[float],
-                                checksum: Optional[str]) -> None:
+                                checksum: Optional[str], ruleset: int = 0) -> None:
     ask = getattr(osu_api_client, "effective_sr", None)
     if ask is None or not stars:
         return
@@ -594,7 +598,7 @@ async def _fill_stars_with_mods(osu_api_client, beatmap_id: int, rows: list[dict
         if row.get("eff_sr") or not any(token not in NEUTRAL_MODS for token in mod_tokens(row.get("mods"))):
             continue
         try:
-            found = await ask(beatmap_id, row.get("mods"), stars, checksum)
+            found = await ask(beatmap_id, row.get("mods"), stars, checksum, ruleset=ruleset) if ruleset else await ask(beatmap_id, row.get("mods"), stars, checksum)
         except Exception as exc:
             logger.info("stars of map %s with %s were not found: %s", beatmap_id, row.get("mods"), exc)
             continue
@@ -645,7 +649,7 @@ def _map_average(rows: list[dict[str, Any]], rank_by_score: bool) -> str:
     return f"{sum(float(r.get('pp') or 0) for r in rows) / len(rows):.1f} PP"
 
 async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
-                              rank_by_score: bool, limit: int = 6) -> list[dict[str, Any]]:
+                              rank_by_score: bool, limit: int = 6, in_mode=True) -> list[dict[str, Any]]:
     played = func.coalesce(UserMapAttempt.played_at, UserMapAttempt.created_at)
     result = await session.execute(
         select(
@@ -657,6 +661,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             User.chat_id == chat_id,
             User.osu_user_id.isnot(None),
             UserMapAttempt.beatmap_id == beatmap_id,
+            in_mode,
         )
         .order_by(asc(played), asc(UserMapAttempt.id))
     )
@@ -683,9 +688,27 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
 
     return list(reversed(history))[:limit]
 
-async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True) -> MapLeaderboardResult:
+def _native_ruleset(beatmap: dict) -> int:
+    mode = beatmap.get("mode_int")
+    if isinstance(mode, int) and mode in rulesets.RULESETS:
+        return mode
+    return {name: number for number, name in rulesets.RULESETS.items()}.get(beatmap.get("mode"), 0)
+
+def played_in(beatmap: dict, wanted: Optional[int]) -> int:
+    native = _native_ruleset(beatmap)
+    return wanted if native == 0 and wanted in rulesets.RULESETS else native
+
+async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_id: int, *, sync: bool = True,
+                                ruleset: Optional[int] = None) -> MapLeaderboardResult:
+    beatmap: Optional[dict[str, Any]] = await osu_api_client.get_beatmap(beatmap_id)
+    beatmap = beatmap or {}
+    ruleset = played_in(beatmap, ruleset)
+    native = _native_ruleset(beatmap)
     if sync:
-        await _sync_beatmap_scores(session, osu_api_client, beatmap_id, chat_id)
+        await _sync_beatmap_scores(session, osu_api_client, beatmap_id, chat_id, ruleset)
+    in_mode = UserMapAttempt.ruleset == ruleset
+    if ruleset == native:
+        in_mode = or_(in_mode, UserMapAttempt.ruleset.is_(None))
 
     stats_stmt = (
         select(
@@ -694,13 +717,11 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         )
         .select_from(UserMapAttempt)
         .join(User, User.player_id == UserMapAttempt.player_id)
-        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode)
     )
     stats_result = await session.execute(stats_stmt)
     total_plays, unique_players = stats_result.one()
 
-    beatmap: Optional[dict[str, Any]] = await osu_api_client.get_beatmap(beatmap_id)
-    beatmap = beatmap or {}
     beatmapset = beatmap.get("beatmapset") or {}
     beatmapset_id = int(beatmapset.get("id") or 0)
 
@@ -716,7 +737,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             func.max(metric_col).label("best_metric"),
         )
         .join(User, User.player_id == UserMapAttempt.player_id)
-        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode)
         .group_by(UserMapAttempt.player_id)
         .subquery()
     )
@@ -725,7 +746,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             UserMapAttempt.player_id,
             func.min(UserMapAttempt.id).label("pick_id"),
         )
-        .where(UserMapAttempt.beatmap_id == beatmap_id)
+        .where(UserMapAttempt.beatmap_id == beatmap_id, in_mode)
         .join(best_metric_sq, and_(
             UserMapAttempt.player_id == best_metric_sq.c.player_id,
             func.coalesce(metric_col, 0) == func.coalesce(best_metric_sq.c.best_metric, 0),
@@ -750,7 +771,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         )
         .join(UserMapAttempt, UserMapAttempt.player_id == User.player_id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
-        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode)
         .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))
     )
 
@@ -786,7 +807,12 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
 
     total_pages = _calc_lbm_total_pages(len(rows))
     stars = float(beatmap.get("difficulty_rating") or 0.0) or None
-    await _fill_stars_with_mods(osu_api_client, beatmap_id, rows, stars, beatmap.get("checksum"))
+    if ruleset != native and stars:
+        try:
+            stars = await osu_api_client.effective_sr(beatmap_id, "", stars, beatmap.get("checksum"), ruleset=ruleset) or stars
+        except Exception as exc:
+            logger.info("stars of map %s in ruleset %s were not found: %s", beatmap_id, ruleset, exc)
+    await _fill_stars_with_mods(osu_api_client, beatmap_id, rows, stars, beatmap.get("checksum"), ruleset)
 
     data = {
         "map_title": map_title,
@@ -797,7 +823,8 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             or beatmapset.get("covers", {}).get("cover"),
         "mapper_name": beatmapset.get("creator", "Unknown"),
         "mapper_id": beatmapset.get("user_id", 0),
-        "star_rating": beatmap.get("difficulty_rating", 0.0) or 0.0,
+        "star_rating": stars or 0.0,
+        "ruleset": ruleset,
         "bpm": beatmap.get("bpm", 0.0) or 0.0,
         "total_length": beatmap.get("total_length", 0) or 0,
         "beatmap_status": beatmap.get("status", ""),
@@ -810,7 +837,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         "titles": _map_titles(rows, rank_by_score, stars),
         "average": _map_average(rows, rank_by_score),
         "history": await _map_record_history(
-            session, beatmap_id, chat_id, rank_by_score=rank_by_score
+            session, beatmap_id, chat_id, rank_by_score=rank_by_score, in_mode=in_mode
         ),
         "updated": datetime.now(timezone.utc).strftime("%d.%m.%Y • %H:%M"),
     }

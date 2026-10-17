@@ -8,6 +8,7 @@ from aiogram.types import (
 from services.image import card_renderer
 from services.image.render.recent import build_recent_card_data
 from utils.i18n import t
+from utils.osu import rulesets
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu.helpers import remember_message_context
@@ -75,7 +76,7 @@ async def on_score_link(message: types.Message, osu_api_client):
     beatmap_url = f"https://osu.ppy.sh/beatmapsets/{data['beatmapset_id']}#{mode}/{data['beatmap_id']}"
     rows = [[
         InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url),
-        InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{data['beatmap_id']}"),
+        InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{data['beatmap_id']}::{rulesets.parse(mode) or 0}"),
     ]]
 
     try:

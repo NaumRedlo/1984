@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
 from utils.logger import get_logger
+from utils.osu import rulesets
 from utils.singleflight import SingleFlight
 from services.refresh.runtime import background_request
 
@@ -742,7 +743,9 @@ class OsuApiClient:
             b_bpm = float(b_bpm) if b_bpm is not None else None
             stats = raw.get("statistics") or {}
 
+            played_in = rulesets.of_score(raw)
             attrs = {
+                "ruleset": played_in,
                 "beatmap_id": beatmap_id,
                 "beatmapset_id": beatmapset.get("id"),
                 "score": score_val,
@@ -757,7 +760,7 @@ class OsuApiClient:
                 "creator": beatmapset.get("creator", ""),
                 "star_rating": star_rating,
                 "ar": beatmap.get("ar"),
-                "eff_sr": await self.effective_sr(beatmap_id, mods_list, star_rating, beatmap.get("checksum")),
+                "eff_sr": await self.effective_sr(beatmap_id, mods_list, star_rating, beatmap.get("checksum"), **({"ruleset": played_in} if played_in else {})),
                 "bpm": b_bpm,
                 "length": beatmap.get("total_length"),
                 "map_max_combo": beatmap.get("max_combo"),
@@ -778,7 +781,7 @@ class OsuApiClient:
             attempt = existing.get(score_id)
             if attrs["ranked_date"] is None:
                 attrs.pop("ranked_date")
-            if raw.get("pp") is None and raw.get("passed") and (attempt is None or attempt.pp_estimated is None):
+            if raw.get("pp") is None and raw.get("passed") and played_in == 0 and (attempt is None or attempt.pp_estimated is None):
                 attrs["pp_estimated"] = await _estimate_pp(raw, beatmap, beatmap_id, mods_list, stats)
             if attempt:
                 for key, value in attrs.items():
@@ -810,21 +813,27 @@ class OsuApiClient:
             raise ValueError(f"Invalid best scores response for user {user_id}")
         return data
 
-    async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int, oauth_token: Optional[str] = None) -> List[Dict]:
+    async def get_user_beatmap_scores(self, beatmap_id: int, user_id: int, oauth_token: Optional[str] = None,
+                                      mode: Optional[str] = None) -> List[Dict]:
         data = await self._make_request(
             "GET",
             f"beatmaps/{beatmap_id}/scores/users/{user_id}/all",
+            params={"mode": mode, "ruleset": mode} if mode else None,
             bearer_token=oauth_token,
         )
         if isinstance(data, dict):
             return data.get("scores", [])
         return data if isinstance(data, list) else []
 
-    async def get_beatmap_scores(self, beatmap_id: int, limit: int = 50) -> List[Dict]:
+    async def get_beatmap_scores(self, beatmap_id: int, limit: int = 50, mode: Optional[str] = None) -> List[Dict]:
+        params = {"limit": limit}
+        if mode:
+            params["mode"] = mode
+            params["ruleset"] = mode
         data = await self._make_request(
             "GET",
             f"beatmaps/{beatmap_id}/scores",
-            params={"limit": limit}
+            params=params
         )
         return data.get("scores", []) if isinstance(data, dict) else []
 

@@ -261,8 +261,8 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
 
             beatmap_url = f"https://osu.ppy.sh/beatmapsets/{beatmapset.get('id', 0)}#{rulesets.RULESETS[played_in]}/{beatmap.get('id', 0)}"
             buttons = [InlineKeyboardButton(text=t("common.kb.beatmap", lang), url=beatmap_url)]
-            if beatmap_id and played_in == 0:
-                buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}"))
+            if beatmap_id:
+                buttons.append(InlineKeyboardButton(text=t("common.kb.leaderboard", lang), callback_data=f"lbm:{beatmap_id}::{played_in}"))
             rows = [buttons]
             if played_in == 0 and score.get("id") and (score.get("has_replay") or score.get("replay")):
                 rows.append([InlineKeyboardButton(text=t("rs.kb.render", lang), callback_data=f"rrs:{score['id']}")])
