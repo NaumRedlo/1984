@@ -47,7 +47,8 @@ def _tg_handle(from_user) -> Optional[str]:
     return f"@{username}" if username else None
 
 def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
-                  subject_tg_id: Optional[int] = None, lang: str = "en", nav_id: str = "") -> InlineKeyboardMarkup:
+                  subject_tg_id: Optional[int] = None, lang: str = "en", nav_id: str = "",
+                  ruleset: Optional[int] = None) -> InlineKeyboardMarkup:
     rows = []
     if total_pages > 1:
         rows.append([
@@ -59,7 +60,7 @@ def _tp_keyboard(uid: int, page: int, total_pages: int, *, show_back: bool,
         ])
     if show_back:
         rows.append([InlineKeyboardButton(text=t("tpp.kb.back_to_profile", lang),
-                                          callback_data=f"tpp|back|{uid}|{subject_tg_id}")])
+                                          callback_data=f"tpp|back|{uid}|{subject_tg_id}|{ruleset or 0}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 async def _fetch_best_scores(session, player_id):
@@ -173,7 +174,8 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     data["palette"] = await card_palette(name=payload["username"])
     buf = await card_renderer.generate_top_plays_card_async(data)
     kb = _tp_keyboard(uid, data["page"], data["total_pages"], show_back=payload.get("has_back", False),
-                       subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"), nav_id=payload["nav_id"])
+                       subject_tg_id=payload.get("subject_tg_id"), lang=payload.get("lang", "en"), nav_id=payload["nav_id"],
+                       ruleset=payload.get("ruleset"))
     file = BufferedInputFile(buf.getvalue(), filename="top_plays.png")
     try:
         if edit:
@@ -267,15 +269,16 @@ async def on_tpp_noop(callback: types.CallbackQuery) -> None:
     await callback.answer()
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|open|"))
-async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> None:
-    parts = callback.data.split("|", 3)
-    if len(parts) != 4:
+async def on_tpp_open(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None) -> None:
+    parts = callback.data.split("|")
+    if len(parts) not in (4, 5):
         await callback.answer()
         return
-    _, _, viewer_str, subject_str = parts
+    _, _, viewer_str, subject_str = parts[:4]
     try:
         viewer_tg_id = int(viewer_str)
         subject_tg_id = int(subject_str)
+        ruleset = int(parts[4]) if len(parts) == 5 else 0
     except ValueError:
         await callback.answer()
         return
@@ -291,7 +294,8 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
             return
 
         tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
-        payload = await _build_payload(session, user, None, tg_handle, viewer_tg_id=viewer_tg_id)
+        payload = await _build_payload(session, user, osu_api_client if ruleset in (1, 2, 3) else None, tg_handle,
+                                       viewer_tg_id=viewer_tg_id, ruleset=ruleset)
     payload["has_back"] = True
     payload["subject_tg_id"] = subject_tg_id
     _store_nav(viewer_tg_id, payload)
@@ -299,14 +303,15 @@ async def on_tpp_open(callback: types.CallbackQuery, tenant_chat_id=None) -> Non
 
 @router.callback_query(lambda c: c.data and c.data.startswith("tpp|back|"))
 async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant_chat_id=None) -> None:
-    parts = callback.data.split("|", 3)
-    if len(parts) != 4:
+    parts = callback.data.split("|")
+    if len(parts) not in (4, 5):
         await callback.answer()
         return
-    _, _, viewer_str, subject_str = parts
+    _, _, viewer_str, subject_str = parts[:4]
     try:
         viewer_tg_id = int(viewer_str)
         subject_tg_id = int(subject_str)
+        ruleset = int(parts[4]) if len(parts) == 5 else 0
     except ValueError:
         await callback.answer()
         return
@@ -324,10 +329,11 @@ async def on_tpp_back(callback: types.CallbackQuery, osu_api_client=None, tenant
             return
 
         tg_handle = _tg_handle(callback.from_user) if viewer_tg_id == subject_tg_id else None
-        data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=viewer_tg_id)
+        data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=viewer_tg_id,
+                                      ruleset=ruleset if ruleset in (1, 2, 3) else None)
     buf = await card_renderer.generate_profile_dashboard_async(data)
     photo = BufferedInputFile(buf.read(), filename="profile.png")
-    kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id, lang)
+    kb = _pf_keyboard(data.get("osu_id"), subject_tg_id, viewer_tg_id, lang, data.get("ruleset"))
     try:
         await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=kb)
     except Exception as e:

@@ -191,15 +191,15 @@ async def test_tpp_back_fetches_subject_but_authorizes_viewer(monkeypatch):
 
     handles_seen = []
 
-    async def fake_build_page_data(user, osu_api_client, session, tg_handle=None, viewer_tg_id=None):
+    async def fake_build_page_data(user, osu_api_client, session, tg_handle=None, viewer_tg_id=None, ruleset=None):
         assert viewer_tg_id == 111
         handles_seen.append(tg_handle)
-        return {"osu_id": 42, "lang": "ru"}
+        return {"osu_id": 42, "lang": "ru", "ruleset": ruleset}
 
     kb_calls = []
 
-    def fake_pf_keyboard(osu_id, subject_tg_id=None, viewer_tg_id=None, lang="en"):
-        kb_calls.append((subject_tg_id, viewer_tg_id))
+    def fake_pf_keyboard(osu_id, subject_tg_id=None, viewer_tg_id=None, lang="en", ruleset=None):
+        kb_calls.append((subject_tg_id, viewer_tg_id, ruleset))
         return None
 
     with patch.object(pf_handlers, "_build_page_data", fake_build_page_data), \
@@ -213,10 +213,10 @@ async def test_tpp_back_fetches_subject_but_authorizes_viewer(monkeypatch):
 
         monkeypatch.setattr(tp.card_renderer, "generate_profile_dashboard_async", fake_generate)
 
-        cb, deleted, answers = _cb("tpp|back|111|222", 111)
+        cb, deleted, answers = _cb("tpp|back|111|222|3", 111)
         await tp.on_tpp_back(cb)
 
     assert fetched == [222]
-    assert kb_calls == [(222, 111)]
+    assert kb_calls == [(222, 111, 3)]
 
     assert handles_seen == [None]

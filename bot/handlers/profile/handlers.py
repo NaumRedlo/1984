@@ -56,13 +56,13 @@ async def _resolve_profile_user(session, osu_api_client, tg_id: int, chat_id: in
     return await resolve_osu_query_status(session, osu_api_client, query, chat_id)
 
 def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Optional[int] = None,
-                 lang: str = "en") -> Optional[InlineKeyboardMarkup]:
+                 lang: str = "en", ruleset: Optional[int] = None) -> Optional[InlineKeyboardMarkup]:
     rows = []
     if osu_id:
         rows.append([InlineKeyboardButton(text=t("pf.kb.osu_profile", lang), url=f"https://osu.ppy.sh/users/{osu_id}")])
     if subject_tg_id and viewer_tg_id:
         rows.append([InlineKeyboardButton(text=t("pf.kb.top_plays", lang),
-                                          callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}")])
+                                          callback_data=f"tpp|open|{viewer_tg_id}|{subject_tg_id}|{ruleset or 0}")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 async def _build_page_data(
@@ -324,7 +324,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
                 subject_tg_id = getattr(user, "telegram_id", None) if not isinstance(user, dict) else None
-                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id, tg_id, lang)
+                keyboard = _pf_keyboard(data.get("osu_id"), subject_tg_id, tg_id, lang, ruleset)
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
