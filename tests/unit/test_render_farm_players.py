@@ -67,6 +67,7 @@ async def test_every_player_comes_once_with_what_they_earned_in_every_chat(facto
     naum = body["people"][1]
     assert naum["player"] == ids["NaumRedlo"] and naum["you"] is True
     assert naum["titles"] == ["perfectionist", "wysi"], "titles earned in one of the chats were lost"
+    assert set(naum["earned"]) == {"perfectionist", "wysi"} and all(naum["earned"].values())
     assert naum["top"] and naum["top"][0]["pp"] == pytest.approx(412.6)
     async with factory() as s:
         found = await players.everyone(s, 7, query=" KOTO ", now=NOW)

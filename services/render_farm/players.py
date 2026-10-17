@@ -71,6 +71,7 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
         if player is not None and player_id not in grouped and (not wanted or wanted in (player.osu_username or "").lower()):
             chosen[player_id] = Rowless(player)
     titles: dict[int, set[str]] = {player_id: set() for player_id in chosen}
+    earned: dict[int, dict[str, Any]] = {player_id: {} for player_id in chosen}
     best: dict[int, list] = {player_id: [] for player_id in chosen}
     if chosen:
         for row in (await session.execute(
@@ -78,6 +79,8 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
         )).scalars().all():
             if row.title_code in TITLE_REGISTRY:
                 titles[row.player_id].add(row.title_code)
+                if row.unlocked_at:
+                    earned[row.player_id][row.title_code] = stamp(row.unlocked_at)
         for row in (await session.execute(
             select(UserBestScore).where(UserBestScore.player_id.in_(list(chosen))).order_by(UserBestScore.player_id, UserBestScore.pp.desc())
         )).scalars().all():
@@ -94,6 +97,7 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
             you=player_id == me or (bool(viewer) and players[player_id].telegram_id == viewer),
         )
         card["player"] = player_id
+        card["earned"] = earned[player_id]
         card["app"] = player_id in signed
         card["online"] = player_id in online
         people.append(card)
