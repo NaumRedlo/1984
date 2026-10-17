@@ -17,6 +17,8 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.oauth.token_manager import get_valid_token
 
+from utils.osu import rulesets
+
 router = Router(name="compare")
 logger = get_logger("handlers.compare")
 
@@ -46,7 +48,7 @@ def _parse_compare_args(raw_args: str) -> Tuple[Optional[str], Optional[str]]:
 
     return None, raw_args
 
-async def _build_subject(session, osu_api_client, query: str, chat_id: int, oauth_token: str = None) -> Tuple[Optional[Dict[str, Any]], str]:
+async def _build_subject(session, osu_api_client, query: str, chat_id: int, oauth_token: str = None, mode: str = "osu") -> Tuple[Optional[Dict[str, Any]], str]:
     registered, user_data, status = await resolve_osu_query_status(session, osu_api_client, query, chat_id)
     if not user_data:
         return None, status
@@ -56,6 +58,10 @@ async def _build_subject(session, osu_api_client, query: str, chat_id: int, oaut
         fresh = await osu_api_client.get_user_data(registered.osu_user_id, oauth_token=oauth_token)
         if fresh:
             user_data = fresh
+    if mode != "osu":
+        osu_id = registered.osu_user_id if registered else user_data.get("id")
+        user_data = (await osu_api_client.get_user_data(osu_id, mode=mode, oauth_token=oauth_token) if osu_id else None) or {"username": user_data.get("username")}
+        fresh, registered = user_data, None
 
     source = fresh or user_data
     subject = {
@@ -71,15 +77,27 @@ async def _build_subject(session, osu_api_client, query: str, chat_id: int, oaut
     }
     return subject, status
 
-async def _build_self_subject(session, osu_api_client, user, oauth_token: str = None) -> Dict[str, Any]:
+async def _build_self_subject(session, osu_api_client, user, oauth_token: str = None, mode: str = "osu") -> Dict[str, Any]:
     fresh = None
     if user and user.osu_user_id:
         try:
-            fresh = await osu_api_client.get_user_data(user.osu_user_id, oauth_token=oauth_token)
+            fresh = await osu_api_client.get_user_data(user.osu_user_id, mode=mode, oauth_token=oauth_token)
         except Exception:
             fresh = None
 
     source = fresh or {}
+    if mode != "osu":
+        return {
+            "username": source.get("username") or user.osu_username,
+            "pp": source.get("pp") or 0,
+            "rank": source.get("global_rank") or 0,
+            "accuracy": source.get("accuracy") or 0.0,
+            "play_count": source.get("play_count") or 0,
+            "play_time": source.get("play_time") or 0,
+            "ranked_score": source.get("ranked_score") or 0,
+            "avatar_url": source.get("avatar_url") or user.avatar_url,
+            "cover_url": source.get("cover_url") or user.cover_url,
+        }
     return {
         "username": source.get("username") or user.osu_username,
         "pp": source.get("pp") or user.player_pp or 0,
@@ -100,7 +118,9 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
         await message.answer(t("common.api_not_ready", lang))
         return
 
-    left_arg, right_arg = _parse_compare_args(trigger_args.args if trigger_args else "")
+    ruleset, rest = await rulesets.chosen(trigger_args.args if trigger_args else "", message.from_user.id if message.from_user else None)
+    mode = rulesets.RULESETS[ruleset] if ruleset is not None else "osu"
+    left_arg, right_arg = _parse_compare_args(rest)
 
     async def _not_found_msg(wait_msg, name, status):
         key = "common.user_not_found" if status == "not_found" else "common.user_not_registered"
@@ -124,8 +144,8 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 if not target_query:
                     await wait_msg.edit_text(t("cmp.parse_failed", lang))
                     return
-                user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
-                user2, status = await _build_subject(session, osu_api_client, target_query, tenant_chat_id, oauth_token=token)
+                user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token, mode=mode)
+                user2, status = await _build_subject(session, osu_api_client, target_query, tenant_chat_id, oauth_token=token, mode=mode)
                 if not user2:
                     await _not_found_msg(wait_msg, target_query, status)
                     return
@@ -133,13 +153,13 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                 query1 = left_arg or self_user.osu_username
                 query2 = right_arg
                 if left_arg is None:
-                    user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token)
+                    user1 = await _build_self_subject(session, osu_api_client, self_user, oauth_token=token, mode=mode)
                 else:
-                    user1, status = await _build_subject(session, osu_api_client, query1, tenant_chat_id, oauth_token=token)
+                    user1, status = await _build_subject(session, osu_api_client, query1, tenant_chat_id, oauth_token=token, mode=mode)
                     if not user1:
                         await _not_found_msg(wait_msg, query1, status)
                         return
-                user2, status = await _build_subject(session, osu_api_client, query2, tenant_chat_id, oauth_token=token)
+                user2, status = await _build_subject(session, osu_api_client, query2, tenant_chat_id, oauth_token=token, mode=mode)
                 if not user2:
                     await _not_found_msg(wait_msg, query2, status)
                     return
@@ -204,6 +224,7 @@ async def compare_users(message: types.Message, trigger_args: TriggerArgs, osu_a
                     },
                 }
                 from services.render_farm.billing import card_palette
+                compare_data["ruleset"] = ruleset if ruleset in (1, 2, 3) else None
                 compare_data["palette1"] = await card_palette(name=user1["username"])
                 compare_data["palette2"] = await card_palette(name=user2["username"])
                 buf = await card_renderer.generate_compare_card_async(compare_data)

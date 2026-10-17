@@ -891,8 +891,8 @@ class OsuApiClient:
         return await self._make_request("GET", "beatmaps/lookup", params={"checksum": checksum})
 
     async def get_beatmap_attributes(self, beatmap_id: Union[int, str],
-                                     mods: Optional[int] = None) -> Optional[Dict]:
-        body: Dict = {"ruleset_id": 0}
+                                     mods: Optional[int] = None, ruleset: int = 0) -> Optional[Dict]:
+        body: Dict = {"ruleset_id": ruleset}
         if mods:
             body["mods"] = mods
         data = await self._make_request(
@@ -904,7 +904,7 @@ class OsuApiClient:
             return data.get("attributes")
         return None
 
-    async def effective_sr(self, beatmap_id, mods_str, nominal_sr, checksum: Optional[str] = None) -> Optional[float]:
+    async def effective_sr(self, beatmap_id, mods_str, nominal_sr, checksum: Optional[str] = None, ruleset: int = 0) -> Optional[float]:
         from utils.osu import assay_service
 
         if not beatmap_id:
@@ -912,6 +912,21 @@ class OsuApiClient:
         cache = getattr(self, "_eff_sr_cache", None)
         if cache is None:
             cache = self._eff_sr_cache = {}
+        if ruleset:
+            bits = _sr_mods_bitset(mods_str)
+            key = (int(beatmap_id), bits, ruleset)
+            if key in cache:
+                return cache[key]
+            val = nominal_sr
+            try:
+                attrs = await self.get_beatmap_attributes(beatmap_id, mods=bits, ruleset=ruleset)
+                sr = attrs.get("star_rating") if attrs else None
+                if sr is not None:
+                    val = float(sr)
+            except Exception as e:
+                logger.debug(f"effective_sr fetch failed for {beatmap_id}/{bits} in ruleset {ruleset}: {e}")
+            cache[key] = val
+            return val
         served_mods = [m for m in assay_service.mods_of(mods_str) if m["acronym"] != "CL"]
         if served_mods and assay_service.enabled():
             key = (int(beatmap_id), json.dumps(served_mods, sort_keys=True))

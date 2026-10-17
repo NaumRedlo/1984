@@ -26,6 +26,8 @@ from bot.handlers.common.auth import require_registered_user
 from bot.utils.safe_edit import safe_edit_media
 from utils.ttl_cache import TTLCache
 
+from utils.osu import rulesets
+
 router = Router(name="top_plays")
 logger = get_logger("handlers.top_plays")
 
@@ -93,8 +95,23 @@ def _flatten_raw_score(raw: dict) -> dict:
     }
 
 async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str], *,
-                          public_lookup: bool = False, viewer_tg_id: Optional[int] = None) -> dict:
-    if public_lookup:
+                          public_lookup: bool = False, viewer_tg_id: Optional[int] = None,
+                          ruleset: Optional[int] = None) -> dict:
+    other_mode = ruleset in (1, 2, 3) and osu_api_client is not None
+    if other_mode:
+        osu_id = user["id"] if public_lookup else user.osu_user_id
+        mode = rulesets.RULESETS[ruleset]
+        raw_scores = await osu_api_client.get_user_best_scores(osu_id, limit=100, mode=mode)
+        built = build_top_plays_list([_flatten_raw_score(r) for r in raw_scores])
+        stats = await osu_api_client.get_user_data(osu_id, mode=mode) or {}
+        username = stats.get("username") or (user.get("username", "???") if public_lookup else user.osu_username)
+        country = stats.get("country_code") or (None if public_lookup else user.country)
+        avatar_url = stats.get("avatar_url") or (user.get("avatar_url") if public_lookup else user.avatar_url)
+        cover_url = stats.get("cover_url") or (user.get("cover_url") if public_lookup else user.cover_url)
+        global_rank = stats.get("global_rank")
+        player_pp = stats.get("pp")
+        accuracy = stats.get("accuracy")
+    elif public_lookup:
         raw_scores = await osu_api_client.get_user_best_scores(user["id"], limit=100) if osu_api_client else []
         built = build_top_plays_list([_flatten_raw_score(r) for r in raw_scores])
         username = user.get("username", "???")
@@ -129,6 +146,7 @@ async def _build_payload(session, user, osu_api_client, tg_handle: Optional[str]
         "accuracy": accuracy,
         "lang": card_lang,
         "has_back": False,
+        "ruleset": ruleset if other_mode else None,
 
         "client": osu_api_client,
     }
@@ -140,7 +158,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
     total_pages = max(1, (len(built) + ROWS_PER_PAGE - 1) // ROWS_PER_PAGE)
     shown = max(0, min(page, total_pages - 1))
     page_rows = built[shown * ROWS_PER_PAGE:(shown + 1) * ROWS_PER_PAGE]
-    await star_rating.fill(payload.get("client"), page_rows)
+    await star_rating.fill(payload.get("client"), page_rows, ruleset=payload.get("ruleset") or 0)
 
     data = build_top_plays_card_data(
         payload["username"], payload["handle"], payload["country"],
@@ -148,6 +166,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
         cover_url=payload.get("cover_url"), global_rank=payload.get("global_rank"),
         player_pp=payload.get("player_pp"), accuracy=payload.get("accuracy"),
     )
+    data["ruleset"] = payload.get("ruleset")
     payload["cur_page"] = data["page"]
     payload["cur_total_pages"] = data["total_pages"]
     from services.render_farm.billing import card_palette
@@ -168,7 +187,7 @@ async def _render(message, uid: int, page: int, payload: dict, *, edit: bool) ->
 async def show_top_plays(message: types.Message, osu_api_client=None, trigger_args: TriggerArgs = None, tenant_chat_id=None):
     tg_id = message.from_user.id
     lang = (await get_language(tg_id)).lower()
-    query = (trigger_args.args or "").strip() if trigger_args else ""
+    ruleset, query = await rulesets.chosen((trigger_args.args or "") if trigger_args else "", tg_id)
     async with get_db_session() as session:
         try:
             public_lookup = False
@@ -210,7 +229,7 @@ async def show_top_plays(message: types.Message, osu_api_client=None, trigger_ar
                 else:
                     user = reg_user
 
-            payload = await _build_payload(session, user, osu_api_client, tg_handle, public_lookup=public_lookup, viewer_tg_id=tg_id)
+            payload = await _build_payload(session, user, osu_api_client, tg_handle, public_lookup=public_lookup, viewer_tg_id=tg_id, ruleset=ruleset)
             _store_nav(tg_id, payload)
             await _render(message, tg_id, 0, payload, edit=False)
         except Exception as e:

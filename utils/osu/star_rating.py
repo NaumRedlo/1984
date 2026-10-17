@@ -5,10 +5,12 @@ from utils.logger import get_logger
 
 logger = get_logger("utils.osu.star_rating")
 
-async def resolve(client, beatmap_id, mods, nominal, checksum: Optional[str] = None) -> Optional[float]:
+async def resolve(client, beatmap_id, mods, nominal, checksum: Optional[str] = None, ruleset: int = 0) -> Optional[float]:
     if client is None or not beatmap_id:
         return nominal
     try:
+        if ruleset:
+            return await client.effective_sr(beatmap_id, mods, nominal, ruleset=ruleset)
         if checksum:
             return await client.effective_sr(beatmap_id, mods, nominal, checksum)
         return await client.effective_sr(beatmap_id, mods, nominal)
@@ -24,6 +26,7 @@ async def fill(
     mods_key: str = "mods",
     sr_key: str = "eff_sr",
     nominal_key: str = "star_rating",
+    ruleset: int = 0,
 ) -> None:
     if client is None or not rows:
         return
@@ -36,6 +39,7 @@ async def fill(
             row.get(beatmap_key),
             row.get(mods_key),
             row.get(nominal_key) or row.get(sr_key),
+            ruleset=ruleset,
         )
         for row in wanted
     ))

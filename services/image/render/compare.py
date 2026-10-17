@@ -95,6 +95,9 @@ class CompareCardMixin:
             self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette2"), ACCENT_RED), width=2)
         else:
             self._aa_rounded_outline(img, (av2_x, av_y, av2_x + av_size, av_y + av_size), radius=14, outline=tint.tone_for(data.get("palette2"), ACCENT_RED), width=2, fill=(50, 50, 70))
+        if data.get("ruleset") in (1, 2, 3):
+            for av_x in (av1_x, av2_x):
+                self._pf_ruleset_badge(img, av_x + av_size - 6, av_y + av_size - 6, data["ruleset"], side=32)
 
         draw = ImageDraw.Draw(img)
 
