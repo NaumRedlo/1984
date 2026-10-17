@@ -403,17 +403,18 @@ class ProfileCardMixin:
         badge = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         g = ImageDraw.Draw(badge)
         g.ellipse((0, 0, big - 1, big - 1), fill=COL_PANEL)
-        edge = 5 * k
+        edge = max(2 * k, round(big * 0.07))
         g.ellipse((edge, edge, big - 1 - edge, big - 1 - edge), fill=tint.tone((228, 76, 76)))
         white = (255, 255, 255, 255)
         c = big / 2
-        r = (big / 2 - edge) * 0.72
-        stroke = r * 0.16
+        small = side < 40
+        r = (big / 2 - edge) * (0.8 if small else 0.72)
+        stroke = max(r * (0.2 if small else 0.16), 1.6 * k)
 
         def disc(x, y, radius):
             g.ellipse((c + x - radius, c + y - radius, c + x + radius, c + y + radius), fill=white)
 
-        def bar(x, half, wide=r * 0.21):
+        def bar(x, half, wide=r * (0.25 if small else 0.21)):
             g.rounded_rectangle((c + x - wide / 2, c - half, c + x + wide / 2, c + half), radius=wide / 2, fill=white)
 
         g.ellipse((c - r, c - r, c + r, c + r), outline=white, width=round(stroke))
@@ -423,11 +424,11 @@ class ProfileCardMixin:
             bar(r * 0.33, r * 0.33)
         elif ruleset == 1:
             inner = r * 0.63
-            g.ellipse((c - inner, c - inner, c + inner, c + inner), outline=white, width=round(r * 0.19))
+            g.ellipse((c - inner, c - inner, c + inner, c + inner), outline=white, width=round(r * (0.22 if small else 0.19)))
             bar(0.0, inner - r * 0.05)
         elif ruleset == 2:
             for x, y in ((-r * 0.13, -r * 0.32), (r * 0.23, 0.0), (-r * 0.13, r * 0.32)):
-                disc(x, y, r * 0.17)
+                disc(x, y, r * (0.2 if small else 0.17))
         else:
             disc(0.0, 0.0, r * 0.5)
         badge = badge.resize((side, side), Image.LANCZOS)

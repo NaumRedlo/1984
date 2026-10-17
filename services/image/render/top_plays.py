@@ -227,7 +227,7 @@ class TopPlaysCardMixin:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
         self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 3)
         if data.get("ruleset") in (1, 2, 3):
-            self._pf_ruleset_badge(img, int(round(ax + d / 2 + d / 2 * 0.7071)), int(round(ay + d / 2 + d / 2 * 0.7071)), data["ruleset"], side=24)
+            self._pf_ruleset_badge(img, int(round(ax + d / 2 + d / 2 * 0.7071)), int(round(ay + d / 2 + d / 2 * 0.7071)), data["ruleset"], side=28)
         draw = ImageDraw.Draw(img)
 
         tx = ax + d + 16
