@@ -87,7 +87,7 @@ async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_
         await message.answer(t("common.api_not_ready", lang))
         return
 
-    ruleset, user_input = rulesets.split_args(trigger_args.args or "")
+    ruleset, user_input = await rulesets.chosen(trigger_args.args or "", message.from_user.id)
 
     target_id = None
     display_name = ""

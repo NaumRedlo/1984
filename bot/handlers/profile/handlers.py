@@ -20,6 +20,8 @@ from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.common.auth import require_registered_user
 from services.refresh import refresh_user, needs_blocking_refresh
 
+from utils.osu import rulesets
+
 router = Router(name="profile")
 logger = get_logger("handlers.profile")
 
@@ -65,7 +67,7 @@ def _pf_keyboard(osu_id, subject_tg_id: Optional[int] = None, viewer_tg_id: Opti
 
 async def _build_page_data(
     user, osu_api_client, session, tg_handle: Optional[str] = None,
-    viewer_tg_id: Optional[int] = None,
+    viewer_tg_id: Optional[int] = None, ruleset: Optional[int] = None,
 ) -> Dict:
     def _get(field: str, default=0):
         if isinstance(user, dict):
@@ -124,12 +126,24 @@ async def _build_page_data(
 
     osu_user_id = _get("osu_user_id", 0)
     is_registered = not isinstance(user, dict)
+    other_mode = ruleset not in (None, 0)
+    mode = rulesets.RULESETS[ruleset] if other_mode else "osu"
+    if other_mode:
+        base["ruleset"] = ruleset
 
     if osu_user_id:
         try:
-            ext = await osu_api_client.get_user_extended_data(osu_user_id)
+            ext = await (osu_api_client.get_user_extended_data(osu_user_id, mode=mode) if other_mode else osu_api_client.get_user_extended_data(osu_user_id))
         except Exception:
             ext = None
+        if ext and other_mode:
+            base["pp"] = ext.get("pp") or 0
+            base["global_rank"] = ext.get("global_rank") or 0
+            base["accuracy"] = ext.get("accuracy") or 0.0
+            base["play_count"] = ext.get("play_count") or 0
+            base["play_time"] = _format_play_time(ext.get("play_time") or 0, card_lang)
+            base["ranked_score"] = ext.get("ranked_score") or 0
+            base["total_hits"] = ext.get("total_hits") or 0
         if ext:
             base["rank_history"] = ext.get("rank_history", [])
             base["monthly_playcounts"] = ext.get("monthly_playcounts", [])
@@ -167,7 +181,7 @@ async def _build_page_data(
             base["dossier_mark"] = None
             base["palette"] = None
         best_pp = None
-        if is_registered:
+        if is_registered and not other_mode:
             from sqlalchemy import func
             stmt = (
                 select(func.max(UserBestScore.pp))
@@ -177,14 +191,14 @@ async def _build_page_data(
             best_pp = result.scalar()
         if not best_pp:
             try:
-                top1 = await osu_api_client.get_user_best_scores(osu_user_id, limit=1)
+                top1 = await osu_api_client.get_user_best_scores(osu_user_id, limit=1, mode=mode)
                 if top1 and isinstance(top1, list) and top1[0].get("pp"):
                     best_pp = top1[0]["pp"]
             except Exception:
                 pass
         base["best_pp"] = best_pp or 0
 
-        if is_registered:
+        if is_registered and not other_mode:
             stmt = (
                 select(UserBestScore)
                 .where(UserBestScore.player_id == user.player_id)
@@ -224,7 +238,7 @@ async def _build_page_data(
             ]
         else:
             try:
-                api_scores = await osu_api_client.get_user_best_scores(osu_user_id, limit=5)
+                api_scores = await osu_api_client.get_user_best_scores(osu_user_id, limit=5, mode=mode)
             except Exception:
                 api_scores = []
             base["top_scores"] = [
@@ -258,7 +272,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
         await message.answer(t("common.api_not_ready", lang))
         return
 
-    query = (trigger_args.args or "").strip() if trigger_args else ""
+    ruleset, query = await rulesets.chosen((trigger_args.args or "") if trigger_args else "", tg_id)
     async with get_db_session() as session:
         try:
             public_lookup = False
@@ -306,7 +320,7 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                         await wait_msg.edit_text(t("pf.refresh_failed_cached", lang))
 
             try:
-                data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=tg_id)
+                data = await _build_page_data(user, osu_api_client, session, tg_handle=tg_handle, viewer_tg_id=tg_id, ruleset=ruleset)
                 buf = await card_renderer.generate_profile_dashboard_async(data)
                 photo = BufferedInputFile(buf.read(), filename="profile.png")
                 subject_tg_id = getattr(user, "telegram_id", None) if not isinstance(user, dict) else None

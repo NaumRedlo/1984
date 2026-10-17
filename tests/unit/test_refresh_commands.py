@@ -36,6 +36,7 @@ async def database(tmp_path, monkeypatch):
 
     monkeypatch.setattr(update, "get_db_session", session)
     monkeypatch.setattr(profile, "get_db_session", session)
+    monkeypatch.setattr(update.rulesets, "preferred", AsyncMock(return_value=None))
     monkeypatch.setattr(update, "get_language", AsyncMock(return_value="ru"))
     monkeypatch.setattr(profile, "get_language", AsyncMock(return_value="ru"))
     monkeypatch.setattr(update, "refresh_requests", RefreshRequests())

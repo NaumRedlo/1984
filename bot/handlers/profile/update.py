@@ -81,7 +81,7 @@ async def cmd_update(message: types.Message, trigger_args: TriggerArgs, osu_api_
     if not osu_api_client:
         await message.answer(t("common.api_not_ready", lang))
         return
-    ruleset, query = rulesets.split_args(trigger_args.args or "")
+    ruleset, query = await rulesets.chosen(trigger_args.args or "", message.from_user.id)
     target = await resolve_target(message, query, tenant_chat_id, osu_api_client, lang)
     if not target:
         return

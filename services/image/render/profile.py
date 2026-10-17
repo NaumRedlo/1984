@@ -342,6 +342,9 @@ class ProfileCardMixin:
         else:
             self._aa_ellipse_fill(img, (ax, ay, ax + d, ay + d), fill=(52, 40, 42))
         self._tinted_ring(img, (ax, ay, ax + d, ay + d), (228, 76, 76), 7)
+        if data.get("ruleset") in (1, 2, 3):
+            corner = int(round(ax + d / 2 + d / 2 * 0.7071))
+            self._pf_ruleset_badge(img, corner, corner, data["ruleset"])
         draw = ImageDraw.Draw(img)
 
         nx = ax + d + 28
@@ -393,6 +396,36 @@ class ProfileCardMixin:
         if not cname or cname in ("—", "__", "--"):
             cname = S["unknown_country"]
         self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
+
+    def _pf_ruleset_badge(self, img, cx, cy, ruleset, side=64):
+        k = 4
+        big = side * k
+        badge = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        g = ImageDraw.Draw(badge)
+        g.ellipse((0, 0, big - 1, big - 1), fill=COL_PANEL)
+        edge = 5 * k
+        g.ellipse((edge, edge, big - 1 - edge, big - 1 - edge), fill=tint.tone((228, 76, 76)))
+        white = (255, 255, 255, 255)
+        c = big / 2
+        r = big / 2 - edge
+        if ruleset == 3:
+            ring = r * 0.62
+            g.ellipse((c - ring, c - ring, c + ring, c + ring), outline=white, width=int(r * 0.11))
+            bar = r * 0.13
+            for dx, h in ((-r * 0.27, r * 0.34), (0.0, r * 0.52), (r * 0.27, r * 0.34)):
+                g.rounded_rectangle((c + dx - bar / 2, c - h, c + dx + bar / 2, c + h), radius=bar / 2, fill=white)
+        elif ruleset == 1:
+            ring = r * 0.62
+            g.ellipse((c - ring, c - ring, c + ring, c + ring), outline=white, width=int(r * 0.11))
+            inner = r * 0.36
+            g.ellipse((c - inner, c - inner, c + inner, c + inner), fill=white)
+            g.rectangle((c - r * 0.05, c - inner, c + r * 0.05, c + inner), fill=tint.tone((228, 76, 76)))
+        else:
+            dot = r * 0.2
+            for dx, dy in ((-r * 0.3, r * 0.18), (r * 0.3, r * 0.18), (0.0, -r * 0.3)):
+                g.ellipse((c + dx - dot, c + dy - dot, c + dx + dot, c + dy + dot), fill=white)
+        badge = badge.resize((side, side), Image.LANCZOS)
+        img.paste(badge, (cx - side // 2, cy - side // 2), badge)
 
     def _pf_dossier_mark(self, img, x, cy, mark):
         from services.image.utils import load_badge

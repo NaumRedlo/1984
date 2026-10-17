@@ -101,6 +101,8 @@ class Player(Base):
 
     time_zone = Column(String(64), nullable=True)
 
+    command_ruleset = Column(Integer, nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 

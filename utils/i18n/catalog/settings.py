@@ -82,6 +82,9 @@ CATALOG = {
         "ru": "✅ Аккаунт osu! отвязан. Повторная отвязка доступна через месяц.",
     },
     "sts.done": {"en": "Done", "ru": "Готово"},
+    "sts.kb.ruleset": {"en": "Command mode: {mode}", "ru": "Режим команд: {mode}"},
+    "sts.ruleset.view": {"en": "<b>Command mode</b>\nCommands like pf, rs, tpp, lb and cmp show this mode when you do not name one, as in <code>rs mania</code>.\nNow: <b>{mode}</b>", "ru": "<b>Режим команд</b>\nКоманды вроде pf, rs, tpp, lb и cmp показывают этот режим, если вы не назвали другой, как в <code>rs mania</code>.\nСейчас: <b>{mode}</b>"},
+    "sts.ruleset.set_alert": {"en": "Commands now show {mode}", "ru": "Теперь команды показывают {mode}"},
 
     "sts.lang.view": {
         "en": "<b>Language</b>\n\nCurrent: <b>{current}</b>\nApplies to the entire text.",

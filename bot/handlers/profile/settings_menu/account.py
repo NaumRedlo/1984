@@ -6,6 +6,7 @@ from utils.i18n import t
 from utils.formatting.text import escape_html
 from utils.osu.resolve_user import get_registered_identity_user
 from utils.language import get_language, set_language
+from utils.osu import rulesets
 from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.handlers.profile.settings_menu.common import _nav_row
 
@@ -37,7 +38,7 @@ async def _account_view(tg_id: int, lang: str = "en"):
     else:
         tier = escape_html(held["name"] or t("sts.acc.sub_creator", lang))
         text += t("sts.acc.sub" if held["active"] else "sts.acc.sub_ended", lang, name=tier, stage=held["stage"])
-    rows = []
+    rows = [[InlineKeyboardButton(text=t("sts.kb.ruleset", lang, mode=rulesets.TITLES[await rulesets.preferred(tg_id) or 0]), callback_data="st:acc:mode")]]
     if held is not None and held["active"]:
         rows.append([InlineKeyboardButton(text=t("sts.kb.tint_on" if held["tint_cards"] else "sts.kb.tint_off", lang), callback_data="st:acc:tint:tint_cards")])
         rows.append([InlineKeyboardButton(text=t("sts.kb.titles_on" if held["tint_titles"] else "sts.kb.titles_off", lang), callback_data="st:acc:tint:tint_titles")])
@@ -83,6 +84,38 @@ async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, la
     except Exception:
         pass
     await callback.answer(t("sts.done", lang))
+
+def _ruleset_kb(current: int, lang: str = "en") -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"{'● ' if rid == current else ''}{name}", callback_data=f"st:acc:mode:{rid}")] for rid, name in rulesets.TITLES.items()]
+    rows.append([InlineKeyboardButton(text=t("sts.kb.back", lang), callback_data="st:acc")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+@router.callback_query(F.data == "st:acc:mode")
+async def cb_account_ruleset(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    current = await rulesets.preferred(callback.from_user.id) or 0
+    try:
+        await callback.message.edit_text(t("sts.ruleset.view", lang, mode=rulesets.TITLES[current]), reply_markup=_ruleset_kb(current, lang), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("st:acc:mode:"))
+async def cb_account_ruleset_set(callback: types.CallbackQuery, tenant_chat_id=None, lang: str = "en"):
+    try:
+        ruleset = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer()
+        return
+    if not await rulesets.prefer(callback.from_user.id, ruleset):
+        await callback.answer()
+        return
+    try:
+        await callback.message.edit_text(t("sts.ruleset.view", lang, mode=rulesets.TITLES[ruleset]), reply_markup=_ruleset_kb(ruleset, lang), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer(t("sts.ruleset.set_alert", lang, mode=rulesets.TITLES[ruleset]))
 
 def _language_kb(current: str, lang: str = "en") -> InlineKeyboardMarkup:
     def mark(code):

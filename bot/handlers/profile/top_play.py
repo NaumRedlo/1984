@@ -40,7 +40,7 @@ async def cmd_top_play(message: types.Message, trigger_args: TriggerArgs, osu_ap
         await message.answer(t("common.api_not_ready", lang))
         return
 
-    ruleset, rest = rulesets.split_args(trigger_args.args or "")
+    ruleset, rest = await rulesets.chosen(trigger_args.args or "", message.from_user.id)
     place, query = split_place(rest)
     place = 1 if place is None else place
     if not 1 <= place <= 100:

@@ -1,4 +1,7 @@
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 RULESETS = {0: "osu", 1: "taiko", 2: "fruits", 3: "mania"}
 TITLES = {0: "osu!", 1: "osu!taiko", 2: "osu!catch", 3: "osu!mania"}
@@ -34,3 +37,37 @@ def of_score(raw: dict) -> int:
         return mode
     name = raw.get("mode") or (raw.get("beatmap") or {}).get("mode")
     return {v: k for k, v in RULESETS.items()}.get(name, 0)
+
+async def preferred(telegram_id) -> Optional[int]:
+    from sqlalchemy import select
+    from db.database import get_db_session
+    from db.models.player import Player
+    if not telegram_id:
+        return None
+    try:
+        async with get_db_session() as session:
+            held = (await session.execute(select(Player.command_ruleset).where(Player.telegram_id == telegram_id))).scalar_one_or_none()
+    except Exception:
+        logger.warning("rulesets: the preferred mode of %s was not read", telegram_id, exc_info=True)
+        return None
+    return held if held in RULESETS else None
+
+async def chosen(text: str, telegram_id) -> tuple[Optional[int], str]:
+    ruleset, rest = split_args(text)
+    if ruleset is None:
+        ruleset = await preferred(telegram_id)
+    return ruleset, rest
+
+async def prefer(telegram_id, ruleset: int) -> bool:
+    from sqlalchemy import select
+    from db.database import get_db_session
+    from db.models.player import Player
+    if ruleset not in RULESETS or not telegram_id:
+        return False
+    async with get_db_session() as session:
+        player = (await session.execute(select(Player).where(Player.telegram_id == telegram_id))).scalar_one_or_none()
+        if player is None:
+            return False
+        player.command_ruleset = ruleset
+        await session.commit()
+    return True

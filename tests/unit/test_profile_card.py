@@ -159,3 +159,10 @@ def test_x_grade_hides_accuracy_but_keeps_pp():
     assert "100.00%" not in center_calls
     assert "350pp" in center_calls
     assert "98.20%" in center_calls
+
+def test_another_ruleset_is_marked_at_the_avatar_ring_and_osu_is_left_plain():
+    plain = _render(_data())
+    assert _render(_data(ruleset=0)) == plain
+    marked = {ruleset: _render(_data(ruleset=ruleset)) for ruleset in (1, 2, 3)}
+    assert all(png != plain for png in marked.values())
+    assert len(set(marked.values())) == 3

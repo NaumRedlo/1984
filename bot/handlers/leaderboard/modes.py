@@ -56,7 +56,7 @@ async def cmd_ranking(message: types.Message, trigger_args: TriggerArgs = None, 
     if not await ensure_dm_tenant(message, tenant_chat_id):
         return
     lang = (await get_language(message.from_user.id)).lower()
-    ruleset, _ = rulesets.split_args((trigger_args.args if trigger_args else "") or "")
+    ruleset, _ = await rulesets.chosen((trigger_args.args if trigger_args else "") or "", message.from_user.id)
     ruleset = ruleset or 0
     try:
         photo, board = await _card(tenant_chat_id, ruleset, 0, message.from_user.id, osu_api_client, lang)
