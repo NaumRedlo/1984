@@ -66,9 +66,9 @@ def note_drift(score_id, beatmap_id: int, official_pp: float, computed: Dict) ->
 WHATIF_BRACKETS = (95.0, 98.0, 99.0, 100.0)
 
 async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = "",
-                              checksum: Optional[str] = None) -> Optional[Dict]:
+                              checksum: Optional[str] = None, ruleset: int = 0) -> Optional[Dict]:
     wanted = [*WHATIF_BRACKETS, accuracy]
-    served = await assay_service.whatif(beatmap_id, wanted, mods=mods_str, checksum=checksum)
+    served = await assay_service.whatif(beatmap_id, wanted, mods=mods_str, checksum=checksum, ruleset=ruleset)
     points = (served or {}).get("points") or []
     if len(points) != len(wanted):
         return None
@@ -80,7 +80,7 @@ async def calculate_whatif_pp(beatmap_id: int, accuracy: float, mods_str: str = 
         "star_rating": round(served["map"]["star_rating"], 2),
         "max_combo": whole,
         "combo": whole,
-        "count_300": int(hits.get("great", 0)),
+        "count_300": int(hits.get("great", 0)) + int(hits.get("perfect", 0)),
         "count_100": int(hits.get("ok", 0)),
         "count_50": int(hits.get("meh", 0)),
         "count_miss": int(hits.get("miss", 0)),

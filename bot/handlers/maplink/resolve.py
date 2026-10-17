@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from utils.osu import rulesets
+
 def _pick_diff(beatmaps: list[dict]) -> dict | None:
     if not beatmaps:
         return None
@@ -12,6 +14,12 @@ def _covers_url(bset: dict, set_id) -> str | None:
     return (covers.get("cover@2x") or covers.get("cover")
             or (f"https://assets.ppy.sh/beatmaps/{set_id}/covers/cover@2x.jpg"
                 if set_id else None))
+
+def _ruleset_of(beatmap: dict) -> int:
+    given = beatmap.get("mode_int")
+    if isinstance(given, int) and given in rulesets.RULESETS:
+        return given
+    return {name: rid for rid, name in rulesets.RULESETS.items()}.get(beatmap.get("mode"), 0)
 
 def _card_from_beatmap(bm: dict) -> dict:
     bset = bm.get("beatmapset") or {}
@@ -26,6 +34,7 @@ def _card_from_beatmap(bm: dict) -> dict:
         "creator": bset.get("creator") or "",
         "mapper_id": bset.get("user_id") or bm.get("user_id"),
         "version": bm.get("version") or "",
+        "ruleset": _ruleset_of(bm),
         "star_rating": bm.get("difficulty_rating"),
         "cs": bm.get("cs"), "ar": bm.get("ar"),
         "od": bm.get("accuracy"), "hp_drain": bm.get("drain"),
@@ -34,7 +43,7 @@ def _card_from_beatmap(bm: dict) -> dict:
         "status": bm.get("status") or bset.get("status"),
         "cover_url": _covers_url(bset, set_id),
         "url": bm.get("url") or (
-            f"https://osu.ppy.sh/beatmapsets/{set_id}#osu/{bid}" if set_id
+            f"https://osu.ppy.sh/beatmapsets/{set_id}#{rulesets.RULESETS[_ruleset_of(bm)]}/{bid}" if set_id
             else f"https://osu.ppy.sh/beatmaps/{bid}"),
     }
 
@@ -50,6 +59,7 @@ def _card_from_set(bs: dict, diff: dict) -> dict:
         "creator": bs.get("creator") or "",
         "mapper_id": bs.get("user_id"),
         "version": diff.get("version") or "",
+        "ruleset": _ruleset_of(diff),
         "star_rating": diff.get("difficulty_rating"),
         "cs": diff.get("cs"), "ar": diff.get("ar"),
         "od": diff.get("accuracy"), "hp_drain": diff.get("drain"),
@@ -58,7 +68,7 @@ def _card_from_set(bs: dict, diff: dict) -> dict:
         "max_combo": diff.get("max_combo"),
         "status": diff.get("status") or bs.get("status"),
         "cover_url": _covers_url(bs, set_id),
-        "url": f"https://osu.ppy.sh/beatmapsets/{set_id}#osu/{bid}",
+        "url": f"https://osu.ppy.sh/beatmapsets/{set_id}#{rulesets.RULESETS[_ruleset_of(diff)]}/{bid}",
     }
 
 async def _resolve_card(ref, api) -> dict | None:

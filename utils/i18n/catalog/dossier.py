@@ -117,8 +117,16 @@ CATALOG = {
         "ru": "Не получилось прочитать этот реплей.",
     },
     "farm.standard_only": {
-        "en": "The farm draws osu!standard replays only.",
-        "ru": "Ферма рисует только реплеи osu!standard.",
+        "en": "The farm draws osu! and osu!mania replays only.",
+        "ru": "Ферма рисует только реплеи osu! и osu!mania.",
+    },
+    "farm.mania_note": {
+        "en": "osu!mania rendering is experimental and often differs from what happened in the game: grades, combo and holds may not match. Only workers with a recent Dossier take these replays, so it may wait longer.",
+        "ru": "Рендер osu!mania экспериментальный и часто расходится с тем, что было в игре: оценки, комбо и холды могут не совпадать. Такие реплеи берут только воркеры со свежим Dossier, поэтому ждать может дольше.",
+    },
+    "farm.mania_caption": {
+        "en": "\nosu!mania render, experimental: may differ from the game",
+        "ru": "\nРендер osu!mania экспериментальный: может расходиться с игрой",
     },
     "farm.waiting": {
         "en": "🎬 {title}\nIn the queue · {ahead} ahead · workers online: {workers}",

@@ -45,6 +45,7 @@ class Job:
     settings: Optional[dict[str, Any]] = None
     in_app: bool = False
     video_meta: Optional[dict[str, Any]] = None
+    ruleset: int = 0
 
     def handed(self) -> dict[str, Any]:
         skin = None
@@ -68,7 +69,7 @@ class RenderQueue:
               skin: Optional[dict[str, Any]] = None, requester: int = 0, chat_id: int = 0,
               now: Optional[float] = None, video_id: Optional[int] = None,
               settings: Optional[dict[str, Any]] = None, in_app: bool = False,
-              video_meta: Optional[dict[str, Any]] = None) -> Job:
+              video_meta: Optional[dict[str, Any]] = None, ruleset: int = 0) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:16],
             replay_path=replay_path,
@@ -83,6 +84,7 @@ class RenderQueue:
             settings=dict(settings) if settings else None,
             in_app=in_app,
             video_meta=dict(video_meta) if video_meta else None,
+            ruleset=ruleset,
         )
         self._jobs[job.id] = job
         logger.info("job %s offered: %s", job.id, title)
@@ -106,10 +108,11 @@ class RenderQueue:
     def open_for(self, requester: int) -> int:
         return sum(1 for j in self._jobs.values() if j.requester == requester)
 
-    def claim(self, worker: str, name: str = "", *, now: Optional[float] = None) -> Optional[Job]:
+    def claim(self, worker: str, name: str = "", *, now: Optional[float] = None,
+              rulesets: frozenset[int] = frozenset({0})) -> Optional[Job]:
         now = now if now is not None else monotonic()
         self.sweep(now=now)
-        pending = sorted((j for j in self._jobs.values() if j.state is State.WAITING), key=lambda j: j.created)
+        pending = sorted((j for j in self._jobs.values() if j.state is State.WAITING and j.ruleset in rulesets), key=lambda j: j.created)
         if not pending:
             return None
         job = pending[0]

@@ -44,7 +44,7 @@ def _reply_beatmap_ref(message: types.Message) -> Optional[BeatmapRef]:
     if reply is None:
         return None
     ctx = get_message_context(reply.chat.id, reply.message_id, strict=True)
-    if ctx and ctx.get("beatmap_id") and not ctx.get("ruleset"):
+    if ctx and ctx.get("beatmap_id") and ctx.get("ruleset") in (None, 0, 3):
         return BeatmapRef(int(ctx["beatmap_id"]), ctx.get("beatmapset_id"), None)
     return None
 
@@ -105,13 +105,14 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
     if not card_data:
         return None
 
-    whatif = await calculate_whatif_pp(card_data["beatmap_id"], accuracy, mods_str, card_data.get("checksum"))
+    ruleset = 3 if card_data.get("ruleset") == 3 else 0
+    whatif = await calculate_whatif_pp(card_data["beatmap_id"], accuracy, mods_str, card_data.get("checksum"), ruleset=ruleset)
     if not whatif:
         return None
 
     stars = await star_rating.resolve(
         osu_api_client, card_data["beatmap_id"], mods_str,
-        card_data.get("star_rating") or whatif["star_rating"], card_data.get("checksum"),
+        card_data.get("star_rating") or whatif["star_rating"], card_data.get("checksum"), ruleset=ruleset,
     )
 
     adjusted = apply_mods(
@@ -135,9 +136,10 @@ async def _build_whatif_data(ref: BeatmapRef, accuracy: float, mods_str: str, os
         "max_combo": whatif["combo"],
         "count_300": whatif["count_300"], "count_100": whatif["count_100"],
         "count_50": whatif["count_50"], "count_miss": whatif["count_miss"],
-        "cs": adjusted["cs"], "ar": adjusted["ar"], "od": adjusted["od"], "hp_drain": adjusted["hp"],
+        "cs": card_data.get("cs") if ruleset == 3 else adjusted["cs"], "ar": adjusted["ar"], "od": adjusted["od"], "hp_drain": adjusted["hp"],
         "bpm": adjusted["bpm"], "length": adjusted["total_length"],
         "brackets": whatif["brackets"],
+        "ruleset": ruleset,
     }
 
 _VIEW_MODS = 1

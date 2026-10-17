@@ -101,8 +101,10 @@ public sealed class ServiceTests(CorpusFixture corpus) : IClassFixture<CorpusFix
             Assert.Equal(ruleset, played.Map.Ruleset);
             Assert.True(played.Pp > 0 && played.StarRating > 0);
             Assert.NotEqual(osu.StarRating, played.StarRating, 3);
-            Assert.Null(played.PpIfFc);
         }
+        Assert.Null(taiko.PpIfFc);
+        Assert.Null(fruits.PpIfFc);
+        Assert.True(mania.PpIfSs >= mania.PpIfFc && mania.PpIfFc >= mania.Pp);
         Assert.InRange(mania.Map.Attributes["key_count"], 4, 10);
         Assert.False(osu.Attributes.ContainsKey("key_count"));
         var strains = await corpus.Calculator.Strains(new StrainsRequest { BeatmapId = Map, Ruleset = 1 }, CancellationToken.None);
@@ -147,6 +149,36 @@ public sealed class ServiceTests(CorpusFixture corpus) : IClassFixture<CorpusFix
         }, CancellationToken.None);
         Assert.Equal(finished.Pp, failed.PpIfFc!.Value, 6);
         Assert.True(failed.PpIfFc > failed.Pp * 3);
+    }
+
+    [Fact]
+    public async Task Mania_what_if_climbs_with_accuracy_and_a_missed_note_is_finished_as_perfect_for_if_fc()
+    {
+        var result = await corpus.Calculator.WhatIf(new WhatIfRequest { BeatmapId = Map, Ruleset = 3, Accuracies = [0.9, 0.95, 0.99, 1.0] }, CancellationToken.None);
+        Assert.Equal(4, result.Points.Count);
+        for (int i = 1; i < result.Points.Count; i++)
+            Assert.True(result.Points[i].Pp > result.Points[i - 1].Pp);
+        Assert.Equal(0.95, result.Points[1].Accuracy, 2);
+        Assert.Equal(1.0, result.Points[3].Accuracy, 6);
+        var missed = await corpus.Calculator.Score(new ScoreRequest { BeatmapId = Map, Ruleset = 3, Statistics = new() { ["perfect"] = 1400, ["great"] = 100, ["miss"] = 20 } }, CancellationToken.None);
+        var finished = await corpus.Calculator.Score(new ScoreRequest { BeatmapId = Map, Ruleset = 3, Statistics = new() { ["perfect"] = 1420, ["great"] = 100 } }, CancellationToken.None);
+        Assert.Equal(finished.Pp, missed.PpIfFc!.Value, 6);
+        Assert.True(missed.PpIfSs >= missed.PpIfFc);
+        await Assert.ThrowsAsync<BadRequest>(() => corpus.Calculator.WhatIf(new WhatIfRequest { BeatmapId = Map, Ruleset = 1, Accuracies = [0.95] }, CancellationToken.None));
+    }
+
+    [Fact]
+    public void Simulated_mania_hits_add_up_and_follow_the_accuracy()
+    {
+        var maximum = new Dictionary<HitResult, int> { [HitResult.Perfect] = 1000 };
+        foreach (var accuracy in new[] { 0.0, 0.1, 0.5, 0.9, 0.97, 0.99, 1.0 })
+        foreach (var misses in new[] { 0, 3, 999, 5000 })
+        {
+            var hits = Calculator.SimulateMania(maximum, accuracy, misses);
+            Assert.Equal(1000, new[] { HitResult.Perfect, HitResult.Great, HitResult.Good, HitResult.Ok, HitResult.Meh, HitResult.Miss }.Sum(grade => hits[grade]));
+            Assert.All(hits.Values, v => Assert.True(v >= 0));
+        }
+        Assert.Equal(1000, Calculator.SimulateMania(maximum, 1.0, 0)[HitResult.Perfect]);
     }
 
     [Fact]

@@ -115,7 +115,7 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
         if head is None:
             await message.reply(t("farm.unreadable", lang))
             return
-        if head.mode != 0:
+        if head.mode not in (0, 3):
             await message.reply(t("farm.standard_only", lang))
             return
         beatmap = None
@@ -130,7 +130,9 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
         song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
         meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
         job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta)
+                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta, ruleset=head.mode)
+        if head.mode == 3:
+            await message.reply(t("farm.mania_note", lang))
         status = await message.reply(status_of(job, lang))
         asyncio.create_task(follow(bot, job, message, status, lang, workdir))
         handed = True
@@ -192,7 +194,7 @@ async def deliver(bot: Bot, job: Job, asked: types.Message, status: types.Messag
     try:
         await asked.reply_video(
             types.FSInputFile(path, filename="render.mp4"),
-            caption=t("farm.caption", lang, title=job.title, worker=job.worker_name or "?")[:1024],
+            caption=(t("farm.caption", lang, title=job.title, worker=job.worker_name or "?") + (t("farm.mania_caption", lang) if job.ruleset == 3 else ""))[:1024],
             supports_streaming=True,
             width=STANDARD["width"],
             height=STANDARD["height"],

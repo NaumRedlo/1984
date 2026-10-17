@@ -109,10 +109,12 @@ async def whatif(
     mods,
     checksum: Optional[str] = None,
     misses: int = 0,
+    ruleset: int = 0,
 ) -> Optional[dict]:
     body = {
         "beatmap_id": int(beatmap_id),
         "checksum": checksum or None,
+        "ruleset": int(ruleset),
         "mods": mods_of(mods),
         "accuracies": [float(a) for a in accuracies],
         "misses": int(misses),

@@ -45,7 +45,8 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         WorkingBeatmap Working,
         DifficultyAttributes Difficulty,
         Dictionary<HitResult, int> Maximum,
-        Dictionary<string, double> Extra);
+        Dictionary<string, double> Extra,
+        int Objects);
 
     public async Task<MapResult> Map(MapRequest request, CancellationToken cancellationToken)
     {
@@ -72,6 +73,11 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
             ifFc = Perform(prepared, Build(prepared, FullCombo(statistics, prepared.Maximum, legacy), null, null, null, legacy)).Total;
             ifSs = Perform(prepared, Build(prepared, Perfect(prepared.Maximum, legacy), null, null, null, legacy)).Total;
         }
+        else if (prepared.Ruleset is ManiaRuleset)
+        {
+            ifFc = Perform(prepared, Build(prepared, ManiaFullCombo(statistics), null, null, null, legacy)).Total;
+            ifSs = Perform(prepared, Build(prepared, ManiaPerfect(prepared, legacy), null, null, null, legacy)).Total;
+        }
 
         return new ScoreResult(
             performance.Total,
@@ -87,8 +93,8 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
     public async Task<WhatIfResult> WhatIf(WhatIfRequest request, CancellationToken cancellationToken)
     {
         var prepared = await Prepare(request.BeatmapId, request.Checksum, request.Ruleset, request.Mods, cancellationToken);
-        if (prepared.Ruleset is not OsuRuleset)
-            throw new BadRequest("what-if is only simulated for osu!standard");
+        if (prepared.Ruleset is not (OsuRuleset or ManiaRuleset))
+            throw new BadRequest("what-if is only simulated for osu!standard and osu!mania");
         if (request.Accuracies.Count is 0 or > 20)
             throw new BadRequest("give between 1 and 20 accuracies");
 
@@ -98,7 +104,7 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
             var accuracy = wanted > 1 ? wanted / 100 : wanted;
             if (accuracy is < 0 or > 1 || double.IsNaN(accuracy))
                 throw new BadRequest($"accuracy {wanted} is out of range");
-            var statistics = Aim(prepared, accuracy, Math.Max(0, request.Misses));
+            var statistics = Aim(prepared, accuracy, Math.Max(0, request.Misses), prepared.Ruleset is ManiaRuleset ? SimulateMania : Simulate);
             var combo = statistics.GetValueOrDefault(HitResult.Miss) > 0 ? (int?)null : prepared.Difficulty.MaxCombo;
             var score = Build(prepared, statistics, null, combo, null, false);
             points.Add(new WhatIfPoint(score.Accuracy, Perform(prepared, score).Total, WriteStatistics(statistics)));
@@ -157,7 +163,7 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         // how many keys the mania map is played on: a converted map has no key count of its own
         if (playable is osu.Game.Rulesets.Mania.Beatmaps.ManiaBeatmap mania)
             extra["key_count"] = mania.TotalColumns;
-        return new Prepared(beatmapId, md5, ruleset, mods, working, difficulty, MaximumOf(playable), extra);
+        return new Prepared(beatmapId, md5, ruleset, mods, working, difficulty, MaximumOf(playable), extra, playable.HitObjects.Count);
     }
 
     internal static Dictionary<HitResult, int> MaximumOf(IBeatmap playable)
@@ -256,15 +262,28 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
         return new Dictionary<HitResult, int> { [HitResult.Great] = objects };
     }
 
-    private static Dictionary<HitResult, int> Aim(Prepared prepared, double accuracy, int misses)
+    private static Dictionary<HitResult, int> ManiaFullCombo(Dictionary<HitResult, int> played)
+    {
+        var statistics = new Dictionary<HitResult, int>(played);
+        statistics[HitResult.Perfect] = statistics.GetValueOrDefault(HitResult.Perfect) + statistics.GetValueOrDefault(HitResult.Miss);
+        statistics[HitResult.Miss] = 0;
+        return statistics;
+    }
+
+    private static Dictionary<HitResult, int> ManiaPerfect(Prepared prepared, bool legacy)
+        => legacy
+            ? new Dictionary<HitResult, int> { [HitResult.Perfect] = prepared.Objects }
+            : new Dictionary<HitResult, int>(prepared.Maximum);
+
+    private static Dictionary<HitResult, int> Aim(Prepared prepared, double accuracy, int misses, Func<Dictionary<HitResult, int>, double, int, Dictionary<HitResult, int>> simulate)
     {
         double low = 0, high = 1;
-        var best = Simulate(prepared.Maximum, accuracy, misses);
+        var best = simulate(prepared.Maximum, accuracy, misses);
         double bestOff = Math.Abs(ComputeAccuracy(prepared, best, false) - accuracy);
         for (int step = 0; step < 40 && bestOff > 1e-6; step++)
         {
             double middle = (low + high) / 2;
-            var statistics = Simulate(prepared.Maximum, middle, misses);
+            var statistics = simulate(prepared.Maximum, middle, misses);
             double reached = ComputeAccuracy(prepared, statistics, false);
             double off = Math.Abs(reached - accuracy);
             if (off < bestOff)
@@ -313,6 +332,43 @@ public sealed class Calculator(BeatmapStore store, IMemoryCache cache)
             [HitResult.Meh] = meh,
             [HitResult.Miss] = misses,
         };
+        return statistics;
+    }
+
+    private static readonly (HitResult Grade, double Weight)[] ManiaGrades =
+    [
+        (HitResult.Perfect, 305), (HitResult.Great, 300), (HitResult.Good, 200), (HitResult.Ok, 100), (HitResult.Meh, 50),
+    ];
+
+    internal static Dictionary<HitResult, int> SimulateMania(Dictionary<HitResult, int> maximum, double accuracy, int misses)
+    {
+        int total = maximum.Where(pair => pair.Key.IsBasic()).Sum(pair => pair.Value);
+        misses = Math.Clamp(misses, 0, total);
+        int relevant = total - misses;
+        var counts = ManiaGrades.ToDictionary(grade => grade.Grade, _ => 0);
+        if (relevant > 0)
+        {
+            double wanted = Math.Clamp(accuracy * total / relevant, 0, 1) * ManiaGrades[0].Weight;
+            int at = 0;
+            while (at < ManiaGrades.Length - 1 && wanted < ManiaGrades[at + 1].Weight)
+                at++;
+            if (at == ManiaGrades.Length - 1)
+            {
+                counts[HitResult.Meh] = relevant;
+            }
+            else
+            {
+                var (higher, upper) = ManiaGrades[at];
+                var (lower, under) = ManiaGrades[at + 1];
+                int high = Math.Clamp((int)Math.Round(relevant * (wanted - under) / (upper - under)), 0, relevant);
+                counts[higher] = high;
+                counts[lower] = relevant - high;
+            }
+        }
+        var statistics = new Dictionary<HitResult, int>(maximum);
+        foreach (var (grade, _) in ManiaGrades)
+            statistics[grade] = counts[grade];
+        statistics[HitResult.Miss] = misses;
         return statistics;
     }
 

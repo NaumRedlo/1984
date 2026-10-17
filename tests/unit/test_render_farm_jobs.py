@@ -366,3 +366,13 @@ async def test_failure_after_download_frees_reservation_and_cleans_up(replay_sen
         await orders.take(bot, message, "ru")
     assert not orders._receiving and line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
+
+
+def test_a_mania_replay_waits_for_a_worker_that_draws_mania():
+    from services.render_farm.queue import RenderQueue
+    line = RenderQueue()
+    mania = line.offer("mania.osr", "Keys", beatmap_md5="a" * 32, ruleset=3, now=1.0)
+    osu = line.offer("osu.osr", "Circles", beatmap_md5="b" * 32, now=2.0)
+    assert line.claim("old", now=3.0) is osu, "a worker that names no rulesets is given osu! only"
+    assert line.claim("old", now=3.0) is None
+    assert line.claim("new", now=3.0, rulesets=frozenset({0, 3})) is mania

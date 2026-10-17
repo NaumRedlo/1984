@@ -26,6 +26,8 @@ from bot.handlers.dm_tenant import ensure_dm_tenant
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.utils.safe_edit import safe_edit_media
 
+from utils.osu import rulesets
+
 router = Router(name="leaderboard")
 logger = get_logger("handlers.leaderboard")
 
@@ -68,6 +70,16 @@ async def show_leaderboard(message: types.Message, trigger_args: TriggerArgs = N
         return
     lang = (await get_language(message.from_user.id)).lower() if message.from_user else "en"
     chat_id = tenant_chat_id
+    ruleset, _ = await rulesets.chosen((trigger_args.args if trigger_args else "") or "", message.from_user.id if message.from_user else None)
+    if ruleset in (1, 2, 3):
+        from bot.handlers.leaderboard import modes as mode_boards
+        try:
+            photo, board = await mode_boards._card(chat_id, ruleset, 0, message.from_user.id, osu_api_client, lang)
+            await message.answer_photo(photo=photo, reply_markup=mode_boards.keyboard(ruleset, board["page"], board["total_pages"]))
+        except Exception as e:
+            logger.error(f"Error in /leaderboard for ruleset {ruleset}: {e}", exc_info=True)
+            await message.answer(t("lb.load_error", lang))
+        return
     async with get_db_session() as session:
         try:
             viewer_id = await _viewer_user_id(session, message.from_user.id, chat_id)
