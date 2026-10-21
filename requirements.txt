@@ -4,7 +4,7 @@ requests>=2.34.2
 aiosqlite==0.22.1
 asyncpg==0.32.0
 python-dotenv==1.2.2
-SQLAlchemy[asyncio]==2.0.47
+SQLAlchemy[asyncio]==2.1.5
 Pillow>=12.3.0
 fonttools>=4.67.0
 cryptography>=50.0.1
