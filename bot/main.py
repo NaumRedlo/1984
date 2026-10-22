@@ -35,6 +35,7 @@ from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
 from bot.middlewares.tenant_middleware import TenantMiddleware
 from tasks.live_tracker import LiveTracker, set_current as set_live_tracker
 from tasks.membership import run as sweep_rosters
+from tasks.map_checks import run as check_maps
 from bot.handlers.membership import router as membership_router
 from tasks.profile_updater import periodic_profile_updates
 
@@ -56,6 +57,7 @@ class App:
         self.profile_updater_task: Optional[asyncio.Task] = None
         self.live_tracker_task: Optional[asyncio.Task] = None
         self.membership_task: Optional[asyncio.Task] = None
+        self.map_checks_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -181,6 +183,9 @@ class App:
         logger.info("Starting the roster sweep...")
         self.membership_task = asyncio.create_task(sweep_rosters(self.bot, self.shutdown_event), name="membership")
 
+        logger.info("Starting the map checks of local scores...")
+        self.map_checks_task = asyncio.create_task(check_maps(self.osu_api_client, self.shutdown_event), name="map_checks")
+
     async def start(self) -> None:
         assert self.bot is not None
         assert self.dp is not None
@@ -211,6 +216,11 @@ class App:
             self.membership_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.membership_task
+
+        if self.map_checks_task:
+            self.map_checks_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.map_checks_task
 
         if self.oauth_server:
             await self.oauth_server.stop()

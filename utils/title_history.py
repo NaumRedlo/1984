@@ -134,7 +134,7 @@ def _local_play(row) -> Play:
         ar=row.ar,
         length=int(row.length or 0),
         status=(row.status or "").lower(),
-        ranked_date=None,
+        ranked_date=row.ranked_date,
     )
 
 @dataclass(frozen=True)
@@ -225,7 +225,7 @@ async def load_history(session, player_id: int) -> History:
     spans = (await session.execute(
         select(WitnessSession).where(WitnessSession.player_id == player_id).order_by(WitnessSession.started_at)
     )).scalars().all()
-    locals_ = (await session.execute(select(LocalScore).where(LocalScore.player_id == player_id).order_by(LocalScore.played_at))).scalars().all()
+    locals_ = (await session.execute(select(LocalScore).where(LocalScore.player_id == player_id, LocalScore.checked == "ok").order_by(LocalScore.played_at))).scalars().all()
     player = await session.get(Player, player_id)
     history = History(
         attempts=[_play(row, "attempt") for row in attempts if row.played_at is not None],

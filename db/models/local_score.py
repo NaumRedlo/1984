@@ -33,11 +33,15 @@ class LocalScore(Base):
     length = Column(Integer, nullable=True)
     objects = Column(Integer, nullable=True)
     status = Column(String(20), nullable=True)
+    ranked_date = Column(DateTime, nullable=True)
+    checked = Column(String(8), nullable=True)
+    checked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("player_id", "beatmap_md5", "played_at", "score", name="uq_local_scores_play"),
         Index("ix_local_scores_player_played", "player_id", "played_at"),
+        Index("ix_local_scores_checked", "checked", "beatmap_md5"),
     )
 
     def __repr__(self):

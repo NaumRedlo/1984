@@ -92,6 +92,11 @@ async def test_the_app_tells_its_local_scores_and_the_chat_has_them_once(served,
     assert (await client.post("/render/me/history", headers=mine, json={"scores": []})).status == 400
     assert (await client.post("/render/me/history", headers={"X-Render-Worker": "mac"}, json={"scores": rows})).status in (401, 403, 404)
     async with factory() as s:
+        assert (await load_history(s, pid)).local_scores == [], "nothing counts before its map is checked"
+    from services.render_farm import map_checks
+    async with factory() as s:
+        await map_checks.check(s, _Osu({MD5: {"id": 555, "status": "ranked", "beatmapset": {}}}), now=NOW)
+    async with factory() as s:
         history = await load_history(s, pid)
     assert len(history.local_scores) == 5 and history.local_scores[0].table == "local"
 
@@ -103,7 +108,7 @@ async def titles_db(tmp_path):
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
 
-async def _titles(factory, rows, zone=None):
+async def _titles(factory, rows, zone=None, checked="ok"):
     async with factory() as s:
         user = User(chat_id=-100, telegram_id=1, osu_username="alice", osu_user_id=1001, play_count=0)
         s.add(user)
@@ -113,7 +118,7 @@ async def _titles(factory, rows, zone=None):
         if zone:
             (await s.get(Player, pid)).time_zone = zone
         for at, row in enumerate(rows):
-            s.add(LocalScore(player_id=pid, created_at=NOW, **{**local_scores.read(row, NOW + timedelta(days=400)), "score": row.get("score", 1000 + at)}))
+            s.add(LocalScore(player_id=pid, created_at=NOW, checked=checked, **{**local_scores.read(row, NOW + timedelta(days=400)), "score": row.get("score", 1000 + at)}))
         await s.commit()
     async with factory() as s:
         user = await s.get(User, uid)
@@ -161,3 +166,52 @@ async def test_assisted_local_scores_do_not_unlock_legacy_titles(titles_db):
     for code in ("wysi", "magic7", "combo_2000", "masks_5"):
         assert not progress[code]["unlocked"], code
         assert progress[code]["current"] == 0, code
+
+@pytest.mark.parametrize("checked", [None, "other", "gone"])
+async def test_unchecked_or_disowned_local_scores_earn_nothing(titles_db, checked):
+    progress = await _titles(titles_db, [_row(combo=2727, score=777777)], checked=checked)
+    assert not progress["wysi"]["unlocked"]
+    assert progress["combo_2000"]["current"] == 0
+
+class _Osu:
+    def __init__(self, said):
+        self.said = said
+        self.asked = []
+
+    async def lookup_beatmap_by_checksum(self, checksum):
+        self.asked.append(checksum)
+        found = self.said.get(checksum)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+async def test_the_map_of_every_local_score_is_checked_with_osu_once(factory):
+    from services.render_farm import map_checks
+    naum, _, _ = await _seed(factory)
+    pid = await _player(factory, naum)
+    other, broken, missing = "1" * 32, "2" * 32, "3" * 32
+    rows = [_row(score=1), _row(score=2, md5=other), _row(score=3, md5=broken), _row(score=4, md5=missing)]
+    async with factory() as s:
+        await local_scores.keep(s, pid, {"scores": rows}, now=NOW)
+    osu = _Osu({
+        MD5: {"id": 555, "status": "ranked", "beatmapset": {"ranked_date": "2019-04-01T10:00:00Z"}},
+        other: {"id": 999, "status": "ranked", "beatmapset": {}},
+        broken: RuntimeError("osu! is away"),
+        missing: None,
+    })
+    async with factory() as s:
+        told = await map_checks.check(s, osu, now=NOW)
+    assert told == {"ok": 1, "other": 1, "gone": 1}
+    async with factory() as s:
+        kept = {row.beatmap_md5: row for row in (await s.execute(select(LocalScore))).scalars().all()}
+    assert (kept[MD5].checked, kept[MD5].status, kept[MD5].ranked_date) == ("ok", "ranked", datetime(2019, 4, 1, 10, 0))
+    assert kept[other].checked == "other", "the hash names another map than the score said"
+    assert kept[broken].checked is None, "a failed lookup is tried again later"
+    assert kept[missing].checked == "gone"
+    osu.asked.clear()
+    async with factory() as s:
+        await map_checks.check(s, osu, now=NOW)
+    assert osu.asked == [broken]
+    async with factory() as s:
+        await map_checks.check(s, osu, now=NOW + map_checks.GONE_AGAIN + timedelta(hours=1))
+    assert missing in osu.asked, "a map osu! did not know is asked about again a week later"
