@@ -38,8 +38,14 @@ def _hash(said: Any) -> Optional[str]:
     text = str(said or "").lower()
     return text if len(text) == 32 and all(c in "0123456789abcdef" for c in text) else None
 
-def read(said: Any, now: datetime) -> Optional[dict[str, Any]]:
-    if not isinstance(said, dict):
+def _someone_else(said: dict, name: Optional[str]) -> bool:
+    told = said.get("player")
+    if not name or not isinstance(told, str) or not told.strip():
+        return False
+    return told.strip().casefold() != name.strip().casefold()
+
+def read(said: Any, now: datetime, name: Optional[str] = None) -> Optional[dict[str, Any]]:
+    if not isinstance(said, dict) or _someone_else(said, name):
         return None
     md5 = _hash(said.get("md5"))
     beatmap = _whole(said.get("id"), ID_MOST, 1)
@@ -80,12 +86,12 @@ def _insert(session):
 async def _count(session, player_id: int) -> int:
     return (await session.execute(select(func.count(LocalScore.id)).where(LocalScore.player_id == player_id))).scalar() or 0
 
-async def keep(session, player_id: int, said: Any, *, now: Optional[datetime] = None) -> tuple[str, int]:
+async def keep(session, player_id: int, said: Any, *, now: Optional[datetime] = None, name: Optional[str] = None) -> tuple[str, int]:
     now = now or utcnow()
     rows = said.get("scores") if isinstance(said, dict) else None
     if not isinstance(rows, list) or not rows or len(rows) > ROWS_MOST:
         return BAD, 0
-    read_rows = [row for row in (read(one, now) for one in rows) if row is not None]
+    read_rows = [row for row in (read(one, now, name) for one in rows) if row is not None]
     if not read_rows:
         return BAD, 0
     before = await _count(session, player_id)

@@ -886,7 +886,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             player = await videos.player_of(session, owner)
             if player is None:
                 return web.json_response({"error": "not registered"}, status=404)
-            verdict, kept = await local_scores.keep(session, player.id, said)
+            verdict, kept = await local_scores.keep(session, player.id, said, name=player.osu_username)
         if verdict == local_scores.BAD:
             return web.json_response({"error": "not scores"}, status=400)
         if verdict == local_scores.TOO_MANY:

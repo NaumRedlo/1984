@@ -38,6 +38,13 @@ def test_a_local_score_is_believed_only_when_it_could_be_one():
     odd = local_scores.read(_row(stars=0, base_stars=99, status="frozen", ar=True, bpm=-1, length=10 ** 9), NOW)
     assert (odd["star_rating"], odd["base_star_rating"], odd["status"], odd["ar"], odd["bpm"], odd["length"]) == (None, None, None, None, None, None)
 
+def test_a_score_set_by_someone_else_on_the_same_machine_is_not_believed():
+    assert local_scores.read(_row(player="NaumRedlo"), NOW, "naumredlo") is not None
+    assert local_scores.read(_row(player=" NaumRedlo "), NOW, "NaumRedlo") is not None
+    assert local_scores.read(_row(player="Guest"), NOW, "NaumRedlo") is None
+    assert local_scores.read(_row(), NOW, "NaumRedlo") is not None, "an older app does not say who played"
+    assert local_scores.read(_row(player="Guest"), NOW) is not None, "without a name to compare nothing is refused"
+
 async def _player(factory, user_id):
     async with factory() as s:
         return (await s.get(User, user_id)).player_id
