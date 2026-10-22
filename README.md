@@ -1,6 +1,6 @@
 # 🎯 1984 | Global & Competitive Bot
 
-<a href="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml"><img src="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml/badge.svg" alt="tests" /></a> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-blue" alt="licence" /></a> <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue" alt="python 3.11 and 3.12" /> <a href="https://github.com/NaumRedlo/1984/commits/global"><img src="https://img.shields.io/github/last-commit/NaumRedlo/1984/global?label=last%20commit" alt="last commit" /></a> <a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/></a>
+<a href="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml"><img src="https://github.com/NaumRedlo/1984/actions/workflows/tests.yml/badge.svg" alt="tests" /></a> <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue" alt="licence" /></a> <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue" alt="python 3.11 and 3.12" /> <a href="https://github.com/NaumRedlo/1984/commits/global"><img src="https://img.shields.io/github/last-commit/NaumRedlo/1984/global?label=last%20commit" alt="last commit" /></a> <a href="https://www.codefactor.io/repository/github/naumredlo/1984"><img src="https://www.codefactor.io/repository/github/naumredlo/1984/badge" alt="CodeFactor" /></a> <a href="https://app.codacy.com/gh/NaumRedlo/1984/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade"><img src="https://app.codacy.com/project/badge/Grade/f89a6f6b9bac40f09b6fa29a577d202c"/></a>
 
 A Telegram bot for osu! players, and the replay engine that grew out of it.
 
@@ -264,12 +264,7 @@ updates to the pinned packages and the actions once a week.
 
 ## Licence
 
-**GNU AGPL-3.0-only.** See [LICENSE](LICENSE).
-
-The network clause is the reason for this one rather than a plain GPL: this
-project is a *service*. Run a modified copy as your own bot and the people using
-it are entitled to your changes — which is exactly the situation a distribution-
-only copyleft leaves open.
+**MIT.** See [LICENSE](LICENSE).
 
 ### Third-party assets
 
