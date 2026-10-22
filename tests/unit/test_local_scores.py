@@ -135,3 +135,22 @@ async def test_a_week_of_ss_in_the_players_own_days_can_come_from_the_local_scor
     rows = [_row(id=10 + n, md5=f"{n:032x}", score=2000 + n, played=_unix(datetime(2026, 3, 2 + n, 21, 30)), n300=900, n100=0, n50=0, miss=0, mods=0) for n in range(7)]
     progress = await _titles(titles_db, rows, zone="Asia/Tokyo")
     assert progress["perfect_week"]["unlocked"] and progress["perfect_week"]["current"] == 7
+
+@pytest.mark.parametrize("combo, expected", [(727, True), (1727, True), (7270, True), (726, False)])
+async def test_wysi_uses_local_combo(titles_db, combo, expected):
+    progress = await _titles(titles_db, [_row(combo=combo)])
+    assert progress["wysi"]["unlocked"] is expected
+
+async def test_local_scores_count_for_legacy_single_score_titles(titles_db):
+    progress = await _titles(titles_db, [_row(combo=2727, score=777777)])
+    assert progress["wysi"]["unlocked"]
+    assert progress["magic7"]["unlocked"]
+    assert progress["combo_2000"]["current"] == 2727
+    assert progress["combo_2000"]["unlocked"]
+    assert progress["masks_5"]["current"] == 2
+
+async def test_assisted_local_scores_do_not_unlock_legacy_titles(titles_db):
+    progress = await _titles(titles_db, [_row(combo=2727, score=777777, mods=128)])
+    for code in ("wysi", "magic7", "combo_2000", "masks_5"):
+        assert not progress[code]["unlocked"], code
+        assert progress[code]["current"] == 0, code

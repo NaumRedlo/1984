@@ -145,7 +145,7 @@ async def _calc_wysi(session, uid) -> int:
         )).scalars().all()
         if any("727" in str(c) for c in combos):
             return 1
-    return 0
+    return int(any(p.counts and "727" in str(p.max_combo or 0) for p in (await load_history(session, uid)).local_scores))
 
 _ARCHAEOLOGY_AGE = timedelta(days=365 * 12 + 3)
 _ARCHIVIST_MIN_PEERS = 3
@@ -333,7 +333,7 @@ async def _calc_magic7(session, uid) -> int:
         )).scalars().all()
         if any(_has_jackpot(sc) for sc in scores):
             return 1
-    return 0
+    return int(any(p.counts and _has_jackpot(p.score) for p in (await load_history(session, uid)).local_scores))
 
 async def _calc_choke(session, uid) -> int:
     for M in (UserBestScore, UserMapAttempt):
@@ -372,6 +372,9 @@ async def _calc_masks(session, uid) -> int:
             select(M.mods).where(M.player_id == uid, M.mods.isnot(None))
         )).scalars().all():
             seen.update(ac for ac in _mod_set(mstr) if ac not in _NOT_MASKS)
+    for play in (await load_history(session, uid)).local_scores:
+        if play.counts:
+            seen.update(play.mods - _NOT_MASKS)
     return len(seen)
 
 async def _calc_long_chain(session, uid) -> int:
@@ -381,7 +384,7 @@ async def _calc_long_chain(session, uid) -> int:
             select(func.max(M.max_combo)).where(M.player_id == uid)
         )).scalar() or 0
         best = max(best, v)
-    return best
+    return max(best, max((p.max_combo or 0 for p in (await load_history(session, uid)).local_scores if p.counts), default=0))
 
 _ACCOUNT_AGE_2Y = timedelta(days=730)
 
