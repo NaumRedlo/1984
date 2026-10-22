@@ -2,7 +2,10 @@ from typing import Optional
 
 from aiogram import Bot
 
+from utils.logger import get_logger
 from utils.ttl_cache import TTLCache
+
+logger = get_logger("render_farm.members")
 
 MEMBER_KEEP = 120.0
 LEFT_KEEP = 20.0
@@ -28,6 +31,7 @@ async def groups_of(telegram_id: int) -> list[int]:
 
 async def is_member(bot: Optional[Bot], chat_id: int, telegram_id: int) -> bool:
     if bot is None:
+        logger.warning("membership of %s in %s is unknown: the bot is not set yet", telegram_id, chat_id)
         return False
     key = (chat_id, telegram_id)
     if key in _inside:
@@ -36,7 +40,8 @@ async def is_member(bot: Optional[Bot], chat_id: int, telegram_id: int) -> bool:
         return False
     try:
         member = await bot.get_chat_member(chat_id, telegram_id)
-    except Exception:
+    except Exception as exc:
+        logger.warning("membership of %s in %s was not checked: %s: %s", telegram_id, chat_id, type(exc).__name__, exc)
         return False
     inside = getattr(member, "status", "left") not in {"left", "kicked"}
     (_inside if inside else _outside)[key] = True
