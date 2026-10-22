@@ -6,6 +6,7 @@ import os
 import secrets
 import tempfile
 from typing import Optional
+from urllib.parse import unquote
 
 from aiogram import Bot, types
 from aiohttp import web
@@ -210,7 +211,7 @@ def _osu_sign_in() -> bool:
     return bool(OSU_CLIENT_ID and OSU_CLIENT_SECRET)
 
 def _worker(request: web.Request) -> str:
-    return request.headers.get("X-Render-Worker", "").strip()
+    return unquote(request.headers.get("X-Render-Worker", "")).strip()
 
 def _address(request: web.Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
