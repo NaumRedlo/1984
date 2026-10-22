@@ -37,6 +37,7 @@ def _about(beatmap_id: int, known: Optional[dict], attempts, status: Optional[st
             "title": beatmapset.get("title") or "",
             "version": known.get("version") or "",
             "creator": beatmapset.get("creator") or "",
+            "creator_id": beatmapset.get("user_id") or None,
             "stars": round(float(stars), 2) if stars is not None else None,
             "bpm": round(float(bpm), 1) if bpm is not None else None,
             "length": known.get("total_length"),

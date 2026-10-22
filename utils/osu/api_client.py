@@ -24,6 +24,11 @@ def _pick_stat(stats, *keys):
             return int(v)
     return None
 
+def _counted(stats, *keys):
+    if not stats:
+        return None
+    return _pick_stat(stats, *keys) or 0
+
 def _is_perfect(raw):
     vals = [raw.get(k) for k in ("is_perfect_combo", "legacy_perfect", "perfect")]
     vals = [v for v in vals if v is not None]
@@ -764,10 +769,10 @@ class OsuApiClient:
                 "bpm": b_bpm,
                 "length": beatmap.get("total_length"),
                 "map_max_combo": beatmap.get("max_combo"),
-                "count_300": _pick_stat(stats, "count_300", "great"),
-                "count_100": _pick_stat(stats, "count_100", "ok"),
-                "count_50": _pick_stat(stats, "count_50", "meh"),
-                "count_miss": _pick_stat(stats, "count_miss", "miss"),
+                "count_300": _counted(stats, "count_300", "great"),
+                "count_100": _counted(stats, "count_100", "ok"),
+                "count_50": _counted(stats, "count_50", "meh"),
+                "count_miss": _counted(stats, "count_miss", "miss"),
                 "total_objects": (beatmap.get("count_circles") or 0)
                     + (beatmap.get("count_sliders") or 0)
                     + (beatmap.get("count_spinners") or 0),
