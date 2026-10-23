@@ -842,8 +842,9 @@ class OsuApiClient:
         )
         return data.get("scores", []) if isinstance(data, dict) else []
 
-    async def get_match(self, match_id: int) -> Optional[Dict]:
-        return await self._make_request("GET", f"matches/{match_id}")
+    async def get_match(self, match_id: int, after: Optional[int] = None, limit: Optional[int] = None) -> Optional[Dict]:
+        params = {key: value for key, value in (("after", after), ("limit", limit)) if value is not None}
+        return await self._make_request("GET", f"matches/{match_id}", params=params or None)
 
     async def ranked_dates(self, beatmap_ids) -> Dict[int, Optional[datetime]]:
         wanted = [int(b) for b in dict.fromkeys(beatmap_ids) if b]
