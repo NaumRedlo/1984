@@ -53,7 +53,7 @@ class RoomControl:
             self.collected = None
 
     async def setup(self, password: str, players: list[str]) -> None:
-        for line in setup_lines(password, players):
+        for line in setup_lines(password, players, referee=getattr(self.gateway, "username", "")):
             await self.gateway.say(self.channel, line)
 
     async def prepare(self, beatmap: int, mods: list[str], free: bool) -> bool:

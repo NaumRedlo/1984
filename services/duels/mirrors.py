@@ -1,18 +1,52 @@
 import hashlib
 import io
+import json
 import os
+import time
 import zipfile
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from services.duels.osu_file import FILE_MOST
 
-MIRRORS = (
-    ("osu.direct", "https://osu.direct/api/d/{set_id}"),
-    ("catboy.best", "https://catboy.best/d/{set_id}"),
+USER_AGENT = "project1984-duels/1.0 (+https://github.com/NaumRedlo/1984)"
+FILES = (
+    ("osu.direct", "https://osu.direct/api/osu/{beatmap_id}"),
+    ("catboy.best", "https://catboy.best/osu/{beatmap_id}"),
 )
+MIRRORS = (
+    ("osu.direct", "https://osu.direct/api/d/{set_id}?noVideo=1"),
+    ("catboy.best", "https://catboy.best/d/{set_id}n"),
+    ("beatconnect.io", "https://beatconnect.io/b/{set_id}/"),
+    ("nekoha.moe", "https://mirror.nekoha.moe/api4/download/{set_id}"),
+    ("sayobot.cn", "https://dl.sayobot.cn/beatmaps/download/novideo/{set_id}"),
+)
+SEARCHES = (
+    ("osu.direct", "https://osu.direct/api/v2/search?q=&status={status}&mode=0&amount={amount}&offset={offset}"),
+    ("catboy.best", "https://catboy.best/api/v2/search?query=&status={status}&mode=0&limit={amount}&offset={offset}"),
+)
+STATUSES = {"ranked": 1, "approved": 2, "loved": 4}
 ARCHIVE_MOST = 200 * 1024 * 1024
+REST = 600.0
 
 Fetch = Callable[[str], Awaitable[Optional[bytes]]]
+
+resting: dict[str, float] = {}
+
+def _awake(name: str, clock: Callable[[], float]) -> bool:
+    return resting.get(name, 0.0) <= clock()
+
+def _tired(name: str, clock: Callable[[], float]) -> None:
+    resting[name] = clock() + REST
+
+def fits(raw: bytes, beatmap_id: Optional[int], checksum: Optional[str]) -> bool:
+    if not raw or len(raw) > FILE_MOST or not raw.lstrip(b"\xef\xbb\xbf").startswith(b"osu file format"):
+        return False
+    if checksum:
+        return hashlib.md5(raw).hexdigest() == checksum.lower()
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("BeatmapID:"):
+            return beatmap_id is not None and line.split(":", 1)[1].strip() == str(beatmap_id)
+    return False
 
 def pick(archive: bytes, beatmap_id: Optional[int], checksum: Optional[str]) -> Optional[bytes]:
     try:
@@ -33,11 +67,26 @@ def pick(archive: bytes, beatmap_id: Optional[int], checksum: Optional[str]) -> 
                     break
     return None
 
-async def fetch_osu(fetch: Fetch, set_id: int, beatmap_id: Optional[int], checksum: Optional[str]) -> Optional[tuple[str, bytes]]:
+async def fetch_osu(fetch: Fetch, set_id: int, beatmap_id: Optional[int], checksum: Optional[str],
+                    clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, bytes]]:
+    if beatmap_id is not None:
+        for name, address in FILES:
+            if not _awake(name, clock):
+                continue
+            try:
+                raw = await fetch(address.format(beatmap_id=beatmap_id))
+            except Exception:
+                _tired(name, clock)
+                continue
+            if raw and fits(raw, beatmap_id, checksum):
+                return name, raw
     for name, address in MIRRORS:
+        if not _awake(name, clock):
+            continue
         try:
             archive = await fetch(address.format(set_id=set_id))
         except Exception:
+            _tired(name, clock)
             continue
         if not archive or len(archive) > ARCHIVE_MOST:
             continue
@@ -46,9 +95,58 @@ async def fetch_osu(fetch: Fetch, set_id: int, beatmap_id: Optional[int], checks
             return name, found
     return None
 
+def _entry(beatmapset: dict[str, Any], beatmap: dict[str, Any]) -> Optional[dict[str, Any]]:
+    try:
+        return {"beatmap_id": int(beatmap["id"]), "beatmapset_id": int(beatmapset["id"]),
+                "checksum": beatmap.get("checksum"), "stars": float(beatmap.get("difficulty_rating") or 0.0),
+                "status": beatmap.get("status") or beatmapset.get("status"), "mapper": beatmapset.get("creator"),
+                "artist": beatmapset.get("artist"), "title": beatmapset.get("title"), "version": beatmap.get("version"),
+                "length": int(beatmap.get("total_length") or 0), "max_combo": beatmap.get("max_combo"),
+                "ar": beatmap.get("ar"), "cs": beatmap.get("cs")}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+def read_search(body: bytes, least: float, most: float) -> list[dict[str, Any]]:
+    try:
+        sets = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return []
+    if isinstance(sets, dict):
+        sets = sets.get("beatmapsets") or []
+    found = []
+    for beatmapset in sets if isinstance(sets, list) else []:
+        if not isinstance(beatmapset, dict):
+            continue
+        for beatmap in beatmapset.get("beatmaps") or []:
+            if not isinstance(beatmap, dict) or beatmap.get("mode") not in ("osu", 0) or beatmap.get("convert"):
+                continue
+            entry = _entry(beatmapset, beatmap)
+            if entry is not None and least <= entry["stars"] <= most and entry["status"] in STATUSES:
+                found.append(entry)
+    return found
+
+async def search(fetch: Fetch, status: str, offset: int, amount: int, least: float, most: float,
+                 clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, list[dict[str, Any]], int]]:
+    for name, address in SEARCHES:
+        if not _awake(name, clock):
+            continue
+        try:
+            body = await fetch(address.format(status=STATUSES[status], offset=offset, amount=amount))
+        except Exception:
+            _tired(name, clock)
+            continue
+        if body is None:
+            continue
+        try:
+            seen = len(json.loads(body))
+        except (ValueError, TypeError, UnicodeDecodeError):
+            continue
+        return name, read_search(body, least, most), seen
+    return None
+
 def aiohttp_fetch(session) -> Fetch:
     async def fetch(address: str) -> Optional[bytes]:
-        async with session.get(address) as response:
+        async with session.get(address, headers={"User-Agent": USER_AGENT}) as response:
             if response.status != 200:
                 return None
             body = bytearray()

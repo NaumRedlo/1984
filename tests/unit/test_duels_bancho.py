@@ -306,6 +306,10 @@ async def test_room_control_prepares_a_round_checks_it_and_stops_it():
                                                "!mp abort", "!mp close"]
     assert {target for target, _ in room.said} == {"#mp_42"}
 
+def test_the_referee_account_is_never_invited_into_its_own_room():
+    assert setup_lines("pw", ["Naum Redlo", "ennui"], referee="naum_redlo") == [
+        "!mp set 0 3 2", "!mp password pw", "!mp lock", "!mp invite ennui"]
+
 async def test_a_room_without_referee_rights_is_not_taken_over():
     from services.duels import room_control
     from services.duels.room_control import RoomControl

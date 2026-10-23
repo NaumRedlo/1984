@@ -106,9 +106,12 @@ def mods_line(mods: list[str], free: bool = False) -> str:
 SETUP_TEAM_HEAD_TO_HEAD = 0
 SETUP_SCORE_V2 = 3
 
-def setup_lines(password: str, players: list[str], size: int = 2) -> list[str]:
+def irc_name(name: str) -> str:
+    return name.replace(" ", "_").lower()
+
+def setup_lines(password: str, players: list[str], size: int = 2, referee: str = "") -> list[str]:
     lines = [f"!mp set {SETUP_TEAM_HEAD_TO_HEAD} {SETUP_SCORE_V2} {size}", f"!mp password {password}", "!mp lock"]
-    lines.extend(f"!mp invite {name.replace(' ', '_')}" for name in players)
+    lines.extend(f"!mp invite {name.replace(' ', '_')}" for name in players if irc_name(name) != irc_name(referee))
     return lines
 
 @dataclass
