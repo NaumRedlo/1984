@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -12,7 +13,7 @@ from utils.title_history import forget_history
 from utils.title_progress import _CALCULATORS
 from utils.titles import TITLE_REGISTRY
 
-async def recheck(apply: bool, since: str) -> None:
+async def recheck(apply: bool, since: datetime) -> None:
     async with AsyncSessionFactory() as session:
         rows = (await session.execute(
             select(UserTitleProgress, Player).join(Player, Player.id == UserTitleProgress.player_id)
@@ -33,7 +34,7 @@ async def recheck(apply: bool, since: str) -> None:
                 lost.append((progress, player, value, title.target))
                 print(f"{player.osu_username} (player {player.id}): {progress.title_code} unlocked {progress.unlocked_at} now {value}/{title.target}")
         if not lost:
-            print("every title since", since, "still holds")
+            print("every title since", since.date(), "still holds")
             return
         if not apply:
             print(f"{len(lost)} titles would be taken back; run again with --apply to do it")
@@ -52,7 +53,7 @@ async def recheck(apply: bool, since: str) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--since", default="2026-10-22")
+    parser.add_argument("--since", default="2026-10-22", type=datetime.fromisoformat)
     parser.add_argument("--apply", action="store_true")
     said = parser.parse_args()
     asyncio.run(recheck(said.apply, said.since))
