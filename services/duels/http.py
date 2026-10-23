@@ -129,6 +129,41 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
             raise web.HTTPBadRequest(text="match is required")
         return await series.external_room(factory_of(), duel_id, player, link, operation)
 
+    async def profile_me(request, player, said):
+        from services.duels import portfolio, rating
+        from utils.timeutils import utcnow
+
+        async with factory_of()() as session:
+            seen = await portfolio.observations_of(session, player)
+        skills, marks = portfolio.profile(seen, utcnow())
+        return {"rating": await rating.standing(factory_of(), player), "portfolio": portfolio.view(skills, marks),
+                "observations": len(seen)}
+
+    async def history(request, player, said):
+        from sqlalchemy import select
+
+        from db.models.duel import Duel, DuelParticipant
+
+        whose = request.query.get("player", str(player))
+        before = request.query.get("before")
+        if not whose.isdigit() or (before is not None and not before.isdigit()):
+            raise web.HTTPBadRequest(text="player and before must be numbers")
+        async with factory_of()() as session:
+            query = (select(Duel).join(DuelParticipant, DuelParticipant.duel_id == Duel.id)
+                     .where(DuelParticipant.player_id == int(whose), Duel.state == states.COMPLETED)
+                     .order_by(Duel.finalized_at.desc(), Duel.id.desc()).limit(30))
+            if before is not None:
+                from datetime import datetime, timezone
+                query = query.where(Duel.finalized_at < datetime.fromtimestamp(int(before), tz=timezone.utc).replace(tzinfo=None))
+            duels = (await session.scalars(query)).all()
+            found = []
+            for duel in duels:
+                people = await service._participants(session, duel.id)
+                found.append({"id": duel.id, "mode": duel.mode, "wins": {"A": duel.wins_a, "B": duel.wins_b}, "winner": duel.winner_id,
+                              "outcome": duel.outcome_reason, "finished_at": service._stamp(duel.finalized_at),
+                              "players": [{"player": p.player_id, "side": p.side} for p in people]})
+        return {"duels": found}
+
     async def unread(request, player, said):
         return {"notifications": await notify.unread(factory_of(), player)}
 
@@ -170,6 +205,8 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
         web.post("/render/duels/invitations", handler(invite, 201)),
         web.get("/render/duels", handler(mine)),
         web.get("/render/duels/notifications", handler(unread)),
+        web.get("/render/duels/profile/me", handler(profile_me)),
+        web.get("/render/duels/history", handler(history)),
         web.post("/render/duels/notifications/seen", handler(seen)),
         web.post("/render/duels/queue", handler(enter)),
         web.delete("/render/duels/queue", handler(leave)),

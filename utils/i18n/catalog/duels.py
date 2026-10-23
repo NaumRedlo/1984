@@ -3,6 +3,8 @@ CATALOG = {
                          "ru": "⚔️ <b>{name}</b> вызывает вас на дуэль. Ответить можно в Dossier в течение двух минут."},
     "duels.accepted": {"en": "⚔️ <b>{name}</b> accepted your duel. Dossier is preparing the pool.",
                        "ru": "⚔️ <b>{name}</b> принял(а) вашу дуэль. Dossier собирает пул."},
+    "duels.matched": {"en": "⚔️ An opponent is found: <b>{name}</b>. Confirm in Dossier within thirty seconds.",
+                      "ru": "⚔️ Соперник найден: <b>{name}</b>. Подтвердите в Dossier в течение тридцати секунд."},
     "duels.declined": {"en": "<b>{name}</b> declined your duel.", "ru": "<b>{name}</b> отказался(-ась) от дуэли."},
     "duels.withdrawn": {"en": "<b>{name}</b> withdrew the duel.", "ru": "<b>{name}</b> отозвал(а) вызов."},
     "duels.invitation_expired": {"en": "The duel was not answered in time.", "ru": "На вызов не ответили вовремя."},

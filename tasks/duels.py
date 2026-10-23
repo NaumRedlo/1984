@@ -15,6 +15,7 @@ async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
     gateway = _bancho(AsyncSessionFactory, osu, live.hub)
     if gateway is not None:
         helpers.append(asyncio.create_task(gateway.run(shutdown_event)))
+    helpers.append(asyncio.create_task(_matching(AsyncSessionFactory, shutdown_event, live.hub.present)))
     try:
         await _sweep(AsyncSessionFactory, shutdown_event, _telegram(bot))
     finally:
@@ -63,3 +64,20 @@ async def _sweep(factory, shutdown_event: asyncio.Event, send=None) -> None:
                 await notify.deliver(factory, send, get_language)
         except Exception as exc:
             logger.error("the duel worker stumbled: %s", exc, exc_info=True)
+
+MATCH_EVERY = 5.0
+
+async def _matching(factory, shutdown_event: asyncio.Event, present) -> None:
+    from services.duels import matchmaker
+
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=MATCH_EVERY)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            while await matchmaker.offer(factory, present) is not None:
+                pass
+        except Exception as exc:
+            logger.error("duel matching stumbled: %s", exc, exc_info=True)

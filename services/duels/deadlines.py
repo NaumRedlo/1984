@@ -23,8 +23,18 @@ async def _series(step: Step, duel: Duel, deadline: DuelDeadline) -> None:
 
     await series.on_deadline(step, duel, deadline.kind)
 
+async def _expire_pair(step: Step, duel: Duel, _deadline: DuelDeadline) -> None:
+    if duel.state != states.MATCH_OFFERED:
+        return
+    from services.duels import matchmaker
+
+    people = await _participants(step.session, duel.id)
+    await step.move(duel, states.CANCELLED, "offer_expired")
+    await matchmaker.back_to_queue(step, duel, people)
+
 HANDLERS: dict[str, Handler] = {
     "invitation": _expire_invitation,
+    "pair_confirm": _expire_pair,
     **{kind: _series for kind in ("draft", "preparation", "pool_ack", "ready", "reconnect", "absence", "room_join", "evidence",
                                   "range_offer", "bonus")},
 }

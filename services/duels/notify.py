@@ -37,6 +37,8 @@ def wording(payload: dict[str, Any], lang: str, other: str, room: Optional[str],
         reason = payload.get("reason") or kind
         key = f"duels.reason.{reason}" if reason in REASONS else "duels.reason.other"
         return t("duels.cancelled", lang, name=name, reason=t(key, lang))
+    if kind == "matched":
+        return t("duels.matched", lang, name=name)
     if kind == "range_offered":
         return t("duels.range_offered", lang, name=name)
     return None

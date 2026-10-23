@@ -92,6 +92,8 @@ def _actions(duel: Duel, me: Optional[DuelParticipant]) -> list[str]:
         return []
     if duel.state == states.INVITED:
         return ["accept", "decline"] if me.invited else ["decline"]
+    if duel.state == states.MATCH_OFFERED:
+        return [] if me.accepted_at is not None else ["accept", "decline"]
     if duel.state in states.BEFORE_PLAY:
         return ["surrender"]
     return []
@@ -209,6 +211,17 @@ async def accept(factory, duel_id: str, actor_id: int, operation_id: str, expect
                  now: Optional[datetime] = None) -> dict[str, Any]:
     async def body(step: Step) -> dict[str, Any]:
         duel, me, people = await _locked(step, duel_id, expected_version)
+        if duel.state == states.MATCH_OFFERED and me.accepted_at is None:
+            me.accepted_at = step.now
+            if any(person.accepted_at is None for person in people):
+                step.touch(duel)
+                await step.emit(duel, "pair_accepted", {"by": actor_id})
+                await step.session.flush()
+                return await snapshot(step.session, duel, actor_id)
+            await step.move(duel, states.ACCEPTED)
+            step.command(duel, "generate_pool", {"duel": duel.id, "version": duel.state_version})
+            await step.session.flush()
+            return await snapshot(step.session, duel, actor_id)
         if duel.state != states.INVITED or not me.invited:
             raise DuelError("INVALID_STATE", await snapshot(step.session, duel, actor_id))
         await step.occupy([person.player_id for person in people], "duel", duel)
@@ -226,6 +239,13 @@ async def decline(factory, duel_id: str, actor_id: int, operation_id: str, expec
                   now: Optional[datetime] = None) -> dict[str, Any]:
     async def body(step: Step) -> dict[str, Any]:
         duel, me, people = await _locked(step, duel_id, expected_version)
+        if duel.state == states.MATCH_OFFERED:
+            from services.duels import matchmaker
+
+            await step.move(duel, states.CANCELLED, "offer_declined")
+            await matchmaker.back_to_queue(step, duel, people)
+            await step.session.flush()
+            return await snapshot(step.session, duel, actor_id)
         if duel.state != states.INVITED:
             raise DuelError("INVALID_STATE", await snapshot(step.session, duel, actor_id))
         event = await step.move(duel, states.DECLINED, "declined" if me.invited else "withdrawn")

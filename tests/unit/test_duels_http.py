@@ -185,3 +185,11 @@ async def test_presence_loses_a_silent_player_once_and_brings_them_back(factory)
     hub.heard(2)
     await hub.watch_presence(factory, lose, back)
     assert calls == [("lost", 2), ("back", 2)]
+
+async def test_my_duel_profile_and_the_history_are_served(client):
+    mine = await (await client.get("/render/duels/profile/me", headers=_as(1))).json()
+    assert mine["rating"]["calibrating"] and mine["rating"]["needed"] == 5
+    assert mine["portfolio"]["slots"]["NM1"]["mark"] == "PRIOR" and mine["observations"] == 0
+    history = await (await client.get("/render/duels/history?player=2", headers=_as(1))).json()
+    assert history == {"duels": []}
+    assert (await client.get("/render/duels/history?player=x", headers=_as(1))).status == 400
