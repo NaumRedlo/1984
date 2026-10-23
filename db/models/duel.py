@@ -16,6 +16,7 @@ class Duel(Base):
     mode = Column(String(16), nullable=False)
     state = Column(String(24), nullable=False)
     state_version = Column(Integer, nullable=False, default=1)
+    phase = Column(Integer, nullable=True, default=1)
     rules_version = Column(String(32), nullable=False)
     seed = Column(String(64), nullable=False)
     created_by = Column(Integer, ForeignKey("players.id"), nullable=True)
@@ -43,6 +44,8 @@ class DuelParticipant(Base):
     accepted_at = Column(DateTime, nullable=True)
     connection_state = Column(String(16), nullable=False, default="unknown")
     calibration_snapshot = Column(JSON, nullable=True)
+    missed = Column(Integer, nullable=True, default=0)
+    disconnects = Column(Integer, nullable=True, default=0)
 
     __table_args__ = (
         UniqueConstraint("duel_id", "player_id", name="uq_duel_participants_player"),
@@ -120,6 +123,7 @@ class DuelDeadline(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     duel_id = Column(String(36), ForeignKey("duel_series.id", ondelete="CASCADE"), nullable=False)
     state_version = Column(Integer, nullable=False)
+    phase = Column(Integer, nullable=True)
     kind = Column(String(32), nullable=False)
     expires_at = Column(DateTime, nullable=False)
     processed_at = Column(DateTime, nullable=True)

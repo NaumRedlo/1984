@@ -39,6 +39,7 @@ class Step:
         source = duel.state
         duel.state = target
         duel.state_version += 1
+        duel.phase = (duel.phase or 0) + 1
         duel.updated_at = self.now
         if target in states.TERMINAL:
             duel.finalized_at = self.now
@@ -46,8 +47,12 @@ class Step:
             await self.session.execute(delete(DuelLease).where(DuelLease.duel_id == duel.id))
         return await self.emit(duel, "state", {"from": source, "to": target, "reason": reason})
 
+    def touch(self, duel: Duel) -> None:
+        duel.state_version += 1
+        duel.updated_at = self.now
+
     def deadline(self, duel: Duel, kind: str, seconds: float) -> None:
-        self.session.add(DuelDeadline(duel_id=duel.id, state_version=duel.state_version, kind=kind,
+        self.session.add(DuelDeadline(duel_id=duel.id, state_version=duel.state_version, phase=duel.phase or 0, kind=kind,
                                       expires_at=self.now + timedelta(seconds=seconds)))
 
     def command(self, duel: Optional[Duel], kind: str, payload: dict[str, Any]) -> None:
@@ -91,7 +96,7 @@ async def snapshot(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, A
     people = await _participants(session, duel.id)
     me = next((person for person in people if person.player_id == viewer_id), None)
     deadlines = (await session.scalars(
-        select(DuelDeadline).where(DuelDeadline.duel_id == duel.id, DuelDeadline.state_version == duel.state_version,
+        select(DuelDeadline).where(DuelDeadline.duel_id == duel.id, DuelDeadline.phase == (duel.phase or 0),
                                    DuelDeadline.processed_at.is_(None)).order_by(DuelDeadline.expires_at)
     )).all()
     return {
@@ -175,7 +180,7 @@ async def invite(factory, actor_id: int, opponent_id: int, operation_id: str, no
         )
         if pending is not None:
             raise DuelError("ALREADY_INVITED")
-        duel = Duel(mode="direct", state=states.INVITED, state_version=1, rules_version=RULES_VERSION,
+        duel = Duel(mode="direct", state=states.INVITED, state_version=1, phase=1, rules_version=RULES_VERSION,
                     seed=secrets.token_hex(32), created_by=actor_id, created_at=step.now, updated_at=step.now)
         step.session.add(duel)
         await step.session.flush()

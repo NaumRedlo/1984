@@ -18,8 +18,15 @@ async def _expire_invitation(step: Step, duel: Duel, _deadline: DuelDeadline) ->
     step.notify(event, [person.player_id for person in await _participants(step.session, duel.id)],
                 {"kind": "invitation_expired", "duel": duel.id})
 
+async def _series(step: Step, duel: Duel, deadline: DuelDeadline) -> None:
+    from services.duels import series
+
+    await series.on_deadline(step, duel, deadline.kind)
+
 HANDLERS: dict[str, Handler] = {
     "invitation": _expire_invitation,
+    **{kind: _series for kind in ("draft", "preparation", "pool_ack", "ready", "reconnect", "absence", "room_join", "evidence",
+                                  "range_offer")},
 }
 
 async def due(factory, now: Optional[datetime] = None, limit: int = 50) -> list[int]:
@@ -41,7 +48,7 @@ async def process(factory, deadline_id: int, now: Optional[datetime] = None) -> 
             if deadline is None or deadline.processed_at is not None:
                 return "done"
             duel = await session.scalar(select(Duel).where(Duel.id == deadline.duel_id).with_for_update())
-            if duel is None or duel.state_version != deadline.state_version:
+            if duel is None or (duel.phase or 0) != (deadline.phase or 0):
                 outcome = "stale"
             elif deadline.kind not in HANDLERS:
                 outcome = "unknown"
