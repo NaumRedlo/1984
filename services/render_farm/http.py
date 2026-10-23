@@ -1600,7 +1600,17 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/job/{job_id}/result", job_result),
         web.post("/render/job/{job_id}/give-back", job_give_back),
         web.get("/render/farm", farm),
-    ] + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+    ] + _duel_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+
+def _duel_routes(guard) -> list[web.RouteDef]:
+    from services.duels import http as duel_http
+
+    def factory():
+        from db.database import AsyncSessionFactory
+
+        return AsyncSessionFactory
+
+    return duel_http.routes(guard, _who, factory)
 
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:
