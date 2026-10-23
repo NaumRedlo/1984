@@ -21,6 +21,9 @@ from db.models.left_member import LeftMember
 from db.models.map_publication import MapPublication
 from db.models.bot_settings import BotSettings
 from db.models.billing import BillingBadge, BillingEvent, BillingSubscription
+from db.models.duel import (Duel, DuelAttempt, DuelCommand, DuelDeadline, DuelDraftAction, DuelEvent, DuelEvidence, DuelLease,
+                            DuelNotification, DuelOperation, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
+                            DuelQueueEntry, DuelRoom, DuelRoomCapacity, DuelRound, DuelRoundScore)
 import db.player_sync
 
-__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication", "BotSettings", "BillingBadge", "BillingEvent", "BillingSubscription"]
+__all__ = ["User", "UserBestScore", "UserMapAttempt", "UserTitleProgress", "OAuthToken", "DmActiveTenant", "UserLanguage", "LeaderboardSnapshot", "RenderWorkerToken", "OAuthPending", "TrackSnapshot", "UserModeStats", "Player", "ChatMember", "SharedVideo", "VideoDelivery", "SharedReplay", "WitnessedPlay", "WitnessSession", "LocalScore", "LeftMember", "MapPublication", "BotSettings", "BillingBadge", "BillingEvent", "BillingSubscription", "Duel", "DuelAttempt", "DuelCommand", "DuelDeadline", "DuelDraftAction", "DuelEvent", "DuelEvidence", "DuelLease", "DuelNotification", "DuelOperation", "DuelParticipant", "DuelPool", "DuelPoolDelivery", "DuelPoolEntry", "DuelQueueEntry", "DuelRoom", "DuelRoomCapacity", "DuelRound", "DuelRoundScore"]
