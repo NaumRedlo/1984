@@ -44,7 +44,7 @@ async def test_a_natural_three_nil_offers_a_bonus_tiebreaker_and_keeps_the_room(
     assert after["bonus"]["state"] == "setup" and after["wins"] == {"A": 3, "B": 0} and after["state"] == states.COMPLETED
     assert (await _kinds(factory))[-1] == "bonus_round"
 
-async def test_an_unanswered_bonus_closes_the_room_after_thirty_seconds(factory):
+async def test_an_unanswered_bonus_keeps_the_room_for_five_more_minutes(factory):
     clock = Clock()
     duel_id = await _drafting(factory, clock)
     await _open_room(factory, duel_id)
@@ -52,10 +52,16 @@ async def test_an_unanswered_bonus_closes_the_room_after_thirty_seconds(factory)
     for _ in range(3):
         await _play(factory, clock, duel_id, "B")
     await deadlines.sweep(factory, clock.tick(31))
+    assert (await _view(factory, duel_id, 1))["bonus"]["state"] == "offered"
+    await deadlines.sweep(factory, clock.tick(30))
     assert (await _view(factory, duel_id, 1))["bonus"]["state"] == "cancelled"
+    assert "close_room" not in await _kinds(factory)
+    await deadlines.sweep(factory, clock.tick(299))
+    assert "close_room" not in await _kinds(factory)
+    await deadlines.sweep(factory, clock.tick(2))
     assert (await _kinds(factory))[-1] == "close_room"
 
-async def test_a_declined_bonus_closes_the_room_at_once(factory):
+async def test_a_declined_bonus_leaves_the_room_open_for_a_while(factory):
     clock = Clock()
     duel_id = await _drafting(factory, clock)
     await _open_room(factory, duel_id)
@@ -64,6 +70,8 @@ async def test_a_declined_bonus_closes_the_room_at_once(factory):
         await _play(factory, clock, duel_id, "A")
     await series.bonus(factory, duel_id, 2, False, clock.op(), now=clock.tick())
     assert (await _view(factory, duel_id, 1))["bonus"]["state"] == "cancelled"
+    assert "close_room" not in await _kinds(factory)
+    await deadlines.sweep(factory, clock.tick(301))
     assert (await _kinds(factory))[-1] == "close_room"
 
 async def test_both_players_must_name_the_same_room_before_the_bot_takes_it(factory):
@@ -152,3 +160,27 @@ async def test_witness_that_disagrees_with_the_official_score_is_written_down(fa
     async with factory() as session:
         noted = (await session.scalars(select(DuelEvent).where(DuelEvent.type == "witness_mismatch"))).all()
     assert len(noted) == 1 and noted[0].payload["player"] == 2 and noted[0].payload["reasons"] == ["beatmap", "score"]
+
+async def test_the_room_closes_once_both_players_have_left_after_the_duel(factory, monkeypatch):
+    from services.duels import outbox
+    from services.duels.coordinator import Coordinator
+    from tests.unit.test_duels_coordinator import FakeBancho, FakeOsu
+
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _open_room(factory, duel_id)
+    await _ban_all(factory, clock, duel_id)
+    for _ in range(3):
+        await _play(factory, clock, duel_id, "A")
+    monkeypatch.setattr(outbox, "HANDLERS", {})
+    bancho = FakeBancho()
+    coordinator = Coordinator(factory, bancho, FakeOsu(), now=lambda: clock.now)
+    coordinator.present = lambda player_id: True
+    coordinator.install()
+    for name, slot in (("one", 1), ("two", 2)):
+        await bancho.emit("#mp_500", f"{name} joined in slot {slot}.")
+    await series.bonus(factory, duel_id, 2, False, clock.op(), now=clock.tick())
+    await bancho.emit("#mp_500", "one left the game.")
+    assert "close_room" not in await _kinds(factory)
+    await bancho.emit("#mp_500", "two left the game.")
+    assert (await _kinds(factory))[-1] == "close_room"

@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 
-from db.models.duel import Duel, DuelAttempt, DuelBonus, DuelCommand, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
+from db.models.duel import Duel, DuelAttempt, DuelBonus, DuelCommand, DuelDeadline, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
 from services.duels import catalog, generator, outbox, rooms, series, states, verifier
@@ -173,14 +173,16 @@ class Coordinator:
             seated.discard(who.player_id)
             if duel.state not in states.TERMINAL:
                 await series.player_lost(self.factory, duel.id, who.player_id)
+            elif duel.state == states.COMPLETED:
+                await self._bonus_step(duel.id, "setup", "cancelled", None)
+                if not seated:
+                    await self._later(duel.id, 0)
         elif event.kind == "started" and duel.state == states.STARTING:
             await series.round_started(self.factory, duel.id, match_id)
         elif event.kind == "finished_all" and duel.state == states.PLAYING:
             await series.round_finished(self.factory, duel.id)
         elif event.kind == "finished_all" and duel.state == states.COMPLETED:
             await self._bonus_step(duel.id, "setup", "verifying", "verify_bonus")
-        elif event.kind == "left" and duel.state == states.COMPLETED:
-            await self._bonus_step(duel.id, "setup", "cancelled", "close_room")
         elif event.kind == "aborted" and duel.state == states.ABORTING:
             await series.aborted(self.factory, duel.id)
         elif event.kind == "closed":
@@ -332,8 +334,20 @@ class Coordinator:
                 row.scores = {str(k): v for k, v in verdict.scores.items()}
                 row.winner_id = winner
                 row.finished_at = self.now()
-                session.add(DuelCommand(duel_id=duel_id, kind="close_room", payload={"duel": duel_id}, next_attempt_at=self.now(),
-                                        created_at=self.now()))
+        await self._later(duel_id, PARAMETERS["room_linger_seconds"])
+
+    async def _later(self, duel_id: str, seconds: float) -> None:
+        async with self.factory() as session:
+            async with session.begin():
+                duel = await session.get(Duel, duel_id)
+                if duel is None:
+                    return
+                if seconds <= 0:
+                    session.add(DuelCommand(duel_id=duel_id, kind="close_room", payload={"duel": duel_id}, next_attempt_at=self.now(),
+                                            created_at=self.now()))
+                else:
+                    session.add(DuelDeadline(duel_id=duel_id, state_version=duel.state_version, phase=duel.phase or 0, kind="room_linger",
+                                             expires_at=self.now() + timedelta(seconds=seconds)))
 
     async def adopt_room(self, command: dict[str, Any]) -> None:
         duel_id = command["payload"]["duel"]

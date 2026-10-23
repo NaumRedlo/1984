@@ -266,7 +266,7 @@ async def bonus(factory, duel_id: str, actor_id: int, accept: bool, operation_id
             offered.state = "cancelled"
             offered.finished_at = step.now
             await step.emit(duel, "bonus_declined", {"by": actor_id})
-            step.command(duel, "close_room", {"duel": duel.id})
+            step.deadline(duel, "room_linger", PARAMETERS["room_linger_seconds"])
             return
         chosen = sorted(set(tb_mods or []) | {"NF"})
         if set(chosen) not in ({"NF"}, {"NF", "HD"}, {"NF", "HR"}, {"NF", "HD", "HR"}):
@@ -531,7 +531,9 @@ async def on_deadline(step: Step, duel: Duel, kind: str) -> None:
             offered.state = "cancelled"
             offered.finished_at = step.now
             await step.emit(duel, "bonus_expired", {})
-            step.command(duel, "close_room", {"duel": duel.id})
+            step.deadline(duel, "room_linger", PARAMETERS["room_linger_seconds"])
+    elif kind == "room_linger" and duel.state == states.COMPLETED:
+        step.command(duel, "close_room", {"duel": duel.id})
     elif kind == "range_offer" and duel.state == states.RANGE_OFFERED:
         await _technical(step, duel, people, None, "range_declined")
 
