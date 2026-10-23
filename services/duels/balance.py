@@ -258,3 +258,83 @@ async def rollback(factory, actor: int, reason: str, owners: tuple[int, ...] = (
 async def published(factory) -> Optional[DuelModelVersion]:
     async with factory() as session:
         return await session.scalar(select(DuelModelVersion).where(DuelModelVersion.state == "published"))
+
+async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
+    from db.models.duel_catalog import DuelTrainingExample
+    from services.duels import corpus, importer
+
+    async with factory() as session:
+        await _allowed(session, actor, BALANCE_REVIEWER, owners)
+        labels = await importer.corpus_labels(session)
+        rows = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.corpus_version.in_(corpus.LEARNED))
+                                      .order_by(DuelTrainingExample.corpus_version, DuelTrainingExample.year.desc(),
+                                                DuelTrainingExample.stage, DuelTrainingExample.original_slot))).all()
+    cells: dict[tuple, dict[str, Any]] = {}
+    for row in rows:
+        key = (row.corpus_version, row.year, row.stage, row.original_slot)
+        cell = cells.setdefault(key, {"corpus": row.corpus_version, "year": row.year, "stage": row.stage, "slot": row.original_slot,
+                                      "label": labels.get(key + (None,)), "maps": []})
+        label, verified = importer.resolved(row, labels)
+        cell["maps"].append({"beatmap_id": int(row.beatmap_id), "beatmapset_id": int(row.beatmapset_id) if row.beatmapset_id else None,
+                             "label": label or corpus.EXCLUDED, "verified": verified, "file": row.revision_hash is not None,
+                             "conflict": bool(row.conflict)})
+    return list(cells.values())
+
+async def label_corpus(factory, actor: int, corpus_version: str, year: int, stage: str, original_slot: str, beatmap_id: Optional[int],
+                       label: str, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
+    from db.models.duel_catalog import DuelCorpusLabel
+    from services.duels import corpus
+
+    now = now or utcnow()
+    if label not in corpus.LABELS or corpus_version not in corpus.LEARNED or not reason.strip():
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            row = await session.scalar(select(DuelCorpusLabel).where(
+                DuelCorpusLabel.corpus_version == corpus_version, DuelCorpusLabel.year == year, DuelCorpusLabel.stage == stage,
+                DuelCorpusLabel.original_slot == original_slot,
+                DuelCorpusLabel.beatmap_id.is_(None) if beatmap_id is None else DuelCorpusLabel.beatmap_id == beatmap_id))
+            before = {"label": row.label, "reviewer": row.reviewer_id, "reason": row.reason} if row is not None else None
+            if row is None:
+                row = DuelCorpusLabel(corpus_version=corpus_version, year=year, stage=stage, original_slot=original_slot, beatmap_id=beatmap_id)
+                session.add(row)
+            row.label, row.reviewer_id, row.reason, row.updated_at = label, actor, reason.strip(), now
+            target = f"{year}:{stage}:{original_slot}" + (f":{beatmap_id}" if beatmap_id is not None else "")
+            after = {"label": label}
+            _audit(session, actor, role, "corpus_label", target[:64], reason.strip(), before=before, after=after, now=now)
+            return after
+
+async def add_tournament(factory, actor: int, name: str, year: int, text: str, reason: str, owners: tuple[int, ...] = (),
+                         now: Optional[datetime] = None) -> dict[str, Any]:
+    from db.models.duel_catalog import DuelCorpusLabel, DuelTrainingExample
+    from services.duels import corpus
+
+    now = now or utcnow()
+    name = name.strip()[:120]
+    if not name or not reason.strip():
+        raise DuelError("INVALID_STATE")
+    found = corpus.read_pools(text, year, f"own:{name}")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            added = 0
+            for example in corpus.distinct(found):
+                label = corpus.label(example.original_slot)
+                if label is None:
+                    continue
+                stage = name[:32]
+                held = await session.scalar(select(DuelTrainingExample).where(
+                    DuelTrainingExample.corpus_version == corpus.OWN_VERSION, DuelTrainingExample.year == year,
+                    DuelTrainingExample.stage == stage, DuelTrainingExample.original_slot == example.original_slot,
+                    DuelTrainingExample.beatmap_id == example.beatmap_id))
+                if held is not None:
+                    continue
+                session.add(DuelTrainingExample(corpus_version=corpus.OWN_VERSION, source=f"own:{name}"[:256], year=year, stage=stage,
+                                                original_slot=example.original_slot, beatmap_id=example.beatmap_id,
+                                                beatmapset_id=example.beatmapset_id, normalized_label=label, conflict=False, fetched_at=now))
+                session.add(DuelCorpusLabel(corpus_version=corpus.OWN_VERSION, year=year, stage=stage, original_slot=example.original_slot,
+                                            beatmap_id=example.beatmap_id, label=label, reviewer_id=actor, reason=reason.strip(), updated_at=now))
+                added += 1
+            _audit(session, actor, role, "add_tournament", name[:64], reason.strip(), after={"maps": added, "year": year}, now=now)
+    return {"added": added, "read": len(found)}

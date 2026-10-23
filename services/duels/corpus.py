@@ -5,6 +5,10 @@ from typing import Optional
 from services.duels.rules import SLOTS
 
 CORPUS_VERSION = "owc-2021-2025-v1"
+OWN_VERSION = "own-v1"
+LEARNED = (CORPUS_VERSION, OWN_VERSION)
+EXCLUDED = "NONE"
+LABELS = SLOTS + ("OTHER", EXCLUDED)
 _HEADING = re.compile(r"^#{2,6}\s+(.+?)\s*$")
 _SLOT = re.compile(r"(?<![A-Z0-9])(NM\d|HD\d|HR\d|DT\d|FM\d|EZ\d|FL\d|TB)(?![A-Z0-9])")
 _LINK = re.compile(r"osu\.ppy\.sh/(?:beatmapsets/(\d+)#osu/(\d+)|b/(\d+)|beatmaps/(\d+))")

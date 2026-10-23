@@ -233,6 +233,29 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         await balance.publish(factory_of(), player, request.match_info["version"], said["reason"], owners)
         return {"published": request.match_info["version"]}
 
+    async def corpus_table(request, player, said, owners):
+        from services.duels import balance
+
+        return {"cells": await balance.corpus_table(factory_of(), player, owners)}
+
+    async def corpus_label(request, player, said, owners):
+        from services.duels import balance
+
+        beatmap = said.get("beatmap_id")
+        if not isinstance(said.get("corpus"), str) or not isinstance(said.get("year"), int) or not isinstance(said.get("stage"), str) \
+                or not isinstance(said.get("slot"), str) or not isinstance(said.get("label"), str) \
+                or (beatmap is not None and (not isinstance(beatmap, int) or isinstance(beatmap, bool))):
+            raise web.HTTPBadRequest(text="corpus, year, stage, slot and label are required")
+        return await balance.label_corpus(factory_of(), player, said["corpus"], said["year"], said["stage"], said["slot"], beatmap,
+                                          said["label"], said["reason"], owners)
+
+    async def corpus_tournament(request, player, said, owners):
+        from services.duels import balance
+
+        if not isinstance(said.get("name"), str) or not isinstance(said.get("year"), int) or not isinstance(said.get("pool"), str):
+            raise web.HTTPBadRequest(text="name, year and pool are required")
+        return await balance.add_tournament(factory_of(), player, said["name"], said["year"], said["pool"][:20000], said["reason"], owners)
+
     async def rollback_model(request, player, said, owners):
         from services.duels import balance
 
@@ -284,6 +307,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.get("/render/admin/duels/reviews", handler(admin(reviews))),
         web.post("/render/admin/duels/maps/{beatmap}/review", handler(admin(map_review))),
         web.post("/render/admin/duels/roles", handler(admin(grant_role))),
+        web.get("/render/admin/duels/corpus", handler(admin(corpus_table))),
+        web.post("/render/admin/duels/corpus/label", handler(admin(corpus_label))),
+        web.post("/render/admin/duels/corpus/tournaments", handler(admin(corpus_tournament))),
         web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
         web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
         web.post("/render/admin/duels/{duel_id}/cancel", handler(admin(operator_cancel))),

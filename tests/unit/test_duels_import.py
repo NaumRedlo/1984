@@ -229,7 +229,7 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     again = await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
     assert again == {"filed": 6}
     rows = await importer.corpus_rows(factory)
-    assert sorted(label for _, label, _, _ in rows) == ["HD2", "NM1", "NM2", "OTHER", "TB"]
+    assert sorted(row[1] for row in rows) == ["HD2", "NM1", "NM2", "OTHER", "TB"]
     version, found = await importer.train_corpus(factory, steps=20)
     assert version.startswith("owc-") and found["train"] == 5 and found["test"]["count"] == 0
     async with factory() as session:
@@ -272,3 +272,49 @@ async def test_a_published_model_sorts_waiting_catalogue_maps(factory, tmp_path)
     async with factory() as session:
         assert (await session.get(DuelMapAssignment, 7)).slot == "DT1"
         assert (await session.get(DuelMapAssignment, 8)).slot is None
+
+async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(factory, tmp_path):
+    from db.models.duel import DuelAudit, DuelRole
+    from db.models.player import Player
+    from services.duels import balance, corpus
+    from services.duels.errors import DuelError
+
+    files = {i: _map(i, 30 + 5 * i) for i in range(1, 12)}
+
+    async def fetch(address):
+        if "osu-wiki" in address:
+            return WIKI_PAGE.replace("2023", "2021").encode() if "/2021/" in address else None
+        for number, raw in files.items():
+            if address.endswith(f"/osu/{number}"):
+                return raw
+        return None
+
+    async with factory() as session:
+        session.add_all([Player(id=1, osu_user_id=101, osu_username="naum"), Player(id=2, osu_user_id=102, osu_username="guest")])
+        await session.flush()
+        session.add(DuelRole(player_id=1, role=balance.BALANCE_REVIEWER))
+        await session.commit()
+    await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
+    with pytest.raises(balance.Forbidden):
+        await balance.corpus_table(factory, 2)
+    cells = await balance.corpus_table(factory, 1)
+    assert [(c["slot"], c["maps"][0]["label"], c["maps"][0]["verified"]) for c in cells if c["slot"] in ("NM2", "NM5")] == [("NM2", "NM2", False), ("NM5", "OTHER", False)]
+    await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM2", None, "NM3", "в этом году NM2 был альтернированием")
+    await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "NM4", "техника")
+    await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, corpus.EXCLUDED, "спорная карта")
+    with pytest.raises(DuelError):
+        await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, "XX9", "нет такого")
+    rows = await importer.corpus_rows(factory)
+    assert sorted((row[1], row[5]) for row in rows) == [("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
+    added = await balance.add_tournament(factory, 1, "Russian Cup", 2024,
+                                         "NM1 https://osu.ppy.sh/beatmapsets/80#osu/8\nDT1 https://osu.ppy.sh/b/9\nFM1 https://osu.ppy.sh/b/10\nтекст", "мой турнир")
+    assert added == {"added": 3, "read": 3}
+    assert await importer.load_missing(factory, fetch, str(tmp_path), pause=0, report=lambda text: None) == {"filed": 3}
+    rows = await importer.corpus_rows(factory)
+    own = sorted((row[1], row[4], row[5]) for row in rows if row[4])
+    assert own == [("DT1", True, True), ("NM1", True, True), ("OTHER", True, True)]
+    version, found = await importer.train_corpus(factory, steps=10)
+    assert found["own"] == 3 and found["verified"] == 5
+    async with factory() as session:
+        actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
+    assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label"]

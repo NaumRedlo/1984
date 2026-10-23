@@ -99,3 +99,19 @@ class DuelTrainingExample(Base):
         UniqueConstraint("corpus_version", "year", "stage", "original_slot", "beatmap_id", name="uq_duel_training_examples_seen"),
         Index("ix_duel_training_examples_map", "beatmap_id"),
     )
+
+class DuelCorpusLabel(Base):
+    __tablename__ = "duel_corpus_labels"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    corpus_version = Column(String(32), nullable=False)
+    year = Column(Integer, nullable=False)
+    stage = Column(String(32), nullable=False)
+    original_slot = Column(String(8), nullable=False)
+    beatmap_id = Column(BigInteger, nullable=True)
+    label = Column(String(8), nullable=False)
+    reviewer_id = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (Index("ix_duel_corpus_labels_cell", "corpus_version", "year", "stage", "original_slot"),)

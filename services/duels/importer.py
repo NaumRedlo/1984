@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision, DuelTrainingExample
+from db.models.duel_catalog import DuelCorpusLabel, DuelMapAnalysis, DuelMapAssignment, DuelMapRevision, DuelTrainingExample
 from services.duels import catalog, corpus, mirrors
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
@@ -213,28 +213,70 @@ async def load_corpus(factory, fetch, folder: str, years=YEARS, pause: float = 1
             await asyncio.sleep(pause)
     return counted
 
-async def corpus_rows(factory) -> list[tuple[list[float], str, int, int]]:
+def resolved(example, labels: dict[tuple, str]) -> tuple[Optional[str], bool]:
+    cell = (example.corpus_version, example.year, example.stage, example.original_slot)
+    if cell + (int(example.beatmap_id),) in labels:
+        chosen, verified = labels[cell + (int(example.beatmap_id),)], True
+    elif cell + (None,) in labels:
+        chosen, verified = labels[cell + (None,)], True
+    else:
+        chosen, verified = example.normalized_label, False
+    return (None if chosen == corpus.EXCLUDED else chosen), verified
+
+async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=print, now: Optional[datetime] = None) -> dict[str, int]:
+    now = now or utcnow()
+    async with factory() as session:
+        waiting = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.revision_hash.is_(None)))).all()
+    counted: dict[str, int] = {}
+    for row in waiting:
+        example = corpus.Example(row.year, row.stage, row.original_slot, int(row.beatmap_id),
+                                 int(row.beatmapset_id) if row.beatmapset_id else None, row.source)
+        digest = await _example_file(factory, fetch, example, folder, now)
+        if digest:
+            async with factory() as session:
+                held = await session.get(DuelTrainingExample, row.id)
+                held.revision_hash = digest
+                await session.commit()
+        outcome = "filed" if digest else "no_file"
+        counted[outcome] = counted.get(outcome, 0) + 1
+        report(f"{row.corpus_version} {row.original_slot} {row.beatmap_id}: {outcome}")
+        if pause:
+            await asyncio.sleep(pause)
+    return counted
+
+async def corpus_labels(session) -> dict[tuple, str]:
+    rows = (await session.scalars(select(DuelCorpusLabel).order_by(DuelCorpusLabel.updated_at))).all()
+    return {(row.corpus_version, row.year, row.stage, row.original_slot, int(row.beatmap_id) if row.beatmap_id is not None else None): row.label
+            for row in rows}
+
+async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, bool]]:
     from services.duels.slot_model import vector
 
     async with factory() as session:
+        labels = await corpus_labels(session)
         examples = (await session.scalars(select(DuelTrainingExample).where(
-            DuelTrainingExample.corpus_version == corpus.CORPUS_VERSION, DuelTrainingExample.conflict.is_(False),
-            DuelTrainingExample.normalized_label.is_not(None), DuelTrainingExample.revision_hash.is_not(None),
-            DuelTrainingExample.mods.is_not(None)))).all()
+            DuelTrainingExample.corpus_version.in_(corpus.LEARNED), DuelTrainingExample.conflict.is_(False),
+            DuelTrainingExample.revision_hash.is_not(None)))).all()
         found = []
         for example in examples:
+            label, verified = resolved(example, labels)
+            if label is None:
+                continue
+            mods = "".join(SLOT_MODS[label]) if label in SLOT_MODS else (example.mods or GROUP_MODS.get(example.original_slot[:2]))
+            if mods is None:
+                continue
             analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash,
-                                                                         DuelMapAnalysis.mods == example.mods,
+                                                                         DuelMapAnalysis.mods == mods,
                                                                          DuelMapAnalysis.feature_version == FEATURE_VERSION))
             if analysis is None or not analysis.features:
                 continue
-            found.append((vector(analysis.features), example.normalized_label, int(example.beatmapset_id or example.beatmap_id),
-                          example.year))
+            found.append((vector(analysis.features), label, int(example.beatmapset_id or example.beatmap_id), example.year,
+                          example.corpus_version == corpus.OWN_VERSION, verified))
     return found
 
 def _evaluate(model: SlotModel, rows) -> dict[str, Any]:
     truth, guessed, confident = [], [], []
-    for row, label, _, _ in rows:
+    for row, label, *_ in rows:
         normalised = model.normaliser.apply(row)
         probabilities = _softmax([b + sum(w * x for w, x in zip(ws, normalised)) for ws, b in zip(model.weights, model.bias)])
         ranked = sorted(range(len(probabilities)), key=lambda k: -probabilities[k])
@@ -254,14 +296,15 @@ async def train_corpus(factory, steps: int = 400, now: Optional[datetime] = None
 
     now = now or utcnow()
     rows = await corpus_rows(factory)
-    train = [row for row in rows if row[3] in TRAIN_YEARS]
+    train = [row for row in rows if row[4] or row[3] in TRAIN_YEARS]
     sets = {row[2] for row in train}
-    tune = [row for row in rows if row[3] == TUNE_YEAR and row[2] not in sets]
-    test = [row for row in rows if row[3] == TEST_YEAR and row[2] not in sets]
+    tune = [row for row in rows if not row[4] and row[3] == TUNE_YEAR and row[2] not in sets]
+    test = [row for row in rows if not row[4] and row[3] == TEST_YEAR and row[2] not in sets]
     if len({row[1] for row in train}) < 2:
         return None
     model = await asyncio.to_thread(SlotModel.fit, [row[0] for row in train], [row[1] for row in train], 0.01, steps)
-    found = {"corpus": corpus.CORPUS_VERSION, "train": len(train), "tune": _evaluate(model, tune), "test": _evaluate(model, test)}
+    found = {"corpus": corpus.CORPUS_VERSION, "train": len(train), "own": sum(1 for row in train if row[4]),
+             "verified": sum(1 for row in rows if row[5]), "tune": _evaluate(model, tune), "test": _evaluate(model, test)}
     version = f"owc-{now.strftime('%Y%m%d%H%M')}-{len(rows)}"
     await balance.train(factory, version, model.dump(), found, len(rows), now)
     return version, found

@@ -22,7 +22,9 @@ def _brief(found: dict) -> str:
 async def load() -> None:
     timeout = aiohttp.ClientTimeout(total=120, sock_read=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        print(await importer.load_corpus(AsyncSessionFactory, mirrors.aiohttp_fetch(session), DUEL_OSU_FOLDER))
+        fetch = mirrors.aiohttp_fetch(session)
+        print(await importer.load_corpus(AsyncSessionFactory, fetch, DUEL_OSU_FOLDER))
+        print(await importer.load_missing(AsyncSessionFactory, fetch, DUEL_OSU_FOLDER))
 
 async def train() -> None:
     made = await importer.train_corpus(AsyncSessionFactory)
@@ -30,7 +32,7 @@ async def train() -> None:
         print("not enough labelled maps; run load first")
         return
     version, found = made
-    print("shadow model", version, "trained on", found["train"], "maps")
+    print("shadow model", version, "trained on", found["train"], "maps,", found["own"], "of them yours,", found["verified"], "labels checked by people")
     print("2024 check:", _brief(found["tune"]))
     print("2025 test: ", _brief(found["test"]))
 
