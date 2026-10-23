@@ -349,8 +349,9 @@ async def players_present(factory, duel_id: str, now: Optional[datetime] = None)
         for person in people:
             step.session.add(DuelPoolDelivery(pool_id=pool.id, player_id=person.player_id, manifest_hash=pool.manifest_hash,
                                               shown_at=step.now))
-        from services.duels import catalog
+        from services.duels import balance, catalog
         await catalog.lock(step.session, [entry.beatmap_id for entry in entries], step.now)
+        await balance.uncertain_revealed(step.session, duel.id, step.now)
         step.deadline(duel, "pool_ack", PARAMETERS["pool_ack_seconds"])
     return await _system(factory, duel_id, (states.WAITING_PLAYERS,), body, now)
 

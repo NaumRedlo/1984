@@ -43,6 +43,7 @@ class Candidate:
     peak_ratio: Optional[float] = None
     played_days: tuple[Optional[float], Optional[float]] = (None, None)
     revealed_days: tuple[Optional[float], Optional[float]] = (None, None)
+    feedback: float = 0.0
 
 @dataclass
 class Choice:
@@ -105,11 +106,11 @@ def parts(candidate: Candidate, a: dict[str, Skill], b: dict[str, Skill], baseli
     uncertainty = 0.0 if candidate.level == "human" else clamp(1 - (candidate.confidence or 0.0))
     peak = clamp(((candidate.peak_ratio or 0.0) - 2) / 3)
     return {"load": load, "asymmetry": asymmetry, "repeat": clamp(max(seen_a, seen_b)), "familiarity": clamp(abs(seen_a - seen_b)),
-            "uncertainty": uncertainty, "peak": peak}
+            "uncertainty": uncertainty, "peak": peak, "feedback": candidate.feedback}
 
 def cost(found: dict[str, float]) -> float:
     return (3 * found["load"] + 2 * found["asymmetry"] + 2 * found["repeat"] + found["familiarity"]
-            + 2 * found["uncertainty"] + 0.5 * found["peak"])
+            + 2 * found["uncertainty"] + 0.5 * found["peak"] + found.get("feedback", 0.0))
 
 def _usable(candidate: Candidate) -> bool:
     if candidate.level in ("confident", "human"):

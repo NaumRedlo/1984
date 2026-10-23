@@ -401,3 +401,74 @@ class DuelSkillObservation(Base):
         UniqueConstraint("player_id", "source", "beatmap_id", "played_at", name="uq_duel_skill_observations_once"),
         Index("ix_duel_skill_observations_player", "player_id", "slot"),
     )
+
+class DuelFeedback(Base):
+    __tablename__ = "duel_pool_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    duel_id = Column(String(36), ForeignKey("duel_series.id", ondelete="CASCADE"), nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    slot = Column(String(4), nullable=False)
+    beatmap_id = Column(BigInteger, nullable=False)
+    played = Column(Boolean, nullable=False)
+    fit_label = Column(String(8), nullable=True)
+    difficulty_label = Column(String(8), nullable=True)
+    fairness_label = Column(String(8), nullable=True)
+    technical = Column(Boolean, nullable=False, default=False)
+    comment = Column(Text, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    history = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("duel_id", "player_id", "slot", name="uq_duel_pool_feedback_once"),
+        Index("ix_duel_pool_feedback_map", "beatmap_id"),
+    )
+
+class DuelBalanceReview(Base):
+    __tablename__ = "duel_balance_reviews"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    beatmap_id = Column(BigInteger, nullable=False)
+    revision_hash = Column(String(32), nullable=True)
+    reason = Column(String(32), nullable=False)
+    requested_at = Column(DateTime, nullable=False, default=utcnow)
+    decision = Column(String(16), nullable=True)
+    reviewer_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (Index("ix_duel_balance_reviews_open", "decision", "beatmap_id"),)
+
+class DuelRole(Base):
+    __tablename__ = "duel_roles"
+
+    player_id = Column(Integer, ForeignKey("players.id"), primary_key=True)
+    role = Column(String(24), primary_key=True)
+    granted_by = Column(Integer, nullable=True)
+    granted_at = Column(DateTime, nullable=False, default=utcnow)
+
+class DuelAudit(Base):
+    __tablename__ = "duel_admin_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor_id = Column(Integer, nullable=False)
+    role = Column(String(24), nullable=False)
+    action = Column(String(32), nullable=False)
+    target = Column(String(64), nullable=False)
+    reason = Column(Text, nullable=False)
+    before = Column(JSON, nullable=True)
+    after = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+class DuelModelVersion(Base):
+    __tablename__ = "duel_model_versions"
+
+    version = Column(String(48), primary_key=True)
+    state = Column(String(16), nullable=False)
+    body = Column(JSON, nullable=False)
+    report = Column(JSON, nullable=True)
+    labels = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    published_at = Column(DateTime, nullable=True)
+    published_by = Column(Integer, nullable=True)

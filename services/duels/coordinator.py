@@ -58,7 +58,9 @@ async def catalogue(session) -> list[Candidate]:
         windows = (analysis.features or {}).get("aim_windows") or {}
         if windows.get("2s") and windows.get("10s"):
             peak = windows["2s"].get("max", 0.0) / max(windows["10s"].get("p90", 0.0), 0.01)
-        found.append(Candidate(beatmap_id=int(assignment.beatmap_id), beatmapset_id=int(revision.beatmapset_id or assignment.beatmap_id),
+        from services.duels import balance
+        opinion = await balance.weigh(session, int(assignment.beatmap_id))
+        found.append(Candidate(feedback=balance.cost_of(opinion["q_bad"]), beatmap_id=int(assignment.beatmap_id), beatmapset_id=int(revision.beatmapset_id or assignment.beatmap_id),
                                mapper=revision.mapper or "", slot=assignment.slot, stars=float(analysis.stars), level=level,
                                confidence=assignment.confidence, revision=revision.hash, peak_ratio=peak))
     return found

@@ -16,6 +16,7 @@ async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
     if gateway is not None:
         helpers.append(asyncio.create_task(gateway.run(shutdown_event)))
     helpers.append(asyncio.create_task(_matching(AsyncSessionFactory, shutdown_event, live.hub.present)))
+    helpers.append(asyncio.create_task(_training(AsyncSessionFactory, shutdown_event)))
     try:
         await _sweep(AsyncSessionFactory, shutdown_event, _telegram(bot))
     finally:
@@ -81,3 +82,21 @@ async def _matching(factory, shutdown_event: asyncio.Event, present) -> None:
                 pass
         except Exception as exc:
             logger.error("duel matching stumbled: %s", exc, exc_info=True)
+
+TRAIN_CHECK_EVERY = 3600.0
+
+async def _training(factory, shutdown_event: asyncio.Event) -> None:
+    from services.duels import training
+
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=TRAIN_CHECK_EVERY)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            made = await training.maybe_train(factory)
+            if made:
+                logger.info("a shadow duel slot model %s waits for review", made)
+        except Exception as exc:
+            logger.error("duel model training stumbled: %s", exc, exc_info=True)

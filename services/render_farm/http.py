@@ -1610,7 +1610,7 @@ def _duel_routes(guard) -> list[web.RouteDef]:
 
         return AsyncSessionFactory
 
-    return duel_http.routes(guard, _who, factory)
+    return duel_http.routes(guard, _who, factory, lambda: _osu)
 
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:

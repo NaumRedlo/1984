@@ -53,7 +53,7 @@ def _version(said: dict[str, Any]) -> Optional[int]:
         raise web.HTTPBadRequest(text="expected_version must be a number")
     return value
 
-def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
+def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] = lambda: None) -> list[web.RouteDef]:
     def handler(work: Callable[[web.Request, int, dict[str, Any]], Awaitable[Any]], status: int = 200):
         async def handle(request: web.Request) -> web.Response:
             denied = await guard(request)
@@ -164,6 +164,80 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
                               "players": [{"player": p.player_id, "side": p.side} for p in people]})
         return {"duels": found}
 
+    async def give_feedback(duel_id, player, said, operation, version):
+        from services.duels import balance
+
+        slot = said.get("slot")
+        if not isinstance(slot, str):
+            raise web.HTTPBadRequest(text="slot is required")
+        return await balance.feedback(factory_of(), duel_id, player, slot, said.get("fit"), said.get("difficulty"), said.get("fairness"),
+                                      bool(said.get("technical")), said.get("comment") if isinstance(said.get("comment"), str) else None)
+
+    def admin(work):
+        async def run(request, player, said):
+            from config.settings import ADMIN_IDS
+            from services.duels import balance
+
+            reason = said.get("reason")
+            if request.method == "POST" and (not isinstance(reason, str) or not reason.strip()):
+                raise web.HTTPBadRequest(text="reason is required")
+            try:
+                return await work(request, player, said, tuple(ADMIN_IDS))
+            except balance.Forbidden as role:
+                return web.json_response({"error": "FORBIDDEN", "role": str(role)}, status=403)
+        return run
+
+    async def reviews(request, player, said, owners):
+        from services.duels import balance
+
+        return {"reviews": await balance.open_reviews(factory_of(), player, owners)}
+
+    async def map_review(request, player, said, owners):
+        from services.duels import balance, catalog
+
+        beatmap = request.match_info["beatmap"]
+        if not beatmap.isdigit() or said.get("decision") not in ("APPROVE", "REJECT", "QUARANTINE"):
+            raise web.HTTPBadRequest(text="decision is APPROVE, REJECT or QUARANTINE")
+        try:
+            return await balance.review_map(factory_of(), player, int(beatmap), said["decision"], said["reason"], owners, said.get("slot"))
+        except catalog.CatalogRefusal as refusal:
+            return web.json_response({"error": refusal.code}, status=409)
+
+    async def finalize(request, player, said, owners):
+        from services.duels import balance, verifier
+
+        match_id, game_id = said.get("match_id"), said.get("game_id")
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in (match_id, game_id)):
+            raise web.HTTPBadRequest(text="match_id and game_id are required")
+        if osu_of() is None:
+            return web.json_response({"error": "SERVICE_RECOVERING"}, status=503)
+        return {"duel": await balance.manual_finalize(factory_of(), player, request.match_info["duel_id"], match_id, game_id,
+                                                       said["reason"], osu_of(), verifier.Budget(), owners)}
+
+    async def operator_cancel(request, player, said, owners):
+        from services.duels import balance
+
+        return {"duel": await balance.operator_cancel(factory_of(), player, request.match_info["duel_id"], said["reason"], owners)}
+
+    async def grant_role(request, player, said, owners):
+        from services.duels import balance
+
+        if not isinstance(said.get("player_id"), int) or not isinstance(said.get("role"), str):
+            raise web.HTTPBadRequest(text="player_id and role are required")
+        await balance.grant(factory_of(), player, said["player_id"], said["role"], said["reason"], owners)
+        return {"granted": said["role"]}
+
+    async def publish_model(request, player, said, owners):
+        from services.duels import balance
+
+        await balance.publish(factory_of(), player, request.match_info["version"], said["reason"], owners)
+        return {"published": request.match_info["version"]}
+
+    async def rollback_model(request, player, said, owners):
+        from services.duels import balance
+
+        return {"published": await balance.rollback(factory_of(), player, said["reason"], owners)}
+
     async def unread(request, player, said):
         return {"notifications": await notify.unread(factory_of(), player)}
 
@@ -207,6 +281,13 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
         web.get("/render/duels/notifications", handler(unread)),
         web.get("/render/duels/profile/me", handler(profile_me)),
         web.get("/render/duels/history", handler(history)),
+        web.get("/render/admin/duels/reviews", handler(admin(reviews))),
+        web.post("/render/admin/duels/maps/{beatmap}/review", handler(admin(map_review))),
+        web.post("/render/admin/duels/roles", handler(admin(grant_role))),
+        web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
+        web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
+        web.post("/render/admin/duels/{duel_id}/cancel", handler(admin(operator_cancel))),
+        web.post("/render/admin/duels/{duel_id}/finalize", handler(admin(finalize))),
         web.post("/render/duels/notifications/seen", handler(seen)),
         web.post("/render/duels/queue", handler(enter)),
         web.delete("/render/duels/queue", handler(leave)),
@@ -220,4 +301,5 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
         web.post("/render/duels/{duel_id}/ready", handler(on_duel(ready))),
         web.post("/render/duels/{duel_id}/bonus-tb", handler(on_duel(bonus))),
         web.post("/render/duels/{duel_id}/external-room", handler(on_duel(external))),
+        web.post("/render/duels/{duel_id}/feedback", handler(on_duel(give_feedback))),
     ]
