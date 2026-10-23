@@ -101,6 +101,7 @@ def _actions(duel: Duel, me: Optional[DuelParticipant]) -> list[str]:
 async def snapshot(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
     people = await _participants(session, duel.id)
     me = next((person for person in people if person.player_id == viewer_id), None)
+    names = dict((await session.execute(select(Player.id, Player.osu_username).where(Player.id.in_([person.player_id for person in people] or [0])))).all())
     deadlines = (await session.scalars(
         select(DuelDeadline).where(DuelDeadline.duel_id == duel.id, DuelDeadline.phase == (duel.phase or 0),
                                    DuelDeadline.processed_at.is_(None)).order_by(DuelDeadline.expires_at)
@@ -114,6 +115,7 @@ async def snapshot(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, A
         "participants": [{
             "player": person.player_id,
             "osu_user_id": person.osu_user_id,
+            "name": names.get(person.player_id),
             "side": person.side,
             "invited": person.invited,
             "accepted": person.accepted_at is not None,

@@ -71,6 +71,7 @@ async def test_a_challenge_is_sent_seen_and_accepted_over_http(client):
     assert [d["id"] for d in listed["duels"]] == [duel["id"]]
     seen = await (await client.get(f"/render/duels/{duel['id']}", headers=_as(2))).json()
     assert seen["actions"] == ["accept", "decline"] and seen["pool"] is None
+    assert sorted(p["name"] for p in seen["participants"]) == ["one", "two"]
     taken = await client.post(f"/render/duels/{duel['id']}/accept", json={"expected_version": 1}, headers=_as(2, "accept-0001"))
     assert taken.status == 200 and (await taken.json())["state"] == states.ACCEPTED
     events = await (await client.get(f"/render/duels/{duel['id']}/events?after=1", headers=_as(1))).json()
