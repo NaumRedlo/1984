@@ -5,6 +5,7 @@ from aiohttp import web
 
 from services.duels import live, notify, series, service, states
 from services.duels.errors import DuelError
+from services.duels.rules import SLOTS
 
 STATUS = {
     "NOT_FOUND": 404,
@@ -66,7 +67,10 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
                 return _refused(DuelError("NOT_LINKED"))
             said = await _body(request) if request.method != "GET" else {}
             try:
-                return _answer(await work(request, owner.player_id, said), status)
+                found = await work(request, owner.player_id, said)
+                if isinstance(found, web.StreamResponse):
+                    return found
+                return _answer(found, status)
             except DuelError as error:
                 return _refused(error)
         return handle
@@ -233,6 +237,48 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         await balance.publish(factory_of(), player, request.match_info["version"], said["reason"], owners)
         return {"published": request.match_info["version"]}
 
+    async def desk_queue(request, player, said, owners):
+        from services.duels import balance, desk
+        from services.duels.slot_model import SlotModel
+
+        published = await balance.published(factory_of())
+        model = SlotModel.load(published.body) if published is not None else None
+        return {"tasks": await desk.queue(factory_of(), player, owners, model)}
+
+    async def desk_catalog(request, player, said, owners):
+        from services.duels import desk
+
+        return await desk.coverage(factory_of(), player, owners)
+
+    async def desk_cell(request, player, said, owners):
+        from services.duels import desk
+
+        slot, band = request.match_info["slot"], request.match_info["band"]
+        if slot not in SLOTS or not band.isdigit() or int(band) >= len(desk.BANDS):
+            raise web.HTTPBadRequest(text="slot and band are required")
+        return {"maps": await desk.coverage_cell(factory_of(), player, slot, int(band), owners)}
+
+    async def desk_stuck(request, player, said, owners):
+        from services.duels import desk
+
+        return {"duels": await desk.stuck(factory_of(), player, owners)}
+
+    async def desk_journal(request, player, said, owners):
+        from services.duels import desk
+
+        before = request.query.get("before", "")
+        return {"entries": await desk.journal(factory_of(), player, owners, int(before) if before.isdigit() else None)}
+
+    async def desk_people(request, player, said, owners):
+        from services.duels import desk
+
+        return {"people": await desk.people(factory_of(), player, owners)}
+
+    async def desk_models(request, player, said, owners):
+        from services.duels import desk
+
+        return {"models": await desk.models(factory_of(), player, owners)}
+
     async def corpus_table(request, player, said, owners):
         from services.duels import balance
 
@@ -260,6 +306,17 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import balance
 
         return {"published": await balance.rollback(factory_of(), player, said["reason"], owners)}
+
+    async def running(request, player, said):
+        from services.duels import desk
+
+        return await desk.live(factory_of(), watchers=lambda duel_id: len(live.hub.watching.get(duel_id, ())))
+
+    async def roles_me(request, player, said):
+        from config.settings import ADMIN_IDS
+        from services.duels import desk
+
+        return {"roles": await desk.my_roles(factory_of(), player, tuple(ADMIN_IDS))}
 
     async def unread(request, player, said):
         return {"notifications": await notify.unread(factory_of(), player)}
@@ -304,6 +361,15 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.get("/render/duels/notifications", handler(unread)),
         web.get("/render/duels/profile/me", handler(profile_me)),
         web.get("/render/duels/history", handler(history)),
+        web.get("/render/duels/running", handler(running)),
+        web.get("/render/duels/roles/me", handler(roles_me)),
+        web.get("/render/admin/duels/queue", handler(admin(desk_queue))),
+        web.get("/render/admin/duels/catalog", handler(admin(desk_catalog))),
+        web.get("/render/admin/duels/catalog/{slot}/{band}", handler(admin(desk_cell))),
+        web.get("/render/admin/duels/stuck", handler(admin(desk_stuck))),
+        web.get("/render/admin/duels/journal", handler(admin(desk_journal))),
+        web.get("/render/admin/duels/people", handler(admin(desk_people))),
+        web.get("/render/admin/duels/models", handler(admin(desk_models))),
         web.get("/render/admin/duels/reviews", handler(admin(reviews))),
         web.post("/render/admin/duels/maps/{beatmap}/review", handler(admin(map_review))),
         web.post("/render/admin/duels/roles", handler(admin(grant_role))),

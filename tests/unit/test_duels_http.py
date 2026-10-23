@@ -193,3 +193,31 @@ async def test_my_duel_profile_and_the_history_are_served(client):
     history = await (await client.get("/render/duels/history?player=2", headers=_as(1))).json()
     assert history == {"duels": []}
     assert (await client.get("/render/duels/history?player=x", headers=_as(1))).status == 400
+
+async def test_the_live_list_my_roles_and_the_balance_desk_are_served(client, factory):
+    from db.models.duel import DuelRole
+
+    duel = await (await client.post("/render/duels/invitations", json={"opponent_id": 2}, headers=_as(1, "invite-live1"))).json()
+    before = await (await client.get("/render/duels/running", headers=_as(3))).json()
+    assert before == {"running": [], "finished": []}
+    await client.post(f"/render/duels/{duel['id']}/accept", json={"expected_version": 1}, headers=_as(2, "accept-live1"))
+    running = await (await client.get("/render/duels/running", headers=_as(3))).json()
+    assert [d["id"] for d in running["running"]] == [duel["id"]]
+    assert sorted(p["name"] for p in running["running"][0]["players"]) == ["one", "two"] and running["running"][0]["watching"] == 0
+    assert await (await client.get("/render/duels/roles/me", headers=_as(1))).json() == {"roles": []}
+    for path in ("queue", "catalog", "catalog/NM1/0", "stuck", "journal", "people", "models"):
+        refused = await client.get(f"/render/admin/duels/{path}", headers=_as(1))
+        assert refused.status == 403, path
+    async with factory() as session:
+        session.add_all([DuelRole(player_id=1, role="BALANCE_REVIEWER"), DuelRole(player_id=1, role="TECHNICAL_OPERATOR")])
+        await session.commit()
+    assert await (await client.get("/render/duels/roles/me", headers=_as(1))).json() == {"roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}
+    assert await (await client.get("/render/admin/duels/queue", headers=_as(1))).json() == {"tasks": []}
+    catalogue = await (await client.get("/render/admin/duels/catalog", headers=_as(1))).json()
+    assert catalogue["totals"]["playable"] == 0 and len(catalogue["grid"]["NM1"]) == len(catalogue["bands"])
+    assert (await client.get("/render/admin/duels/catalog/XX1/0", headers=_as(1))).status == 400
+    assert await (await client.get("/render/admin/duels/stuck", headers=_as(1))).json() == {"duels": []}
+    people = await (await client.get("/render/admin/duels/people", headers=_as(1))).json()
+    assert people == {"people": [{"player": 1, "name": "one", "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]}
+    assert await (await client.get("/render/admin/duels/models", headers=_as(1))).json() == {"models": []}
+    assert await (await client.get("/render/admin/duels/journal", headers=_as(1))).json() == {"entries": []}
