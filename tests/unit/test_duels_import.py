@@ -129,6 +129,7 @@ async def test_discovery_files_ranked_maps_with_stars_for_every_slot_mod(factory
         analyses = {row.mods: row.stars for row in (await session.scalars(select(DuelMapAnalysis))).all()}
         assignment = await session.get(DuelMapAssignment, 1)
     assert (revision.beatmap_id, revision.status, revision.source, revision.max_combo) == (1, "ok", "osu.direct", 40)
+    assert (revision.title, revision.artist, revision.version) == ("Song 10", "Artist", "Extra")
     assert analyses == {"NF": 5.5, "NFDT": 6.5, "NFHD": 5.1, "NFHR": 5.4}
     assert (assignment.slot, assignment.state, assignment.admitted) == (None, "UNASSIGNED", True)
     assert sorted(mods for _, mods in osu.asked) == [8, 16, 64]

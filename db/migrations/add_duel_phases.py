@@ -4,7 +4,7 @@ from db.models.duel_catalog import DuelMapRevision
 
 async def run_duel_phases_migration(engine) -> None:
     async with engine.begin() as conn:
-        for model, names in ((Duel, ("phase",)), (DuelDeadline, ("phase",)), (DuelParticipant, ("missed", "disconnects")), (DuelAttempt, ("commanded_at",)), (DuelMapRevision, ("max_combo",))):
+        for model, names in ((Duel, ("phase",)), (DuelDeadline, ("phase",)), (DuelParticipant, ("missed", "disconnects")), (DuelAttempt, ("commanded_at",)), (DuelMapRevision, ("max_combo", "title", "artist", "version"))):
             if not await table_exists(conn, model.__tablename__):
                 continue
             for name in names:

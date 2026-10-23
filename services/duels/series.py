@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import func, select
 
+from db.models.duel_catalog import DuelMapRevision
 from db.models.duel import (Duel, DuelAttempt, DuelBonus, DuelDraftAction, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
                             DuelRoom, DuelRound, DuelRoundScore)
 from services.duels import states
@@ -73,10 +74,17 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
     if pool is not None and pool.revealed_at is not None and viewer_id is not None:
         shown = await session.scalar(select(DuelPoolDelivery.id).where(DuelPoolDelivery.pool_id == pool.id,
                                                                        DuelPoolDelivery.player_id == viewer_id)) is not None
+    about = {}
+    if shown:
+        for e in entries:
+            revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == e.beatmap_id, DuelMapRevision.hash == e.revision_hash))
+            if revision is not None:
+                about[e.slot] = {"title": revision.title, "artist": revision.artist, "version": revision.version, "mapper": revision.mapper,
+                                 "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None}
     found["pool"] = None if not shown else {
         "manifest": pool.manifest_hash,
         "entries": [{"slot": e.slot, "beatmap_id": e.beatmap_id, "mods": e.mods, "banned_by": e.banned_by, "used": e.used,
-                     "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state} for e in entries],
+                     "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state, **about.get(e.slot, {})} for e in entries],
     }
     room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id, DuelRoom.status == "open").order_by(DuelRoom.id.desc()))
     mine = viewer_id is not None and any(person.player_id == viewer_id for person in people)

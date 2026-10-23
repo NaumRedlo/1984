@@ -85,4 +85,4 @@ async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     assert await desk.people(factory, 1) == [{"player": 1, "name": "one", "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]
     shown = await desk.live(factory, watchers=lambda duel_id: 4)
     assert [d["id"] for d in shown["running"]] == ["stuck-1"] and shown["running"][0]["watching"] == 4
-    assert [(d["id"], d["winner"]) for d in shown["finished"]] == [("done-1", 2)]
+    assert [(d["id"], d["winner"]) for d in shown["finished"]] == [("done-1", 2)] and shown["finished"][0]["seconds_ago"] < 60

@@ -88,6 +88,9 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
                                          ranked_status=entry.get("status"), mapper=entry.get("mapper"), source=source,
                                          object_count=len(beatmap.objects), format_version=beatmap.format_version, now=now)
         made.max_combo = entry.get("max_combo")
+        made.title = (entry.get("title") or "")[:200] or made.title
+        made.artist = (entry.get("artist") or "")[:200] or made.artist
+        made.version = (entry.get("version") or "")[:200] or made.version
         made.ranked_status = entry.get("status")
         made.beatmapset_id = made.beatmapset_id or entry["beatmapset_id"]
         made.mapper = made.mapper or entry.get("mapper")

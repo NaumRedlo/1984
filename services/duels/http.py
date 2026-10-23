@@ -139,9 +139,17 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
 
         async with factory_of()() as session:
             seen = await portfolio.observations_of(session, player)
+            from sqlalchemy import func, select
+
+            from db.models.duel import Duel, DuelParticipant
+
+            mine = (select(Duel.winner_id).join(DuelParticipant, DuelParticipant.duel_id == Duel.id)
+                    .where(DuelParticipant.player_id == player, Duel.state == states.COMPLETED, Duel.winner_id.is_not(None)).subquery())
+            won = await session.scalar(select(func.count()).select_from(mine).where(mine.c.winner_id == player)) or 0
+            lost = await session.scalar(select(func.count()).select_from(mine).where(mine.c.winner_id != player)) or 0
         skills, marks = portfolio.profile(seen, utcnow())
         return {"rating": await rating.standing(factory_of(), player), "portfolio": portfolio.view(skills, marks),
-                "observations": len(seen)}
+                "observations": len(seen), "won": int(won), "lost": int(lost)}
 
     async def history(request, player, said):
         from sqlalchemy import select

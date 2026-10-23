@@ -18,6 +18,9 @@ class DuelMapRevision(Base):
     source = Column(String(32), nullable=True)
     object_count = Column(Integer, nullable=True)
     max_combo = Column(Integer, nullable=True)
+    title = Column(String(200), nullable=True)
+    artist = Column(String(200), nullable=True)
+    version = Column(String(200), nullable=True)
     downloaded_at = Column(DateTime, nullable=False, default=utcnow)
 
     __table_args__ = (
