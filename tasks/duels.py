@@ -1,6 +1,6 @@
 import asyncio
 
-from services.duels import deadlines, outbox
+from services.duels import deadlines, outbox, rating
 from utils.logger import get_logger
 
 logger = get_logger("tasks.duels")
@@ -58,6 +58,7 @@ async def _sweep(factory, shutdown_event: asyncio.Event, send=None) -> None:
         try:
             await deadlines.sweep(factory)
             await outbox.sweep(factory)
+            await rating.sweep(factory)
             if send is not None:
                 await notify.deliver(factory, send, get_language)
         except Exception as exc:

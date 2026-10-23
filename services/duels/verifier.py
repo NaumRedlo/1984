@@ -52,6 +52,7 @@ class Verdict:
     scores: dict[int, int] = field(default_factory=dict)
     mods: dict[int, list[str]] = field(default_factory=dict)
     winner: Optional[int] = None
+    details: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 def judge(game: dict[str, Any], expected: Expected) -> Verdict:
     reasons = []
@@ -90,6 +91,8 @@ def judge(game: dict[str, Any], expected: Expected) -> Verdict:
             reasons.append(f"mods:{user}")
         verdict.scores[user] = int(score.get("score") or 0)
         verdict.mods[user] = sorted(effective)
+        verdict.details[user] = {"accuracy": score.get("accuracy"), "max_combo": score.get("max_combo"),
+                                 "statistics": score.get("statistics") or {}}
     if reasons:
         return Verdict("invalid", reasons, verdict.scores, verdict.mods)
     first, second = sorted(verdict.scores.items(), key=lambda pair: -pair[1])

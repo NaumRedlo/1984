@@ -19,14 +19,22 @@ from utils.timeutils import utcnow
 logger = get_logger("duels.coordinator")
 
 CATALOG_VERSION = "catalog-v1"
-PRIOR = Skill(2.5, 1.5)
 CLOCK_SLACK = 10
 
 class NotYet(Exception):
     pass
 
-def prior_profiles(_people: list[DuelParticipant]) -> tuple[dict[str, Skill], dict[str, Skill]]:
-    return ({slot: PRIOR for slot in SLOTS if slot != "TB"}, {slot: PRIOR for slot in SLOTS if slot != "TB"})
+async def measured_profiles(factory, people: list[DuelParticipant]) -> tuple[dict[str, Skill], dict[str, Skill]]:
+    from services.duels import portfolio
+
+    found = []
+    async with factory() as session:
+        async with session.begin():
+            for person in sorted(people, key=lambda p: p.side or ""):
+                await portfolio.from_attempts(session, person.player_id)
+                skills, _ = portfolio.profile(await portfolio.observations_of(session, person.player_id), utcnow())
+                found.append(skills)
+    return found[0], found[1]
 
 async def catalogue(session) -> list[Candidate]:
     rows = (await session.execute(
@@ -56,7 +64,7 @@ async def catalogue(session) -> list[Candidate]:
     return found
 
 class Coordinator:
-    def __init__(self, factory, gateway, osu, profiles: Callable = prior_profiles, budget: Optional[verifier.Budget] = None,
+    def __init__(self, factory, gateway, osu, profiles: Callable = measured_profiles, budget: Optional[verifier.Budget] = None,
                  room_limit: int = PARAMETERS["created_room_limit"], now: Callable[[], datetime] = utcnow):
         self.factory = factory
         self.gateway = gateway
@@ -111,7 +119,7 @@ class Coordinator:
             candidates = await catalogue(session)
         if duel is None or duel.state not in (states.ACCEPTED, states.GENERATING_POOL):
             return
-        first, second = self.profiles(people)
+        first, second = await self.profiles(self.factory, people)
         pool = generator.generate(candidates, first, second, duel.seed)
         await series.pool_built(self.factory, duel_id, pool, CATALOG_VERSION, FEATURE_VERSION)
 
@@ -258,6 +266,7 @@ class Coordinator:
         await series.round_verdict(self.factory, duel_id, {
             "state": verdict.state, "winner": verdict.winner, "scores": {str(k): v for k, v in verdict.scores.items()},
             "mods": {str(k): v for k, v in verdict.mods.items()}, "reasons": verdict.reasons, "game_id": int(game["id"]),
+            "details": {str(k): v for k, v in verdict.details.items()},
             "evidence": kept.get(int(game["id"])),
         })
 

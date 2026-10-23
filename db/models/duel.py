@@ -322,3 +322,82 @@ class DuelBonus(Base):
     winner_id = Column(Integer, ForeignKey("players.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
     finished_at = Column(DateTime, nullable=True)
+
+class DuelGlicko(Base):
+    __tablename__ = "duel_glicko"
+
+    player_id = Column(Integer, ForeignKey("players.id"), primary_key=True)
+    version = Column(String(32), primary_key=True)
+    rating = Column(Float, nullable=False)
+    rd = Column(Float, nullable=False)
+    sigma = Column(Float, nullable=False)
+    last_period = Column(BigInteger, nullable=True)
+    calibration_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
+
+class DuelRatingResult(Base):
+    __tablename__ = "duel_glicko_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(32), nullable=False)
+    duel_id = Column(String(36), ForeignKey("duel_series.id", ondelete="CASCADE"), nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    opponent_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    result = Column(Float, nullable=False)
+    calibrates = Column(Boolean, nullable=False, default=False)
+    reason = Column(String(32), nullable=False)
+    period = Column(BigInteger, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("version", "duel_id", "player_id", name="uq_duel_glicko_results_once"),
+        Index("ix_duel_glicko_results_period", "version", "period", "processed_at"),
+    )
+
+class DuelRatingPeriod(Base):
+    __tablename__ = "duel_glicko_periods"
+
+    version = Column(String(32), primary_key=True)
+    period = Column(BigInteger, primary_key=True)
+    state = Column(String(16), nullable=False)
+    input_hash = Column(String(64), nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+class DuelRatingChange(Base):
+    __tablename__ = "duel_glicko_changes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(32), nullable=False)
+    period = Column(BigInteger, nullable=False)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    before = Column(JSON, nullable=False)
+    after = Column(JSON, nullable=False)
+    input_hash = Column(String(64), nullable=False)
+
+    __table_args__ = (UniqueConstraint("version", "period", "player_id", name="uq_duel_glicko_changes_once"),)
+
+class DuelSkillObservation(Base):
+    __tablename__ = "duel_skill_observations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    source = Column(String(16), nullable=False)
+    duel_id = Column(String(36), nullable=True)
+    attempt_id = Column(Integer, nullable=True)
+    beatmap_id = Column(BigInteger, nullable=False)
+    revision_hash = Column(String(32), nullable=True)
+    slot = Column(String(4), nullable=False)
+    mods = Column(JSON, nullable=False)
+    stars = Column(Float, nullable=False)
+    quality = Column(Float, nullable=False)
+    value = Column(Float, nullable=False)
+    weight = Column(Float, nullable=False, default=1.0)
+    verified = Column(Boolean, nullable=False, default=True)
+    played_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("player_id", "source", "beatmap_id", "played_at", name="uq_duel_skill_observations_once"),
+        Index("ix_duel_skill_observations_player", "player_id", "slot"),
+    )

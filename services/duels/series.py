@@ -111,6 +111,10 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
 
 async def _finish(step: Step, duel: Duel, people: list[DuelParticipant], winner: Optional[DuelParticipant], reason: str) -> None:
     duel.winner_id = winner.player_id if winner is not None else None
+    from services.duels import portfolio, rating
+    await rating.record(step.session, duel, people, reason, step.now)
+    await step.session.flush()
+    await portfolio.from_series(step.session, duel.id)
     rounds = await _rounds(step.session, duel.id)
     offer = reason == "played" and all(r.slot != "TB" for r in rounds)
     step.keep_room = offer
@@ -386,8 +390,11 @@ async def round_verdict(factory, duel_id: str, verdict: dict[str, Any], now: Opt
         if state == "pending":
             return
         for osu_id, score in (verdict.get("scores") or {}).items():
+            detail = (verdict.get("details") or {}).get(osu_id) or {}
             step.session.add(DuelRoundScore(attempt_id=attempt.id, osu_user_id=int(osu_id), score_v2=int(score),
-                                            mods=(verdict.get("mods") or {}).get(osu_id, []), evidence_id=verdict.get("evidence")))
+                                            mods=(verdict.get("mods") or {}).get(osu_id, []), evidence_id=verdict.get("evidence"),
+                                            accuracy=detail.get("accuracy"), max_combo=detail.get("max_combo"),
+                                            statistics=detail.get("statistics")))
         if verdict.get("game_id") is not None:
             attempt.game_id = verdict["game_id"]
         if state == "valid":
