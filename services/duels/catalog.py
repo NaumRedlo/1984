@@ -132,6 +132,9 @@ async def revision(session, beatmap_id: int, digest: str, *, beatmapset_id: Opti
     held = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == beatmap_id,
                                                              DuelMapRevision.hash == digest))
     if held is not None:
+        if await _row(session, beatmap_id) is None:
+            session.add(DuelMapAssignment(beatmap_id=beatmap_id, state=UNASSIGNED, revision_hash=digest, admitted=False, updated_at=now))
+            await session.flush()
         return held, False
     made = DuelMapRevision(beatmap_id=beatmap_id, beatmapset_id=beatmapset_id, hash=digest, ranked_status=ranked_status,
                            mapper=mapper, source=source, object_count=object_count, format_version=format_version,

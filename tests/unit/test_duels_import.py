@@ -170,3 +170,105 @@ async def test_a_broken_file_is_quarantined_not_offered(factory, tmp_path):
         revision = await session.scalar(select(DuelMapRevision))
         assignment = await session.get(DuelMapAssignment, 6)
     assert revision.status == "quarantined" and assignment.admitted is False
+
+WIKI_PAGE = """# osu! World Cup 2023
+
+## Mappools
+
+### Grand Finals
+
+**[Download the mappack here](https://packs.ppy.sh/P231.zip)**
+
+- No Mod
+  1. [A - B (C) \\[D\\]](https://osu.ppy.sh/beatmapsets/10#osu/1)
+  2. [A - B (C) \\[E\\]](https://osu.ppy.sh/beatmapsets/20#osu/2)
+  5. [A - B (C) \\[F\\]](https://osu.ppy.sh/beatmapsets/30#osu/3)
+- Hidden
+  2. [A - B (C) \\[G\\]](https://osu.ppy.sh/beatmapsets/40#osu/4)
+- Flashlight
+  1. [A - B (C) \\[H\\]](https://osu.ppy.sh/beatmapsets/50#osu/5)
+- Tiebreaker
+  1. **[A - B (C) \\[I\\]](https://osu.ppy.sh/beatmapsets/60#osu/6)**
+
+## Match results
+
+- No Mod
+  1. [A - B (C) \\[X\\]](https://osu.ppy.sh/beatmapsets/70#osu/7)
+"""
+
+def test_wiki_pools_become_slots_and_foreign_slots_become_negatives():
+    from services.duels import corpus
+
+    found = corpus.read_wiki(WIKI_PAGE, 2023, "wiki")
+    assert [(e.stage, e.original_slot, e.beatmap_id, e.beatmapset_id) for e in found] == [
+        ("grand finals", "NM1", 1, 10), ("grand finals", "NM2", 2, 20), ("grand finals", "NM5", 3, 30),
+        ("grand finals", "HD2", 4, 40), ("grand finals", "FL1", 5, 50), ("grand finals", "TB", 6, 60)]
+    assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "OTHER", "HD2", None, "TB"]
+
+async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_model(factory, tmp_path):
+    from db.models.duel import DuelModelVersion
+
+    files = {i: _map(i, 30 + 5 * i) for i in range(1, 7)}
+
+    async def fetch(address):
+        if "osu-wiki" in address:
+            return WIKI_PAGE.replace("2023", "2021").encode() if "/2021/" in address else None
+        for number, raw in files.items():
+            if address.endswith(f"/osu/{number}"):
+                return raw
+        return None
+
+    counted = await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
+    assert counted == {"filed": 6}
+    async with factory() as session:
+        examples = (await session.scalars(select(db.models.duel_catalog.DuelTrainingExample))).all()
+        assignments = (await session.scalars(select(DuelMapAssignment))).all()
+        analyses = (await session.scalars(select(DuelMapAnalysis))).all()
+    assert {e.original_slot: (e.normalized_label, e.mods) for e in examples}["HD2"] == ("HD2", "NFHD")
+    assert assignments == [] and len(analyses) == 6 * len(importer.ANALYSED)
+    again = await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
+    assert again == {"filed": 6}
+    rows = await importer.corpus_rows(factory)
+    assert sorted(label for _, label, _, _ in rows) == ["HD2", "NM1", "NM2", "OTHER", "TB"]
+    version, found = await importer.train_corpus(factory, steps=20)
+    assert version.startswith("owc-") and found["train"] == 5 and found["test"]["count"] == 0
+    async with factory() as session:
+        assert (await session.get(DuelModelVersion, version)).state == "shadow"
+    entry = {"beatmap_id": 1, "beatmapset_id": 10, "checksum": hashlib.md5(files[1]).hexdigest(), "stars": 5.0, "status": "ranked",
+             "mapper": "Meg", "length": 100, "max_combo": 30}
+    assert await importer.ingest(factory, fetch, Osu(), entry, str(tmp_path)) == "unassigned"
+    async with factory() as session:
+        assignment = await session.get(DuelMapAssignment, 1)
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 1))
+        stars = await session.scalar(select(DuelMapAnalysis.stars).where(DuelMapAnalysis.revision_hash == revision.hash,
+                                                                         DuelMapAnalysis.mods == "NFDT"))
+    assert assignment.admitted and revision.ranked_status == "ranked" and stars == 6.5
+
+async def test_a_published_model_sorts_waiting_catalogue_maps(factory, tmp_path):
+    from services.duels.slot_model import Prediction
+
+    raws = {7: _map(7), 8: _map(8, 50)}
+
+    async def fetch(address):
+        for number, raw in raws.items():
+            if address.endswith(f"/osu/{number}"):
+                return raw
+        return None
+
+    for number, raw in raws.items():
+        entry = {"beatmap_id": number, "beatmapset_id": number * 10, "checksum": hashlib.md5(raw).hexdigest(), "stars": 5.0,
+                 "status": "ranked", "mapper": "Meg", "length": 100, "max_combo": 40}
+        assert await importer.ingest(factory, fetch, Osu(), entry, str(tmp_path)) == "unassigned"
+
+    class Model:
+        version = "slots-test"
+
+        def predict(self, features, base_ar, hr_cs):
+            assert base_ar == 9 and hr_cs == pytest.approx(5.2)
+            sure = features["objects"] == 40
+            return Prediction("DT1" if sure else None, 0.9 if sure else 0.4, 0.5 if sure else 0.05, {}, False)
+
+    assert await importer.reassess(factory, Model()) == {"proposed DT1": 1, "below_threshold": 1}
+    async with factory() as session:
+        assert (await session.get(DuelMapAssignment, 7)).slot == "DT1"
+        assert (await session.get(DuelMapAssignment, 8)).slot is None

@@ -4,11 +4,12 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from db.models.duel_catalog import DuelMapAnalysis, DuelMapRevision
-from services.duels import catalog, mirrors
+from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision, DuelTrainingExample
+from services.duels import catalog, corpus, mirrors
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
+from services.duels.slot_model import CLASSES, OTHER, SlotModel, _softmax, report as scored
 from utils.timeutils import utcnow
 
 MOD_BITS = {"NF": 1, "HD": 8, "HR": 16, "DT": 64}
@@ -23,11 +24,22 @@ def bits(mods: str) -> int:
 def suitable(entry: dict[str, Any]) -> bool:
     return entry.get("status") == "ranked" and SHORTEST <= int(entry.get("length") or 0) <= LONGEST
 
+WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
+YEARS = (2021, 2022, 2023, 2024, 2025)
+TRAIN_YEARS = (2021, 2022, 2023)
+TUNE_YEAR = 2024
+TEST_YEAR = 2025
+GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
+
 async def known(factory, entry: dict[str, Any]) -> bool:
     async with factory() as session:
-        found = await session.scalar(select(DuelMapRevision.id).where(DuelMapRevision.beatmap_id == entry["beatmap_id"],
-                                                                     DuelMapRevision.hash == (entry.get("checksum") or "")))
+        found = await session.scalar(select(DuelMapAssignment.beatmap_id).where(
+            DuelMapAssignment.beatmap_id == entry["beatmap_id"], DuelMapAssignment.revision_hash == (entry.get("checksum") or "")))
     return found is not None
+
+async def _analysed(session, digest: str) -> set[str]:
+    return set((await session.scalars(select(DuelMapAnalysis.mods).where(DuelMapAnalysis.revision_hash == digest,
+                                                                        DuelMapAnalysis.feature_version == FEATURE_VERSION))).all())
 
 async def _stars(osu, beatmap_id: int, mods: str, nominal: float) -> Optional[float]:
     wanted = bits(mods) & ~MOD_BITS["NF"]
@@ -76,7 +88,14 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
                                          ranked_status=entry.get("status"), mapper=entry.get("mapper"), source=source,
                                          object_count=len(beatmap.objects), format_version=beatmap.format_version, now=now)
         made.max_combo = entry.get("max_combo")
+        made.ranked_status = entry.get("status")
+        made.beatmapset_id = made.beatmapset_id or entry["beatmapset_id"]
+        made.mapper = made.mapper or entry.get("mapper")
+        held = await _analysed(session, digest)
         for mods, (features, stars) in analyses.items():
+            if mods in held:
+                await _restar(session, digest, mods, stars)
+                continue
             session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version=ENGINE_VERSION,
                                         feature_version=FEATURE_VERSION, model_version=model.version if model else "none",
                                         stars=stars, features=features,
@@ -93,6 +112,14 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
                 outcome = refusal.code.lower()
         await session.commit()
     return outcome
+
+async def _restar(session, digest: str, mods: str, stars: Optional[float]) -> None:
+    if stars is None:
+        return
+    row = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == digest, DuelMapAnalysis.mods == mods,
+                                                             DuelMapAnalysis.feature_version == FEATURE_VERSION))
+    if row is not None and row.stars is None:
+        row.stars = stars
 
 async def discover(factory, fetch, osu, folder: str, least: float, most: float, pages: int, amount: int = 50,
                    model=None, pause: float = 1.0, report=print) -> dict[str, int]:
@@ -115,4 +142,155 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
                 await asyncio.sleep(pause)
         if total < amount:
             break
+    return counted
+
+async def _example_file(factory, fetch, example: corpus.Example, folder: str, now: datetime) -> Optional[str]:
+    async with factory() as session:
+        held = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == example.beatmap_id)
+                                    .order_by(DuelMapRevision.downloaded_at.desc()))
+        if held is not None and await _analysed(session, held.hash) >= set(ANALYSED):
+            return held.hash
+    fetched = await mirrors.fetch_osu(fetch, example.beatmapset_id or 0, example.beatmap_id, None)
+    if fetched is None:
+        return None
+    source, raw = fetched
+    digest = await asyncio.to_thread(mirrors.store, folder, raw)
+    try:
+        beatmap = await asyncio.to_thread(parse, raw)
+    except OsuFileError:
+        return None
+    if beatmap.mode != 0 or len(beatmap.objects) < 2:
+        return None
+    analyses = {mods: await asyncio.to_thread(analyse, beatmap, mods) for mods in ANALYSED}
+    async with factory() as session:
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == example.beatmap_id,
+                                                                     DuelMapRevision.hash == digest))
+        if revision is None:
+            session.add(DuelMapRevision(beatmap_id=example.beatmap_id, beatmapset_id=example.beatmapset_id, hash=digest,
+                                        format_version=beatmap.format_version, status="ok", source=source,
+                                        object_count=len(beatmap.objects), downloaded_at=now))
+        held = await _analysed(session, digest)
+        for mods, features in analyses.items():
+            if mods not in held:
+                session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version=ENGINE_VERSION,
+                                            feature_version=FEATURE_VERSION, model_version="none", stars=None,
+                                            features=features, created_at=now))
+        await session.commit()
+    return digest
+
+async def load_corpus(factory, fetch, folder: str, years=YEARS, pause: float = 1.0, report=print,
+                      now: Optional[datetime] = None) -> dict[str, int]:
+    now = now or utcnow()
+    examples: list[corpus.Example] = []
+    for year in years:
+        body = await fetch(WIKI.format(year=year))
+        found = corpus.read_wiki(body.decode("utf-8", errors="replace"), year, WIKI.format(year=year)) if body else []
+        report(f"OWC {year}: {len(found)} maps")
+        examples.extend(found)
+    clashes = corpus.conflicts(examples)
+    counted: dict[str, int] = {}
+    for example in corpus.distinct(examples):
+        digest = await _example_file(factory, fetch, example, folder, now)
+        async with factory() as session:
+            row = await session.scalar(select(DuelTrainingExample).where(
+                DuelTrainingExample.corpus_version == corpus.CORPUS_VERSION, DuelTrainingExample.year == example.year,
+                DuelTrainingExample.stage == example.stage, DuelTrainingExample.original_slot == example.original_slot,
+                DuelTrainingExample.beatmap_id == example.beatmap_id))
+            if row is None:
+                row = DuelTrainingExample(corpus_version=corpus.CORPUS_VERSION, source=example.source, year=example.year,
+                                          stage=example.stage, original_slot=example.original_slot, beatmap_id=example.beatmap_id,
+                                          beatmapset_id=example.beatmapset_id, fetched_at=now)
+                session.add(row)
+            row.mods = GROUP_MODS.get(example.original_slot[:2])
+            row.revision_hash = digest
+            row.normalized_label = corpus.label(example.original_slot)
+            row.conflict = example.beatmap_id in clashes
+            await session.commit()
+        outcome = "filed" if digest else "no_file"
+        counted[outcome] = counted.get(outcome, 0) + 1
+        report(f"{example.year} {example.stage} {example.original_slot} {example.beatmap_id}: {outcome}")
+        if pause:
+            await asyncio.sleep(pause)
+    return counted
+
+async def corpus_rows(factory) -> list[tuple[list[float], str, int, int]]:
+    from services.duels.slot_model import vector
+
+    async with factory() as session:
+        examples = (await session.scalars(select(DuelTrainingExample).where(
+            DuelTrainingExample.corpus_version == corpus.CORPUS_VERSION, DuelTrainingExample.conflict.is_(False),
+            DuelTrainingExample.normalized_label.is_not(None), DuelTrainingExample.revision_hash.is_not(None),
+            DuelTrainingExample.mods.is_not(None)))).all()
+        found = []
+        for example in examples:
+            analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash,
+                                                                         DuelMapAnalysis.mods == example.mods,
+                                                                         DuelMapAnalysis.feature_version == FEATURE_VERSION))
+            if analysis is None or not analysis.features:
+                continue
+            found.append((vector(analysis.features), example.normalized_label, int(example.beatmapset_id or example.beatmap_id),
+                          example.year))
+    return found
+
+def _evaluate(model: SlotModel, rows) -> dict[str, Any]:
+    truth, guessed, confident = [], [], []
+    for row, label, _, _ in rows:
+        normalised = model.normaliser.apply(row)
+        probabilities = _softmax([b + sum(w * x for w, x in zip(ws, normalised)) for ws, b in zip(model.weights, model.bias)])
+        ranked = sorted(range(len(probabilities)), key=lambda k: -probabilities[k])
+        best = CLASSES[ranked[0]]
+        second = next((k for k in ranked[1:] if CLASSES[k] != OTHER), None)
+        margin = probabilities[ranked[0]] - (probabilities[second] if second is not None else 0.0)
+        truth.append(label)
+        guessed.append(best)
+        if best != OTHER and catalog.confidence_level(probabilities[ranked[0]], margin) == "confident":
+            confident.append(best == label)
+    found = scored(truth, guessed)
+    found["confident"] = {"count": len(confident), "precision": sum(confident) / len(confident) if confident else 0.0}
+    return found
+
+async def train_corpus(factory, steps: int = 400, now: Optional[datetime] = None) -> Optional[tuple[str, dict[str, Any]]]:
+    from services.duels import balance
+
+    now = now or utcnow()
+    rows = await corpus_rows(factory)
+    train = [row for row in rows if row[3] in TRAIN_YEARS]
+    sets = {row[2] for row in train}
+    tune = [row for row in rows if row[3] == TUNE_YEAR and row[2] not in sets]
+    test = [row for row in rows if row[3] == TEST_YEAR and row[2] not in sets]
+    if len({row[1] for row in train}) < 2:
+        return None
+    model = await asyncio.to_thread(SlotModel.fit, [row[0] for row in train], [row[1] for row in train], 0.01, steps)
+    found = {"corpus": corpus.CORPUS_VERSION, "train": len(train), "tune": _evaluate(model, tune), "test": _evaluate(model, test)}
+    version = f"owc-{now.strftime('%Y%m%d%H%M')}-{len(rows)}"
+    await balance.train(factory, version, model.dump(), found, len(rows), now)
+    return version, found
+
+async def reassess(factory, model: SlotModel, now: Optional[datetime] = None) -> dict[str, int]:
+    now = now or utcnow()
+    counted: dict[str, int] = {}
+    async with factory() as session:
+        waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
+                                                                         DuelMapAssignment.admitted.is_(True)))).all()
+        for assignment in waiting:
+            plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == assignment.revision_hash,
+                                                                      DuelMapAnalysis.mods == "NF",
+                                                                      DuelMapAnalysis.feature_version == FEATURE_VERSION))
+            rock = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == assignment.revision_hash,
+                                                                     DuelMapAnalysis.mods == "NFHR",
+                                                                     DuelMapAnalysis.feature_version == FEATURE_VERSION))
+            if plain is None or rock is None:
+                counted["no_analysis"] = counted.get("no_analysis", 0) + 1
+                continue
+            prediction = model.predict(plain.features, plain.features["effective"]["ar"], rock.features["effective"]["cs"])
+            outcome = "below_threshold"
+            if prediction.slot is not None:
+                try:
+                    proposed = await catalog.propose(session, int(assignment.beatmap_id), prediction.slot, prediction.probability,
+                                                     prediction.margin, model.version, now)
+                    outcome = f"proposed {proposed['slot']}" if proposed["slot"] else "below_threshold"
+                except catalog.CatalogRefusal as refusal:
+                    outcome = refusal.code.lower()
+            counted[outcome] = counted.get(outcome, 0) + 1
+        await session.commit()
     return counted

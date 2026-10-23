@@ -41,6 +41,48 @@ def read_pools(markdown: str, year: int, source: str) -> list[Example]:
         found.append(Example(year, stage, slot.group(1), beatmap, set_id, source))
     return found
 
+_GROUPS = {"no mod": "NM", "nomod": "NM", "hidden": "HD", "hard rock": "HR", "hardrock": "HR", "double time": "DT",
+           "doubletime": "DT", "free mod": "FM", "freemod": "FM", "tiebreaker": "TB", "tie breaker": "TB", "easy": "EZ",
+           "flashlight": "FL"}
+_GROUP = re.compile(r"^\s*[-*]\s+\**([A-Za-z ]+?)\**\s*:?\s*$")
+_ITEM = re.compile(r"^\s+(\d+)\.\s")
+
+def read_wiki(markdown: str, year: int, source: str) -> list[Example]:
+    found: list[Example] = []
+    stage, group, inside = "unknown", None, False
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            inside = line[3:].strip().lower() == "mappools"
+            continue
+        if not inside:
+            continue
+        heading = _HEADING.match(line)
+        if heading:
+            named = _STAGES.search(heading.group(1))
+            stage = named.group(1).lower() if named else heading.group(1).strip().lower()
+            group = None
+            continue
+        named_group = _GROUP.match(line)
+        if named_group:
+            group = _GROUPS.get(named_group.group(1).strip().lower())
+            continue
+        item = _ITEM.match(line)
+        link = _LINK.search(line)
+        if group is None or not item or not link:
+            continue
+        slot = "TB" if group == "TB" else f"{group}{item.group(1)}"
+        set_id = int(link.group(1)) if link.group(1) else None
+        beatmap = int(link.group(2) or link.group(3) or link.group(4))
+        found.append(Example(year, stage, slot, beatmap, set_id, source))
+    return found
+
+def label(slot: str) -> Optional[str]:
+    if slot in SLOTS:
+        return slot
+    if slot[:2] in ("NM", "HD", "HR", "DT", "FM"):
+        return "OTHER"
+    return None
+
 def conflicts(examples: list[Example]) -> set[int]:
     slots: dict[int, set[str]] = {}
     for example in examples:
