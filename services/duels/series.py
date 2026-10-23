@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 from sqlalchemy import func, select
 
 from db.models.duel import (Duel, DuelAttempt, DuelDraftAction, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
-                            DuelRound, DuelRoundScore)
+                            DuelRoom, DuelRound, DuelRoundScore)
 from services.duels import states
 from services.duels.errors import DuelError
 from services.duels.generator import SLOT_MODS, Pool
@@ -77,6 +77,10 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
         "entries": [{"slot": e.slot, "beatmap_id": e.beatmap_id, "mods": e.mods, "banned_by": e.banned_by, "used": e.used,
                      "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state} for e in entries],
     }
+    room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id, DuelRoom.status == "open").order_by(DuelRoom.id.desc()))
+    mine = viewer_id is not None and any(person.player_id == viewer_id for person in people)
+    found["room"] = None if room is None or not mine else {
+        "name": room.room_name, "match_id": room.match_id, "password": (room.capabilities or {}).get("password")}
     turns = await _turns(session, duel.id)
     found["draft"] = [{"turn": t.turn_index, "type": t.type, "slot": t.slot, "by": t.actor_id, "automatic": t.automatic} for t in turns]
     found["rounds"] = [{"ordinal": r.ordinal, "slot": r.slot, "state": r.state, "winner": r.winner_id, "ties": r.tie_count,
@@ -229,6 +233,8 @@ async def ready(factory, duel_id: str, actor_id: int, operation_id: str, tb_mods
         if all(person.connection_state == "ready" for person in people):
             for person in people:
                 person.connection_state = "playing"
+            attempt = await _attempt(step.session, current.id)
+            attempt.commanded_at = step.now
             await step.move(duel, states.STARTING)
             step.command(duel, "start_round", {"duel": duel.id, "round": current.id})
     return await _act(factory, duel_id, actor_id, operation_id, "ready", expected_version, body, now)

@@ -233,6 +233,7 @@ class DuelAttempt(Base):
     game_id = Column(BigInteger, nullable=True, unique=True)
     expected_mods = Column(JSON, nullable=False)
     last_event_id = Column(BigInteger, nullable=True)
+    commanded_at = Column(DateTime, nullable=True)
     start_at = Column(DateTime, nullable=True)
     end_at = Column(DateTime, nullable=True)
     validity = Column(String(16), nullable=False, default="pending")
