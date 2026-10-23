@@ -307,3 +307,18 @@ class DuelRoomCapacity(Base):
     reserved_count = Column(Integer, nullable=False, default=0)
     reconciliation_state = Column(String(16), nullable=False, default="ok")
     updated_at = Column(DateTime, nullable=False, default=utcnow)
+
+class DuelBonus(Base):
+    __tablename__ = "duel_bonus_games"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    duel_id = Column(String(36), ForeignKey("duel_series.id", ondelete="CASCADE"), nullable=False, unique=True)
+    state = Column(String(16), nullable=False)
+    consents = Column(JSON, nullable=False)
+    tb_mods = Column(JSON, nullable=True)
+    commanded_at = Column(DateTime, nullable=True)
+    game_id = Column(BigInteger, nullable=True)
+    scores = Column(JSON, nullable=True)
+    winner_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    finished_at = Column(DateTime, nullable=True)

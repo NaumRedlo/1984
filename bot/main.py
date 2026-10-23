@@ -189,7 +189,7 @@ class App:
         self.map_checks_task = asyncio.create_task(check_maps(self.osu_api_client, self.shutdown_event), name="map_checks")
 
         logger.info("Starting the duel deadlines and commands...")
-        self.duels_task = asyncio.create_task(run_duels(self.shutdown_event, self.osu_api_client), name="duels")
+        self.duels_task = asyncio.create_task(run_duels(self.shutdown_event, self.osu_api_client, self.bot), name="duels")
 
     async def start(self) -> None:
         assert self.bot is not None

@@ -52,6 +52,10 @@ class Hub:
         self.seen: dict[int, float] = {}
         self.lost: set[tuple[str, int]] = set()
         self.cursor: Optional[int] = None
+        self.states: dict[str, dict[int, dict[str, Any]]] = {}
+
+    def witnessed(self, duel_id: str) -> dict[int, dict[str, Any]]:
+        return dict(self.states.get(duel_id, {}))
 
     def heard(self, player_id: int) -> None:
         self.seen[player_id] = self.clock()
@@ -185,6 +189,7 @@ async def _handle(live: Hub, factory, socket, player_id: int, said: dict[str, An
     elif kind == "witness":
         state = witness_state(said.get("state"))
         if state is not None:
+            live.states.setdefault(duel_id, {})[player_id] = state
             await live.send(duel_id, {"type": "witness", "duel": duel_id, "player": player_id, "state": state}, skip=socket)
         if said.get("event") in WITNESS_LOSSES:
             live.lost.add((duel_id, player_id))

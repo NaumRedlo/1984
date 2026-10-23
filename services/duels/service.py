@@ -6,7 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from db.models.duel import (Duel, DuelCommand, DuelDeadline, DuelEvent, DuelLease, DuelNotification, DuelOperation,
-                            DuelParticipant, DuelQueueEntry)
+                            DuelParticipant, DuelQueueEntry, DuelRoom)
 from db.models.player import Player
 from services.duels import states
 from services.duels.errors import DuelError
@@ -24,6 +24,7 @@ class Step:
         self.actor_id = actor_id
         self.now = now
         self.contested: set[int] = set()
+        self.keep_room = False
 
     async def emit(self, duel: Duel, kind: str, payload: dict[str, Any]) -> DuelEvent:
         last = await self.session.scalar(select(func.max(DuelEvent.sequence)).where(DuelEvent.duel_id == duel.id))
@@ -45,6 +46,9 @@ class Step:
             duel.finalized_at = self.now
             duel.outcome_reason = reason
             await self.session.execute(delete(DuelLease).where(DuelLease.duel_id == duel.id))
+            room = await self.session.scalar(select(DuelRoom.id).where(DuelRoom.duel_id == duel.id, DuelRoom.status == "open"))
+            if room is not None and not self.keep_room:
+                self.command(duel, "close_room", {"duel": duel.id})
         return await self.emit(duel, "state", {"from": source, "to": target, "reason": reason})
 
     def touch(self, duel: Duel) -> None:

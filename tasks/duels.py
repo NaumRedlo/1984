@@ -7,7 +7,7 @@ logger = get_logger("tasks.duels")
 
 EVERY = 1.0
 
-async def run(shutdown_event: asyncio.Event, osu=None) -> None:
+async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
     from db.database import AsyncSessionFactory
     from services.duels import live
 
@@ -16,7 +16,7 @@ async def run(shutdown_event: asyncio.Event, osu=None) -> None:
     if gateway is not None:
         helpers.append(asyncio.create_task(gateway.run(shutdown_event)))
     try:
-        await _sweep(AsyncSessionFactory, shutdown_event)
+        await _sweep(AsyncSessionFactory, shutdown_event, _telegram(bot))
     finally:
         for helper in helpers:
             helper.cancel()
@@ -32,10 +32,23 @@ def _bancho(factory, osu, hub):
     gateway = Gateway(BANCHO_USERNAME, BANCHO_IRC_PASSWORD, lambda: TcpTransport(BANCHO_HOST, BANCHO_PORT))
     coordinator = Coordinator(factory, gateway, osu, room_limit=DUEL_CREATED_ROOM_LIMIT)
     coordinator.present = hub.present
+    coordinator.witness = hub.witnessed
     coordinator.install()
     return gateway
 
-async def _sweep(factory, shutdown_event: asyncio.Event) -> None:
+def _telegram(bot):
+    if bot is None:
+        return None
+
+    async def send(chat_id: int, text: str) -> None:
+        await bot.send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True)
+
+    return send
+
+async def _sweep(factory, shutdown_event: asyncio.Event, send=None) -> None:
+    from services.duels import notify
+    from utils.language import get_language
+
     while not shutdown_event.is_set():
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=EVERY)
@@ -45,5 +58,7 @@ async def _sweep(factory, shutdown_event: asyncio.Event) -> None:
         try:
             await deadlines.sweep(factory)
             await outbox.sweep(factory)
+            if send is not None:
+                await notify.deliver(factory, send, get_language)
         except Exception as exc:
             logger.error("the duel worker stumbled: %s", exc, exc_info=True)

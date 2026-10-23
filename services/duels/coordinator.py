@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 
-from db.models.duel import Duel, DuelAttempt, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
+from db.models.duel import Duel, DuelAttempt, DuelBonus, DuelCommand, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
 from services.duels import catalog, generator, outbox, rooms, series, states, verifier
@@ -68,6 +68,7 @@ class Coordinator:
         self.controls: dict[int, RoomControl] = {}
         self.seated: dict[int, set[int]] = {}
         self.present: Callable[[int], bool] = lambda player_id: True
+        self.witness: Callable[[str], dict[int, dict[str, Any]]] = lambda duel_id: {}
 
     def install(self) -> None:
         outbox.HANDLERS.update({
@@ -78,6 +79,9 @@ class Coordinator:
             "abort_round": self.abort_round,
             "verify_round": self.verify_round,
             "close_room": self.close_room,
+            "bonus_round": self.bonus_round,
+            "adopt_room": self.adopt_room,
+            "verify_bonus": self.verify_bonus,
         })
         self.gateway.listen(self.heard)
         self.gateway.listen(rooms.late_creations(self.factory, self.gateway))
@@ -113,6 +117,10 @@ class Coordinator:
 
     async def open_room(self, command: dict[str, Any]) -> None:
         duel_id = command["payload"]["duel"]
+        async with self.factory() as session:
+            duel = await session.get(Duel, duel_id)
+        if duel is None or duel.state != states.WAITING_ROOM:
+            return
         people = await self._people(duel_id)
         names = [player.osu_username for _, player in people]
         held = await self._room(duel_id)
@@ -159,6 +167,10 @@ class Coordinator:
             await series.round_started(self.factory, duel.id, match_id)
         elif event.kind == "finished_all" and duel.state == states.PLAYING:
             await series.round_finished(self.factory, duel.id)
+        elif event.kind == "finished_all" and duel.state == states.COMPLETED:
+            await self._bonus_step(duel.id, "setup", "verifying", "verify_bonus")
+        elif event.kind == "left" and duel.state == states.COMPLETED:
+            await self._bonus_step(duel.id, "setup", "cancelled", "close_room")
         elif event.kind == "aborted" and duel.state == states.ABORTING:
             await series.aborted(self.factory, duel.id)
         elif event.kind == "closed":
@@ -242,8 +254,118 @@ class Coordinator:
             async with session.begin():
                 if not await verifier.bind(session, attempt.id, int(game["id"])):
                     raise NotYet("game_taken")
+        await self._compare_witness(duel_id, int(entry.beatmap_id), people, verdict)
         await series.round_verdict(self.factory, duel_id, {
             "state": verdict.state, "winner": verdict.winner, "scores": {str(k): v for k, v in verdict.scores.items()},
             "mods": {str(k): v for k, v in verdict.mods.items()}, "reasons": verdict.reasons, "game_id": int(game["id"]),
             "evidence": kept.get(int(game["id"])),
         })
+
+    async def _bonus_step(self, duel_id: str, source: str, target: str, then: Optional[str]) -> bool:
+        async with self.factory() as session:
+            async with session.begin():
+                extra = await session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel_id).with_for_update())
+                if extra is None or extra.state != source:
+                    return False
+                extra.state = target
+                if target in ("cancelled", "completed"):
+                    extra.finished_at = self.now()
+                if then is not None:
+                    session.add(DuelCommand(duel_id=duel_id, kind=then, payload={"duel": duel_id}, next_attempt_at=self.now(),
+                                            created_at=self.now()))
+                return True
+
+    async def bonus_round(self, command: dict[str, Any]) -> None:
+        duel_id = command["payload"]["duel"]
+        room = await self._room(duel_id)
+        if room is None:
+            raise NotYet("no_room")
+        async with self.factory() as session:
+            entry = await session.scalar(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
+                                         .where(DuelPool.duel_id == duel_id, DuelPoolEntry.slot == "TB"))
+        control = self._control(room.match_id)
+        if not await control.prepare(int(entry.beatmap_id), ["NF"], True):
+            raise NotYet("room_did_not_answer")
+        async with self.factory() as session:
+            async with session.begin():
+                extra = await session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel_id).with_for_update())
+                extra.commanded_at = self.now()
+        await control.start(10)
+
+    async def verify_bonus(self, command: dict[str, Any]) -> None:
+        duel_id = command["payload"]["duel"]
+        room = await self._room(duel_id)
+        async with self.factory() as session:
+            extra = await session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel_id))
+            entry = await session.scalar(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
+                                         .where(DuelPool.duel_id == duel_id, DuelPoolEntry.slot == "TB"))
+        if extra is None or extra.state != "verifying" or room is None:
+            return
+        people = await self._people(duel_id)
+        events, _ = await verifier.history(self.osu, int(room.match_id), None, self.budget)
+        games = [game for game in verifier.games(events).values() if game.get("beatmap_id") == int(entry.beatmap_id)]
+        if not games:
+            raise NotYet("no_game_yet")
+        game = max(games, key=lambda found: int(found["id"]))
+        expected = verifier.Expected(int(entry.beatmap_id), frozenset(int(p.osu_user_id) for p, _ in people), frozenset({"NF"}), True,
+                                     (extra.commanded_at or self.now()) - timedelta(seconds=CLOCK_SLACK))
+        verdict = verifier.judge(game, expected)
+        if verdict.state == "pending":
+            raise NotYet("game_unfinished")
+        winner = next((p.player_id for p, _ in people if int(p.osu_user_id) == verdict.winner), None)
+        async with self.factory() as session:
+            async with session.begin():
+                row = await session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel_id).with_for_update())
+                row.state = "completed" if verdict.state in ("valid", "tie") else "cancelled"
+                row.game_id = int(game["id"])
+                row.scores = {str(k): v for k, v in verdict.scores.items()}
+                row.winner_id = winner
+                row.finished_at = self.now()
+                session.add(DuelCommand(duel_id=duel_id, kind="close_room", payload={"duel": duel_id}, next_attempt_at=self.now(),
+                                        created_at=self.now()))
+
+    async def adopt_room(self, command: dict[str, Any]) -> None:
+        duel_id = command["payload"]["duel"]
+        async with self.factory() as session:
+            room = await session.get(DuelRoom, command["payload"]["room"])
+            duel = await session.get(Duel, duel_id)
+        if room is None or duel is None or duel.state != states.WAITING_ROOM:
+            return
+        control = self._control(int(room.match_id))
+        trusted = await control.can_referee()
+        async with self.factory() as session:
+            async with session.begin():
+                row = await session.get(DuelRoom, room.id)
+                row.status = "open" if trusted else "released"
+                row.capabilities = {**(row.capabilities or {}), "referee": trusted}
+        if not trusted:
+            await series.note(self.factory, duel_id, "external_room_refused", {"match": int(room.match_id)})
+            return
+        names = [player.osu_username for _, player in await self._people(duel_id)]
+        password = secrets.token_urlsafe(6)
+        async with self.factory() as session:
+            async with session.begin():
+                row = await session.get(DuelRoom, room.id)
+                row.capabilities = {**(row.capabilities or {}), "password": password}
+        await control.setup(password, names)
+        await series.room_ready(self.factory, duel_id)
+
+    async def _compare_witness(self, duel_id: str, beatmap_id: int, people, verdict) -> None:
+        seen = self.witness(duel_id)
+        for participant, _ in people:
+            state = seen.get(participant.player_id)
+            if not state:
+                continue
+            official = verdict.scores.get(int(participant.osu_user_id))
+            reasons = []
+            if state.get("beatmap_id") is not None and int(state["beatmap_id"]) != beatmap_id:
+                reasons.append("beatmap")
+            if official is not None and state.get("score") is not None:
+                said = float(state["score"])
+                if abs(said - official) > max(1.0, 0.02 * max(official, said)):
+                    reasons.append("score")
+            if reasons:
+                await series.note(self.factory, duel_id, "witness_mismatch", {
+                    "player": participant.player_id, "reasons": reasons, "witness": {"beatmap_id": state.get("beatmap_id"),
+                                                                                   "score": state.get("score")},
+                    "official": {"beatmap_id": beatmap_id, "score": official}})

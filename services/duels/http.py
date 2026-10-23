@@ -3,7 +3,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from aiohttp import web
 
-from services.duels import live, series, service, states
+from services.duels import live, notify, series, service, states
 from services.duels.errors import DuelError
 
 STATUS = {
@@ -19,6 +19,7 @@ STATUS = {
     "MAP_REVISION_CHANGED": 409,
     "OPERATION_REUSED": 422,
     "SELF_CHALLENGE": 422,
+    "ROOM_CONTROL_REQUIRED": 409,
 }
 
 def _answer(body: Any, status: int = 200) -> web.Response:
@@ -113,6 +114,30 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
             raise web.HTTPBadRequest(text="tb_mods must be a list")
         return await series.ready(factory_of(), duel_id, player, operation, tb_mods=mods, expected_version=version)
 
+    async def bonus(duel_id, player, said, operation, version):
+        accept = said.get("accept")
+        mods = said.get("tb_mods")
+        if not isinstance(accept, bool):
+            raise web.HTTPBadRequest(text="accept must be true or false")
+        if mods is not None and (not isinstance(mods, list) or not all(isinstance(mod, str) for mod in mods)):
+            raise web.HTTPBadRequest(text="tb_mods must be a list")
+        return await series.bonus(factory_of(), duel_id, player, accept, operation, tb_mods=mods)
+
+    async def external(duel_id, player, said, operation, version):
+        link = said.get("match")
+        if not isinstance(link, str):
+            raise web.HTTPBadRequest(text="match is required")
+        return await series.external_room(factory_of(), duel_id, player, link, operation)
+
+    async def unread(request, player, said):
+        return {"notifications": await notify.unread(factory_of(), player)}
+
+    async def seen(request, player, said):
+        ids = said.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(i, int) and not isinstance(i, bool) for i in ids) or len(ids) > 200:
+            raise web.HTTPBadRequest(text="ids must be a list of numbers")
+        return {"seen": await notify.seen(factory_of(), player, ids)}
+
     async def enter(request, player, said):
         return await service.enter_queue(factory_of(), player, _operation(request, said))
 
@@ -144,6 +169,8 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
         live.socket_route(guard, who, factory_of),
         web.post("/render/duels/invitations", handler(invite, 201)),
         web.get("/render/duels", handler(mine)),
+        web.get("/render/duels/notifications", handler(unread)),
+        web.post("/render/duels/notifications/seen", handler(seen)),
         web.post("/render/duels/queue", handler(enter)),
         web.delete("/render/duels/queue", handler(leave)),
         web.get("/render/duels/{duel_id}", handler(one)),
@@ -154,4 +181,6 @@ def routes(guard, who, factory_of: Callable[[], Any]) -> list[web.RouteDef]:
         web.post("/render/duels/{duel_id}/pool-ack", handler(on_duel(pool_ack))),
         web.post("/render/duels/{duel_id}/draft-actions", handler(on_duel(draft))),
         web.post("/render/duels/{duel_id}/ready", handler(on_duel(ready))),
+        web.post("/render/duels/{duel_id}/bonus-tb", handler(on_duel(bonus))),
+        web.post("/render/duels/{duel_id}/external-room", handler(on_duel(external))),
     ]

@@ -1,10 +1,11 @@
 import hashlib
+import re
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import func, select
 
-from db.models.duel import (Duel, DuelAttempt, DuelDraftAction, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
+from db.models.duel import (Duel, DuelAttempt, DuelBonus, DuelDraftAction, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
                             DuelRoom, DuelRound, DuelRoundScore)
 from services.duels import states
 from services.duels.errors import DuelError
@@ -82,6 +83,9 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
     found["room"] = None if room is None or not mine else {
         "name": room.room_name, "match_id": room.match_id, "password": (room.capabilities or {}).get("password")}
     turns = await _turns(session, duel.id)
+    extra = await session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel.id))
+    found["bonus"] = None if extra is None else {"state": extra.state, "consents": extra.consents, "winner": extra.winner_id,
+                                                  "scores": extra.scores}
     found["draft"] = [{"turn": t.turn_index, "type": t.type, "slot": t.slot, "by": t.actor_id, "automatic": t.automatic} for t in turns]
     found["rounds"] = [{"ordinal": r.ordinal, "slot": r.slot, "state": r.state, "winner": r.winner_id, "ties": r.tie_count,
                         "picked_by": r.selected_by} for r in await _rounds(session, duel.id)]
@@ -98,6 +102,8 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
             actions.append("pool_ack")
     if duel.state == states.WAITING_READY and me is not None:
         actions.append("ready")
+    if extra is not None and extra.state == "offered" and viewer_id is not None and viewer_id not in extra.consents and me:
+        actions.append("bonus")
     if duel.state not in states.TERMINAL and duel.state not in states.UNCOMMITTED and duel.state not in states.BEFORE_PLAY and me:
         actions.append("surrender")
     found["actions"] = actions
@@ -105,11 +111,18 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
 
 async def _finish(step: Step, duel: Duel, people: list[DuelParticipant], winner: Optional[DuelParticipant], reason: str) -> None:
     duel.winner_id = winner.player_id if winner is not None else None
+    rounds = await _rounds(step.session, duel.id)
+    offer = reason == "played" and all(r.slot != "TB" for r in rounds)
+    step.keep_room = offer
     if duel.state != states.FINALIZING:
         await step.move(duel, states.FINALIZING, reason)
     event = await step.move(duel, states.COMPLETED, reason)
     step.notify(event, [person.player_id for person in people], {"kind": "finished", "duel": duel.id, "winner": duel.winner_id,
                                                                "reason": reason})
+    if offer:
+        step.session.add(DuelBonus(duel_id=duel.id, state="offered", consents=[], created_at=step.now))
+        await step.emit(duel, "bonus_offered", {"seconds": PARAMETERS["bonus_tb_seconds"]})
+        step.deadline(duel, "bonus", PARAMETERS["bonus_tb_seconds"])
 
 async def _technical(step: Step, duel: Duel, people: list[DuelParticipant], loser: Optional[DuelParticipant], reason: str) -> None:
     if loser is not None and await _started(step.session, duel.id):
@@ -238,6 +251,30 @@ async def ready(factory, duel_id: str, actor_id: int, operation_id: str, tb_mods
             await step.move(duel, states.STARTING)
             step.command(duel, "start_round", {"duel": duel.id, "round": current.id})
     return await _act(factory, duel_id, actor_id, operation_id, "ready", expected_version, body, now)
+
+async def bonus(factory, duel_id: str, actor_id: int, accept: bool, operation_id: str, tb_mods: Optional[list[str]] = None,
+                now: Optional[datetime] = None) -> dict[str, Any]:
+    async def body(step, duel, me, people):
+        offered = await step.session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel.id).with_for_update())
+        if duel.state != states.COMPLETED or offered is None or offered.state != "offered":
+            raise DuelError("INVALID_STATE", await view(step.session, duel, actor_id))
+        if not accept:
+            offered.state = "cancelled"
+            offered.finished_at = step.now
+            await step.emit(duel, "bonus_declined", {"by": actor_id})
+            step.command(duel, "close_room", {"duel": duel.id})
+            return
+        chosen = sorted(set(tb_mods or []) | {"NF"})
+        if set(chosen) not in ({"NF"}, {"NF", "HD"}, {"NF", "HR"}, {"NF", "HD", "HR"}):
+            raise DuelError("INVALID_STATE", await view(step.session, duel, actor_id))
+        consents = sorted(set(offered.consents) | {actor_id})
+        offered.consents = consents
+        offered.tb_mods = {**(offered.tb_mods or {}), str(actor_id): chosen}
+        await step.emit(duel, "bonus_accepted", {"by": actor_id})
+        if len(consents) == len(people):
+            offered.state = "setup"
+            step.command(duel, "bonus_round", {"duel": duel.id})
+    return await _act(factory, duel_id, actor_id, operation_id, "bonus", None, body, now)
 
 async def give_up(factory, duel_id: str, actor_id: int, operation_id: str, expected_version: Optional[int] = None,
                   now: Optional[datetime] = None) -> dict[str, Any]:
@@ -480,5 +517,49 @@ async def on_deadline(step: Step, duel: Duel, kind: str) -> None:
         step.command(duel, "close_room", {"duel": duel.id})
     elif kind == "evidence" and duel.state == states.VERIFYING:
         await _technical(step, duel, people, None, "evidence_missing")
+    elif kind == "bonus" and duel.state == states.COMPLETED:
+        offered = await step.session.scalar(select(DuelBonus).where(DuelBonus.duel_id == duel.id).with_for_update())
+        if offered is not None and offered.state == "offered":
+            offered.state = "cancelled"
+            offered.finished_at = step.now
+            await step.emit(duel, "bonus_expired", {})
+            step.command(duel, "close_room", {"duel": duel.id})
     elif kind == "range_offer" and duel.state == states.RANGE_OFFERED:
         await _technical(step, duel, people, None, "range_declined")
+
+MATCH_LINK = re.compile(r"^(?:https?://osu\.ppy\.sh/(?:community/matches|mp)/)?(\d{1,12})/?$")
+
+def match_of(said: str) -> Optional[int]:
+    found = MATCH_LINK.match(said.strip()) if isinstance(said, str) else None
+    return int(found.group(1)) if found else None
+
+async def external_room(factory, duel_id: str, actor_id: int, link: str, operation_id: str,
+                        now: Optional[datetime] = None) -> dict[str, Any]:
+    async def body(step, duel, me, people):
+        match_id = match_of(link)
+        if match_id is None:
+            raise DuelError("ROOM_CONTROL_REQUIRED", await view(step.session, duel, actor_id))
+        if duel.state != states.WAITING_ROOM:
+            raise DuelError("INVALID_STATE", await view(step.session, duel, actor_id))
+        held = await step.session.scalar(select(DuelRoom).where(DuelRoom.match_id == match_id,
+                                                                DuelRoom.status.notin_(["closed", "released"])))
+        if held is not None and held.duel_id != duel.id:
+            raise DuelError("ROOM_CONTROL_REQUIRED", await view(step.session, duel, actor_id))
+        if held is None:
+            held = DuelRoom(duel_id=duel.id, room_name=f"external {match_id}", match_id=match_id, channel=f"#mp_{match_id}",
+                            origin="external", status="proposed", capabilities={"confirmed": []}, created_at=step.now)
+            step.session.add(held)
+            await step.session.flush()
+        confirmed = sorted(set((held.capabilities or {}).get("confirmed", [])) | {actor_id})
+        held.capabilities = {**(held.capabilities or {}), "confirmed": confirmed}
+        await step.emit(duel, "external_room", {"match": match_id, "by": actor_id})
+        if len(confirmed) == len(people) and held.status == "proposed":
+            held.status = "checking"
+            step.command(duel, "adopt_room", {"duel": duel.id, "room": held.id})
+    return await _act(factory, duel_id, actor_id, operation_id, "external_room", None, body, now)
+
+async def note(factory, duel_id: str, kind: str, payload: dict[str, Any], now: Optional[datetime] = None) -> None:
+    async def body(step, duel, people):
+        await step.emit(duel, kind, payload)
+    every = tuple(states.TRANSITIONS)
+    await _system(factory, duel_id, every, body, now)

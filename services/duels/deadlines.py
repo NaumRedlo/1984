@@ -26,7 +26,7 @@ async def _series(step: Step, duel: Duel, deadline: DuelDeadline) -> None:
 HANDLERS: dict[str, Handler] = {
     "invitation": _expire_invitation,
     **{kind: _series for kind in ("draft", "preparation", "pool_ack", "ready", "reconnect", "absence", "room_join", "evidence",
-                                  "range_offer")},
+                                  "range_offer", "bonus")},
 }
 
 async def due(factory, now: Optional[datetime] = None, limit: int = 50) -> list[int]:
