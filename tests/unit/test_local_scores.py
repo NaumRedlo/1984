@@ -97,6 +97,11 @@ async def test_the_app_tells_its_local_scores_and_the_chat_has_them_once(served,
     async with factory() as s:
         await map_checks.check(s, _Osu({MD5: {"id": 555, "status": "ranked", "beatmapset": {}}}), now=NOW)
     async with factory() as s:
+        assert (await load_history(s, pid)).local_scores == [], "a checked map does not make the score itself true"
+        for row in (await s.scalars(select(LocalScore).where(LocalScore.player_id == pid))).all():
+            row.verified = True
+        await s.commit()
+    async with factory() as s:
         history = await load_history(s, pid)
     assert len(history.local_scores) == 5 and history.local_scores[0].table == "local"
 
@@ -108,7 +113,7 @@ async def titles_db(tmp_path):
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
 
-async def _titles(factory, rows, zone=None, checked="ok"):
+async def _titles(factory, rows, zone=None, checked="ok", verified=True):
     async with factory() as s:
         user = User(chat_id=-100, telegram_id=1, osu_username="alice", osu_user_id=1001, play_count=0)
         s.add(user)
@@ -118,7 +123,7 @@ async def _titles(factory, rows, zone=None, checked="ok"):
         if zone:
             (await s.get(Player, pid)).time_zone = zone
         for at, row in enumerate(rows):
-            s.add(LocalScore(player_id=pid, created_at=NOW, checked=checked, **{**local_scores.read(row, NOW + timedelta(days=400)), "score": row.get("score", 1000 + at)}))
+            s.add(LocalScore(player_id=pid, created_at=NOW, checked=checked, verified=verified, **{**local_scores.read(row, NOW + timedelta(days=400)), "score": row.get("score", 1000 + at)}))
         await s.commit()
     async with factory() as s:
         user = await s.get(User, uid)
@@ -215,3 +220,13 @@ async def test_the_map_of_every_local_score_is_checked_with_osu_once(factory):
     async with factory() as s:
         await map_checks.check(s, osu, now=NOW + map_checks.GONE_AGAIN + timedelta(hours=1))
     assert missing in osu.asked, "a map osu! did not know is asked about again a week later"
+
+
+@pytest.mark.parametrize("verified", [None, False])
+async def test_a_local_score_nobody_proved_earns_no_title_even_on_a_ranked_map(titles_db, verified):
+    forged = [_row(combo=1397, score=777777, n300=1101, n100=0, n50=0, miss=0, perfect=True),
+              _row(combo=2727, score=777777, mods=128, played=_unix(NOW) - 86400 * 2)]
+    progress = await _titles(titles_db, forged, verified=verified)
+    for code in ("magic7", "wysi", "combo_2000", "masks_5"):
+        assert not progress[code]["unlocked"], code
+        assert progress[code]["current"] == 0, code

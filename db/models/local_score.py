@@ -36,6 +36,7 @@ class LocalScore(Base):
     ranked_date = Column(DateTime, nullable=True)
     checked = Column(String(8), nullable=True)
     checked_at = Column(DateTime, nullable=True)
+    verified = Column(Boolean, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (
