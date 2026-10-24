@@ -20,6 +20,10 @@ MIRRORS = (
     ("nekoha.moe", "https://mirror.nekoha.moe/api4/download/{set_id}"),
     ("sayobot.cn", "https://dl.sayobot.cn/beatmaps/download/novideo/{set_id}"),
 )
+LOOKUPS = (
+    ("osu.direct", "https://osu.direct/api/v2/b/{beatmap_id}"),
+    ("catboy.best", "https://catboy.best/api/v2/b/{beatmap_id}"),
+)
 SEARCHES = (
     ("osu.direct", "https://osu.direct/api/v2/search?q=&status={status}&mode=0&amount={amount}&offset={offset}"),
     ("catboy.best", "https://catboy.best/api/v2/search?query=&status={status}&mode=0&limit={amount}&offset={offset}"),
@@ -67,8 +71,32 @@ def pick(archive: bytes, beatmap_id: Optional[int], checksum: Optional[str]) -> 
                     break
     return None
 
+async def lookup(fetch: Fetch, beatmap_id: int, clock: Callable[[], float] = time.monotonic) -> Optional[tuple[int, Optional[str]]]:
+    for name, address in LOOKUPS:
+        if not _awake(name, clock):
+            continue
+        try:
+            raw = await fetch(address.format(beatmap_id=beatmap_id))
+            body = json.loads(raw) if raw else None
+        except ValueError:
+            continue
+        except Exception:
+            _tired(name, clock)
+            continue
+        if not isinstance(body, dict) or body.get("id") != beatmap_id:
+            continue
+        set_id = body.get("beatmapset_id")
+        checksum = body.get("checksum")
+        return (int(set_id) if isinstance(set_id, int) else 0, checksum if isinstance(checksum, str) and checksum else None)
+    return None
+
 async def fetch_osu(fetch: Fetch, set_id: int, beatmap_id: Optional[int], checksum: Optional[str],
                     clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, bytes]]:
+    if beatmap_id is not None and (not checksum or not set_id):
+        found = await lookup(fetch, beatmap_id, clock)
+        if found is not None:
+            set_id = set_id or found[0]
+            checksum = checksum or found[1]
     if beatmap_id is not None:
         for name, address in FILES:
             if not _awake(name, clock):

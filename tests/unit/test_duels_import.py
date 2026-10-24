@@ -110,6 +110,32 @@ async def test_a_failing_mirror_rests_and_the_next_one_answers():
     await mirrors.fetch_osu(fetch, 70, 7, None, clock=lambda: mirrors.REST + 1)
     assert any("osu.direct" in address for address in asked)
 
+async def test_an_old_map_without_its_id_is_checked_by_the_mirror_checksum():
+    old = b"osu file format v8\n\n[General]\nAudioFilename: a.mp3\n"
+    other = b"osu file format v8\n\n[General]\nAudioFilename: b.mp3\n"
+    asked = []
+
+    async def fetch(address):
+        asked.append(address)
+        if "api/v2/b/58970" in address:
+            return json.dumps({"id": 58970, "beatmapset_id": 16457, "checksum": hashlib.md5(old).hexdigest()}).encode()
+        if "osu.direct/api/osu/58970" in address:
+            return other
+        if "catboy.best/osu/58970" in address:
+            return old
+        return None
+
+    assert await mirrors.fetch_osu(fetch, 0, 58970, None, clock=lambda: mirrors.REST * 10) == ("catboy.best", old)
+
+    async def gone(address):
+        if "api/v2/b/" in address:
+            return json.dumps({"id": 4384670, "beatmapset_id": 2091789, "checksum": "f" * 32}).encode()
+        if "/d/2091789" in address:
+            return _archive({"a.osu": _map(4478118)})
+        return None
+
+    assert await mirrors.fetch_osu(gone, 0, 4384670, None, clock=lambda: mirrors.REST * 10) is None
+
 async def test_discovery_files_ranked_maps_with_stars_for_every_slot_mod(factory, tmp_path):
     good, short = _map(1), _map(2)
     sets = [_set(10, [(1, 5.5, "osu", 150, good), (2, 5.6, "osu", 30, short)])]
