@@ -27,9 +27,6 @@ def suitable(entry: dict[str, Any]) -> bool:
 
 WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
 YEARS = (2021, 2022, 2023, 2024, 2025)
-TRAIN_YEARS = (2021, 2022, 2023)
-TUNE_YEAR = 2024
-TEST_YEAR = 2025
 GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
 
 async def known(factory, entry: dict[str, Any]) -> bool:
@@ -298,7 +295,7 @@ async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, b
                           example.corpus_version == corpus.OWN_VERSION, verified))
     return found
 
-def _evaluate(model: SlotModel, rows) -> dict[str, Any]:
+def guesses(model: SlotModel, rows) -> tuple[list[str], list[str], list[bool]]:
     truth, guessed, confident = [], [], []
     for row, label, *_ in rows:
         normalised = model.normaliser.apply(row)
@@ -311,35 +308,22 @@ def _evaluate(model: SlotModel, rows) -> dict[str, Any]:
         guessed.append(best)
         if best != OTHER and catalog.confidence_level(probabilities[ranked[0]], margin) == "confident":
             confident.append(best == label)
+    return truth, guessed, confident
+
+def judged(truth: list[str], guessed: list[str], confident: list[bool]) -> dict[str, Any]:
     found = scored(truth, guessed)
     found["confident"] = {"count": len(confident), "precision": sum(confident) / len(confident) if confident else 0.0}
     return found
-
-async def train_corpus(factory, steps: int = 400, now: Optional[datetime] = None) -> Optional[tuple[str, dict[str, Any]]]:
-    from services.duels import balance
-
-    now = now or utcnow()
-    rows = await corpus_rows(factory)
-    train = [row for row in rows if row[4] or row[3] in TRAIN_YEARS]
-    sets = {row[2] for row in train}
-    tune = [row for row in rows if not row[4] and row[3] == TUNE_YEAR and row[2] not in sets]
-    test = [row for row in rows if not row[4] and row[3] == TEST_YEAR and row[2] not in sets]
-    if len({row[1] for row in train}) < 2:
-        return None
-    model = await asyncio.to_thread(SlotModel.fit, [row[0] for row in train], [row[1] for row in train], 0.01, steps)
-    found = {"corpus": corpus.CORPUS_VERSION, "train": len(train), "own": sum(1 for row in train if row[4]),
-             "verified": sum(1 for row in rows if row[5]), "tune": _evaluate(model, tune), "test": _evaluate(model, test)}
-    version = f"owc-{now.strftime('%Y%m%d%H%M')}-{len(rows)}"
-    await balance.train(factory, version, model.dump(), found, len(rows), now)
-    return version, found
 
 async def reassess(factory, model: SlotModel, now: Optional[datetime] = None) -> dict[str, int]:
     now = now or utcnow()
     counted: dict[str, int] = {}
     async with factory() as session:
-        waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
+        waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state.in_([catalog.UNASSIGNED, catalog.AUTO_ASSIGNED]),
                                                                          DuelMapAssignment.admitted.is_(True)))).all()
         for assignment in waiting:
+            if assignment.state == catalog.AUTO_ASSIGNED and catalog.confidence_level(assignment.confidence, assignment.margin) == "confident":
+                continue
             plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == assignment.revision_hash,
                                                                       DuelMapAnalysis.mods == "NF",
                                                                       DuelMapAnalysis.feature_version == FEATURE_VERSION))
@@ -354,7 +338,7 @@ async def reassess(factory, model: SlotModel, now: Optional[datetime] = None) ->
             if prediction.slot is not None:
                 try:
                     proposed = await catalog.propose(session, int(assignment.beatmap_id), prediction.slot, prediction.probability,
-                                                     prediction.margin, model.version, now)
+                                                     prediction.margin, model.version, now, unsure_again=True)
                     outcome = f"proposed {proposed['slot']}" if proposed["slot"] else "below_threshold"
                 except catalog.CatalogRefusal as refusal:
                     outcome = refusal.code.lower()

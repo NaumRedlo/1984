@@ -54,6 +54,16 @@ async def test_an_assigned_slot_never_moves_by_model_or_by_reviewer(session):
     assert approved["state"] == "HUMAN_APPROVED"
     assert await _refused(catalog.propose(session, 1, "NM1", 0.9, 0.3, "m3", NOW)) == "DECIDED_BY_HUMAN"
 
+async def test_a_newly_published_model_may_move_only_an_unsure_slot(session):
+    await catalog.propose(session, 1, "NM1", 0.65, 0.12, "kamerton-1", NOW)
+    await catalog.propose(session, 2, "NM1", 0.9, 0.3, "kamerton-1", NOW)
+    moved = await catalog.propose(session, 1, "NM3", 0.9, 0.3, "kamerton-2", NOW, unsure_again=True)
+    assert (moved["slot"], moved["state"], moved["version"]) == ("NM3", "AUTO_ASSIGNED", "kamerton-2")
+    assert await _refused(catalog.propose(session, 2, "NM3", 0.9, 0.3, "kamerton-2", NOW, unsure_again=True)) == "SLOT_FIXED"
+    await catalog.propose(session, 3, "NM2", 0.65, 0.12, "kamerton-1", NOW)
+    await catalog.review(session, 3, "APPROVE", 1, "streams", now=NOW)
+    assert await _refused(catalog.propose(session, 3, "NM4", 0.9, 0.3, "kamerton-2", NOW, unsure_again=True)) == "DECIDED_BY_HUMAN"
+
 async def test_a_rejected_map_stays_out_and_every_decision_is_logged(session):
     await catalog.propose(session, 1, "HD2", 0.9, 0.3, "m1", NOW)
     await catalog.review(session, 1, "REJECT", 1, "reading is trivial", now=NOW)

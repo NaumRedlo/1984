@@ -245,11 +245,35 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         await balance.grant(factory_of(), player, said["player_id"], said["role"], said["reason"], owners)
         return {"granted": said["role"]}
 
+    def reassess_published():
+        from services.duels import balance, importer
+        from services.duels.slot_model import SlotModel
+
+        async def run():
+            published = await balance.published(factory_of())
+            if published is not None:
+                await importer.reassess(factory_of(), SlotModel.load(published.body))
+
+        running = discovering.get("reassess")
+        if running is None or running.done():
+            discovering["reassess"] = asyncio.create_task(run())
+
     async def publish_model(request, player, said, owners):
         from services.duels import balance
 
         await balance.publish(factory_of(), player, request.match_info["version"], said["reason"], owners)
+        reassess_published()
         return {"published": request.match_info["version"]}
+
+    async def train_model(request, player, said, owners):
+        from services.duels import balance, training
+
+        await balance.note_training(factory_of(), player, said["reason"], owners)
+        running = discovering.get("training")
+        if running is not None and not running.done():
+            return {"started": False}
+        discovering["training"] = asyncio.create_task(training.train(factory_of()))
+        return {"started": True}
 
     async def desk_queue(request, player, said, owners):
         from services.duels import balance, desk
@@ -348,7 +372,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
     async def rollback_model(request, player, said, owners):
         from services.duels import balance
 
-        return {"published": await balance.rollback(factory_of(), player, said["reason"], owners)}
+        version = await balance.rollback(factory_of(), player, said["reason"], owners)
+        reassess_published()
+        return {"published": version}
 
     async def running(request, player, said):
         from services.duels import desk
@@ -421,6 +447,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.post("/render/admin/duels/corpus/tournaments", handler(admin(corpus_tournament))),
         web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
         web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
+        web.post("/render/admin/duels/models/train", handler(admin(train_model))),
         web.post("/render/admin/duels/catalog/discover", handler(admin(catalog_discover))),
         web.post("/render/admin/duels/{duel_id}/cancel", handler(admin(operator_cancel))),
         web.post("/render/admin/duels/{duel_id}/finalize", handler(admin(finalize))),

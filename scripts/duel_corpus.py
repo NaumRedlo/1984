@@ -11,7 +11,7 @@ import aiohttp
 import db.models
 from config.settings import ADMIN_IDS, DUEL_OSU_FOLDER
 from db.database import AsyncSessionFactory
-from services.duels import balance, importer, mirrors
+from services.duels import balance, importer, mirrors, training
 from services.duels.slot_model import SlotModel
 
 def _brief(found: dict) -> str:
@@ -27,14 +27,16 @@ async def load() -> None:
         print(await importer.load_missing(AsyncSessionFactory, fetch, DUEL_OSU_FOLDER))
 
 async def train() -> None:
-    made = await importer.train_corpus(AsyncSessionFactory)
+    made = await training.train(AsyncSessionFactory)
     if made is None:
         print("not enough labelled maps; run load first")
         return
     version, found = made
-    print("shadow model", version, "trained on", found["train"], "maps,", found["own"], "of them yours,", found["verified"], "labels checked by people")
-    print("2024 check:", _brief(found["tune"]))
-    print("2025 test: ", _brief(found["test"]))
+    print(version, "trained on", found["maps"], "maps:", found["corpus"], "from tournaments,", found["own"], "of them yours,",
+          found["queue"], "queue decisions,", found["verified"], "tournament labels checked by people")
+    for year, scored in found["years"].items():
+        print(year, "held out:", _brief(scored))
+    print("all years:", _brief(found["test"]))
 
 async def publish(version: str, actor: int, reason: str) -> None:
     await balance.publish(AsyncSessionFactory, actor, version, reason, tuple(ADMIN_IDS))
@@ -51,7 +53,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Teach the duel slot model on OWC 2021-2025 pools")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("load", help="read OWC pools from the osu! wiki sources and fetch their .osu files from mirrors")
-    commands.add_parser("train", help="train a shadow model on 2021-2023 and score it on 2024 and 2025")
+    commands.add_parser("train", help="train the next Kamerton on every labelled map and score it by holding out one year at a time")
     chosen = commands.add_parser("publish", help="make a shadow model the one that assigns slots")
     chosen.add_argument("version")
     chosen.add_argument("--actor", type=int, required=True, help="your player id in the bot database")

@@ -45,7 +45,7 @@ async def _row(session, beatmap_id: int) -> Optional[DuelMapAssignment]:
     return await session.scalar(select(DuelMapAssignment).where(DuelMapAssignment.beatmap_id == beatmap_id).with_for_update())
 
 async def propose(session, beatmap_id: int, slot: str, probability: float, margin: float, version: str,
-                  now: Optional[datetime] = None) -> dict[str, Any]:
+                  now: Optional[datetime] = None, unsure_again: bool = False) -> dict[str, Any]:
     now = now or utcnow()
     if slot not in SLOTS:
         raise CatalogRefusal("UNKNOWN_SLOT")
@@ -53,6 +53,8 @@ async def propose(session, beatmap_id: int, slot: str, probability: float, margi
     before = _view(row)
     if row is not None and row.state in (HUMAN_APPROVED, REJECTED, QUARANTINED):
         raise CatalogRefusal("DECIDED_BY_HUMAN" if row.state != QUARANTINED else "QUARANTINED")
+    if unsure_again and row is not None and row.state == AUTO_ASSIGNED and confidence_level(row.confidence, row.margin) != "confident":
+        row.slot = None
     if row is not None and row.slot is not None and row.slot != slot:
         raise CatalogRefusal("SLOT_FIXED")
     level = confidence_level(probability, margin)

@@ -166,7 +166,7 @@ async def test_a_shadow_model_is_trained_only_with_enough_new_labels_and_publish
     assert made is not None and await training.maybe_train(factory, clock.now + timedelta(hours=1), steps=60) is None
     async with factory() as session:
         shadow = await session.get(DuelModelVersion, made)
-        assert shadow.state == "shadow" and shadow.report["test"] > 0 and shadow.labels == 60
+        assert made == "kamerton-1" and shadow.state == "shadow" and shadow.report["test"]["count"] > 0 and list(shadow.report["years"]) == ["queue"] and shadow.labels == 60
         (await session.get(Player, 1)).telegram_id = 555
         await session.commit()
     assert await balance.published(factory) is None

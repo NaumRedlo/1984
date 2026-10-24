@@ -12,7 +12,7 @@ from sqlalchemy.pool import NullPool
 import db.models
 from db.database import Base
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
-from services.duels import importer, mirrors
+from services.duels import importer, mirrors, training
 
 HEAD = """osu file format v14
 
@@ -258,8 +258,8 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     assert again == {"filed": 6}
     rows = await importer.corpus_rows(factory)
     assert sorted(row[1] for row in rows) == ["HD2", "NM1", "NM2", "OTHER", "TB"]
-    version, found = await importer.train_corpus(factory, steps=20)
-    assert version.startswith("owc-") and found["train"] == 5 and found["test"]["count"] == 0
+    version, found = await training.train(factory, steps=20)
+    assert version == "kamerton-1" and found["maps"] == 5 and found["test"]["count"] == 0 and found["years"] == {}
     async with factory() as session:
         assert (await session.get(DuelModelVersion, version)).state == "shadow"
     entry = {"beatmap_id": 1, "beatmapset_id": 10, "checksum": hashlib.md5(files[1]).hexdigest(), "stars": 5.0, "status": "ranked",
@@ -354,8 +354,8 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     rows = await importer.corpus_rows(factory)
     own = sorted((row[1], row[4], row[5]) for row in rows if row[4])
     assert own == [("DT1", True, True), ("NM1", True, True), ("OTHER", True, True)]
-    version, found = await importer.train_corpus(factory, steps=10)
-    assert found["own"] == 3 and found["verified"] == 5
+    version, found = await training.train(factory, steps=10)
+    assert version == "kamerton-1" and found["own"] == 3 and found["verified"] == 5
     async with factory() as session:
         actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
     assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]

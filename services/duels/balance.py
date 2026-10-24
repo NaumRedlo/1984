@@ -160,6 +160,14 @@ async def note_discovery(factory, actor: int, least: float, most: float, reason:
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             _audit(session, actor, role, "discover", f"{least:.1f}-{most:.1f}", reason.strip(), now=now)
 
+async def note_training(factory, actor: int, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> None:
+    if not reason.strip():
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            _audit(session, actor, role, "train_model", "kamerton", reason.strip(), now=now)
+
 async def open_reviews(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
     async with factory() as session:
         await _allowed(session, actor, BALANCE_REVIEWER, owners)
