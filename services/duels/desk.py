@@ -249,6 +249,10 @@ async def live(factory, now: Optional[datetime] = None, watchers: Optional[Calla
                     revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == entry_.beatmap_id,
                                                                                  DuelMapRevision.hash == entry_.revision_hash)) if entry_ is not None else None
                     found["title"] = revision.title if revision is not None else None
+                    analysis = await _analysis(session, entry_.revision_hash, "".join(SLOT_MODS.get(round_.slot, ()))) if entry_ is not None else None
+                    features = (analysis.features or {}) if analysis is not None else {}
+                    length, rate = features.get("length_seconds"), (features.get("effective") or {}).get("rate", 1.0)
+                    found["song_seconds"] = round(length * rate, 3) if length is not None else None
             else:
                 found["finished_at"] = _stamp(duel.finalized_at)
                 found["seconds_ago"] = max(0, int((now - duel.finalized_at).total_seconds())) if duel.finalized_at else None
