@@ -10,7 +10,7 @@ from services.duels import catalog, corpus, mirrors
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
-from services.duels.slot_model import CLASSES, OTHER, SlotModel, _softmax, report as scored
+from services.duels.slot_model import OTHER, SlotModel, _softmax, report as scored
 from utils.timeutils import utcnow
 
 MOD_BITS = {"NF": 1, "HD": 8, "HR": 16, "DT": 64}
@@ -27,7 +27,7 @@ def suitable(entry: dict[str, Any]) -> bool:
 
 WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
 YEARS = (2021, 2022, 2023, 2024, 2025)
-GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
+GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "EZ": "NF", "FL": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
 
 async def known(factory, entry: dict[str, Any]) -> bool:
     async with factory() as session:
@@ -240,7 +240,7 @@ def resolved(example, labels: dict[tuple, str]) -> tuple[Optional[str], bool]:
     elif cell + (None,) in labels:
         chosen, verified = labels[cell + (None,)], True
     else:
-        chosen, verified = example.normalized_label, False
+        chosen, verified = corpus.label(example.original_slot) or example.normalized_label, False
     return (None if chosen == corpus.EXCLUDED else chosen), verified
 
 async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=print, now: Optional[datetime] = None) -> dict[str, int]:
@@ -301,8 +301,8 @@ def guesses(model: SlotModel, rows) -> tuple[list[str], list[str], list[bool]]:
         normalised = model.normaliser.apply(row)
         probabilities = _softmax([b + sum(w * x for w, x in zip(ws, normalised)) for ws, b in zip(model.weights, model.bias)])
         ranked = sorted(range(len(probabilities)), key=lambda k: -probabilities[k])
-        best = CLASSES[ranked[0]]
-        second = next((k for k in ranked[1:] if CLASSES[k] != OTHER), None)
+        best = model.classes[ranked[0]]
+        second = next((k for k in ranked[1:] if model.classes[k] != OTHER), None)
         margin = probabilities[ranked[0]] - (probabilities[second] if second is not None else 0.0)
         truth.append(label)
         guessed.append(best)

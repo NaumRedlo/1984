@@ -200,6 +200,26 @@ def test_a_saved_model_predicts_the_same_and_refuses_other_features():
     del legacy["features"]
     assert SlotModel.load(legacy).predict(sample, 9, 5.2).probabilities == model.predict(sample, 9, 5.2).probabilities
 
+def test_a_slot_outside_duels_is_learned_and_named_but_never_assigned():
+    from services.duels.slot_model import OTHER, SlotModel, vector
+
+    rows, labels = [], []
+    for seed in range(12):
+        rows.append(vector(_features("stream", seed)))
+        labels.append("NM2")
+        rows.append(vector(_features("jumps", seed)))
+        labels.append("FM1")
+    model = SlotModel.fit(rows, labels, steps=150)
+    assert "FM1" in model.classes and model.classes[-1] == OTHER
+    guess = model.predict(_features("jumps", 99), base_ar=9, hr_cs=5.2)
+    assert max(guess.probabilities, key=guess.probabilities.get) == "FM1" and guess.slot is None
+    again = SlotModel.load(model.dump())
+    assert again.classes == model.classes and again.predict(_features("jumps", 99), 9, 5.2).probabilities == guess.probabilities
+    body = model.dump()
+    body["classes"] = body["classes"][:-2] + ["XX1", OTHER]
+    with pytest.raises(ValueError):
+        SlotModel.load(body)
+
 def test_reports_show_every_slot_and_splits_keep_sets_apart():
     from services.duels.slot_model import grouped_split, report
 

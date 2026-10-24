@@ -231,7 +231,7 @@ def test_wiki_pools_become_slots_and_foreign_slots_become_negatives():
     assert [(e.stage, e.original_slot, e.beatmap_id, e.beatmapset_id) for e in found] == [
         ("grand finals", "NM1", 1, 10), ("grand finals", "NM2", 2, 20), ("grand finals", "NM5", 3, 30),
         ("grand finals", "HD2", 4, 40), ("grand finals", "FL1", 5, 50), ("grand finals", "TB", 6, 60)]
-    assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "OTHER", "HD2", None, "TB"]
+    assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "NM5", "HD2", "FL1", "TB"]
 
 async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_model(factory, tmp_path):
     from db.models.duel import DuelModelVersion
@@ -257,9 +257,9 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     again = await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
     assert again == {"filed": 6}
     rows = await importer.corpus_rows(factory)
-    assert sorted(row[1] for row in rows) == ["HD2", "NM1", "NM2", "OTHER", "TB"]
+    assert sorted(row[1] for row in rows) == ["FL1", "HD2", "NM1", "NM2", "NM5", "TB"]
     version, found = await training.train(factory, steps=20)
-    assert version == "kamerton-1" and found["maps"] == 5 and found["test"]["count"] == 0 and found["years"] == {}
+    assert version == "kamerton-1" and found["maps"] == 6 and found["test"]["count"] == 0 and found["years"] == {}
     async with factory() as session:
         assert (await session.get(DuelModelVersion, version)).state == "shadow"
     entry = {"beatmap_id": 1, "beatmapset_id": 10, "checksum": hashlib.md5(files[1]).hexdigest(), "stars": 5.0, "status": "ranked",
@@ -326,7 +326,7 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     with pytest.raises(balance.Forbidden):
         await balance.corpus_table(factory, 2)
     cells = await balance.corpus_table(factory, 1)
-    assert [(c["slot"], c["maps"][0]["label"], c["maps"][0]["verified"]) for c in cells if c["slot"] in ("NM2", "NM5")] == [("NM2", "NM2", False), ("NM5", "OTHER", False)]
+    assert [(c["slot"], c["maps"][0]["label"], c["maps"][0]["verified"]) for c in cells if c["slot"] in ("NM2", "NM5")] == [("NM2", "NM2", False), ("NM5", "NM5", False)]
     assert all(m["title"] for c in cells for m in c["maps"] if m["file"])
     from sqlalchemy import update
     from db.models.duel_catalog import DuelMapRevision
@@ -341,19 +341,19 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     with pytest.raises(DuelError):
         await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, "XX9", "нет такого")
     rows = await importer.corpus_rows(factory)
-    assert sorted((row[1], row[5]) for row in rows) == [("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
+    assert sorted((row[1], row[5]) for row in rows) == [("FL1", False), ("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "NM5", "пятый NM пока не в дуэлях")
     cells = await balance.corpus_table(factory, 1)
     assert [m["label"] for c in cells if c["slot"] == "NM5" for m in c["maps"] if m["beatmap_id"] == 3] == ["NM5"]
     rows = await importer.corpus_rows(factory)
-    assert sorted((row[1], row[5]) for row in rows) == [("HD2", False), ("NM3", True), ("OTHER", True), ("TB", False)]
+    assert sorted((row[1], row[5]) for row in rows) == [("FL1", False), ("HD2", False), ("NM3", True), ("NM5", True), ("TB", False)]
     added = await balance.add_tournament(factory, 1, "Russian Cup", 2024,
                                          "NM1 https://osu.ppy.sh/beatmapsets/80#osu/8\nDT1 https://osu.ppy.sh/b/9\nFM1 https://osu.ppy.sh/b/10\nтекст", "мой турнир")
     assert added == {"added": 3, "read": 3}
     assert await importer.load_missing(factory, fetch, str(tmp_path), pause=0, report=lambda text: None) == {"filed": 3}
     rows = await importer.corpus_rows(factory)
     own = sorted((row[1], row[4], row[5]) for row in rows if row[4])
-    assert own == [("DT1", True, True), ("NM1", True, True), ("OTHER", True, True)]
+    assert own == [("DT1", True, True), ("FM1", True, True), ("NM1", True, True)]
     version, found = await training.train(factory, steps=10)
     assert version == "kamerton-1" and found["own"] == 3 and found["verified"] == 5
     async with factory() as session:

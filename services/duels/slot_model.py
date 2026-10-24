@@ -4,7 +4,7 @@ from statistics import median
 from typing import Any, Optional
 
 from services.duels.features import FEATURE_VERSION
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, reserved
 
 MODEL_VERSION = "slots-logreg-v1"
 OTHER = "OTHER"
@@ -102,19 +102,21 @@ class SlotModel:
     weights: list[list[float]]
     bias: list[float]
     version: str = MODEL_VERSION
+    classes: tuple[str, ...] = CLASSES
 
     @classmethod
     def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5) -> "SlotModel":
+        classes = SLOTS + tuple(sorted({label for label in labels if reserved(label)})) + (OTHER,)
         normaliser = Normaliser.fit(rows)
         data = [normaliser.apply(row) for row in rows]
-        targets = [CLASSES.index(label) for label in labels]
+        targets = [classes.index(label) if label in classes else classes.index(OTHER) for label in labels]
         width = len(PATHS)
-        weights = [[0.0] * width for _ in CLASSES]
-        bias = [0.0] * len(CLASSES)
+        weights = [[0.0] * width for _ in classes]
+        bias = [0.0] * len(classes)
         count = max(1, len(data))
         for _ in range(steps):
-            grad_w = [[0.0] * width for _ in CLASSES]
-            grad_b = [0.0] * len(CLASSES)
+            grad_w = [[0.0] * width for _ in classes]
+            grad_b = [0.0] * len(classes)
             for row, target in zip(data, targets):
                 probabilities = _softmax([b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(weights, bias)])
                 for k, probability in enumerate(probabilities):
@@ -123,44 +125,50 @@ class SlotModel:
                     line = grad_w[k]
                     for j, x in enumerate(row):
                         line[j] += error * x
-            for k in range(len(CLASSES)):
+            for k in range(len(classes)):
                 bias[k] -= rate * grad_b[k] / count
                 for j in range(width):
                     weights[k][j] -= rate * (grad_w[k][j] / count + strength * weights[k][j])
-        return cls(normaliser, weights, bias)
+        return cls(normaliser, weights, bias, MODEL_VERSION, classes)
 
     def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float) -> Prediction:
         raw = vector(features)
         row = self.normaliser.apply(raw)
         scores = [b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(self.weights, self.bias)]
-        allowed = [name != "HD2" or base_ar <= HD2_MOST_AR for name in CLASSES]
-        allowed = [ok and (name != "HR2" or hr_cs >= HR2_LEAST_CS) for ok, name in zip(allowed, CLASSES)]
+        classes = self.classes
+        allowed = [name != "HD2" or base_ar <= HD2_MOST_AR for name in classes]
+        allowed = [ok and (name != "HR2" or hr_cs >= HR2_LEAST_CS) for ok, name in zip(allowed, classes)]
         kept = [score if ok else -math.inf for score, ok in zip(scores, allowed)]
         probabilities = _softmax(kept)
-        ranked = sorted(range(len(CLASSES)), key=lambda k: -probabilities[k])
+        ranked = sorted(range(len(classes)), key=lambda k: -probabilities[k])
         best = ranked[0]
-        second = next((k for k in ranked[1:] if CLASSES[k] != OTHER), None)
+        second = next((k for k in ranked[1:] if classes[k] != OTHER), None)
         margin = probabilities[best] - (probabilities[second] if second is not None else 0.0)
         reasons = sorted(((PATHS[j], self.weights[best][j] * row[j]) for j in range(len(PATHS))), key=lambda pair: -abs(pair[1]))[:5]
         outside = self.normaliser.outside(raw)
-        slot = None if CLASSES[best] == OTHER or outside else CLASSES[best]
-        return Prediction(slot, probabilities[best], margin, dict(zip(CLASSES, probabilities)), outside, reasons)
+        slot = classes[best] if classes[best] in SLOTS and not outside else None
+        return Prediction(slot, probabilities[best], margin, dict(zip(classes, probabilities)), outside, reasons)
 
     def dump(self) -> dict[str, Any]:
-        return {"version": self.version, "features": FEATURE_VERSION, "paths": list(PATHS), "classes": list(CLASSES), "weights": self.weights, "bias": self.bias,
+        return {"version": self.version, "features": FEATURE_VERSION, "paths": list(PATHS), "classes": list(self.classes), "weights": self.weights, "bias": self.bias,
                 "centre": self.normaliser.centre, "spread": self.normaliser.spread, "low": self.normaliser.low,
                 "high": self.normaliser.high}
 
     @classmethod
     def load(cls, body: dict[str, Any]) -> "SlotModel":
-        if body.get("paths") != list(PATHS) or body.get("classes") != list(CLASSES) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
+        classes = tuple(body.get("classes") or ())
+        if body.get("paths") != list(PATHS) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
             raise ValueError("model was built for other features")
+        if classes[:len(SLOTS)] != SLOTS or classes[-1:] != (OTHER,) or not all(reserved(name) for name in classes[len(SLOTS):-1]) \
+                or len(body.get("weights") or ()) != len(classes) or len(body.get("bias") or ()) != len(classes):
+            raise ValueError("model was built for other classes")
         return cls(Normaliser(body["centre"], body["spread"], body["low"], body["high"]), body["weights"], body["bias"],
-                   body.get("version", MODEL_VERSION))
+                   body.get("version", MODEL_VERSION), classes)
 
 def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
+    names = list(SLOTS) + sorted({name for name in list(truth) + list(guessed) if name and reserved(name)}) + [OTHER]
     per_slot = {}
-    for name in CLASSES:
+    for name in names:
         hit = sum(1 for t, g in zip(truth, guessed) if g == name and t == name)
         said = sum(1 for g in guessed if g == name)
         real = sum(1 for t in truth if t == name)
@@ -171,7 +179,7 @@ def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
     present = [name for name in SLOTS if per_slot[name]["support"]]
     macro = sum(per_slot[name]["f1"] for name in present) / len(present) if present else 0.0
     confusion = {t: {g or "NONE": sum(1 for a, b in zip(truth, guessed) if a == t and (b or "NONE") == (g or "NONE"))
-                     for g in list(CLASSES) + ["NONE"]} for t in CLASSES}
+                     for g in names + ["NONE"]} for t in names}
     return {"per_slot": per_slot, "macro_f1": macro, "confusion": confusion, "count": len(truth)}
 
 def grouped_split(keys: list[tuple[int, int]], test_years: set[int]) -> tuple[list[int], list[int]]:

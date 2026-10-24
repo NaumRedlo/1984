@@ -87,10 +87,10 @@ def allowed(label: str) -> bool:
     return label in LABELS or reserved(label)
 
 def learned(label: str) -> str:
-    return "OTHER" if reserved(label) else label
+    return label
 
 def label(slot: str) -> Optional[str]:
-    if slot in SLOTS:
+    if slot in SLOTS or reserved(slot):
         return slot
     if slot[:2] in ("NM", "HD", "HR", "DT", "FM"):
         return "OTHER"
