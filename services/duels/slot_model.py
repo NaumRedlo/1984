@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from statistics import median
 from typing import Any, Optional
 
+from services.duels.features import FEATURE_VERSION
 from services.duels.rules import SLOTS
 
 MODEL_VERSION = "slots-logreg-v1"
@@ -146,13 +147,13 @@ class SlotModel:
         return Prediction(slot, probabilities[best], margin, dict(zip(CLASSES, probabilities)), outside, reasons)
 
     def dump(self) -> dict[str, Any]:
-        return {"version": self.version, "paths": list(PATHS), "classes": list(CLASSES), "weights": self.weights, "bias": self.bias,
+        return {"version": self.version, "features": FEATURE_VERSION, "paths": list(PATHS), "classes": list(CLASSES), "weights": self.weights, "bias": self.bias,
                 "centre": self.normaliser.centre, "spread": self.normaliser.spread, "low": self.normaliser.low,
                 "high": self.normaliser.high}
 
     @classmethod
     def load(cls, body: dict[str, Any]) -> "SlotModel":
-        if body.get("paths") != list(PATHS) or body.get("classes") != list(CLASSES):
+        if body.get("paths") != list(PATHS) or body.get("classes") != list(CLASSES) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
             raise ValueError("model was built for other features")
         return cls(Normaliser(body["centre"], body["spread"], body["low"], body["high"]), body["weights"], body["bias"],
                    body.get("version", MODEL_VERSION))

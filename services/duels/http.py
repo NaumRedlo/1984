@@ -7,6 +7,9 @@ from aiohttp import web
 from services.duels import live, notify, series, service, states
 from services.duels.errors import DuelError
 from services.duels.rules import SLOTS
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 STATUS = {
     "NOT_FOUND": 404,
@@ -57,6 +60,16 @@ def _version(said: dict[str, Any]) -> Optional[int]:
 
 def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] = lambda: None) -> list[web.RouteDef]:
     discovering: dict[str, asyncio.Task] = {}
+
+    def watched(work, what: str) -> asyncio.Task:
+        task = asyncio.create_task(work)
+
+        def done(finished: asyncio.Task) -> None:
+            if not finished.cancelled() and finished.exception() is not None:
+                logger.error("%s stumbled: %s", what, finished.exception(), exc_info=finished.exception())
+
+        task.add_done_callback(done)
+        return task
 
     def handler(work: Callable[[web.Request, int, dict[str, Any]], Awaitable[Any]], status: int = 200):
         async def handle(request: web.Request) -> web.Response:
@@ -247,16 +260,15 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
 
     def reassess_published():
         from services.duels import balance, importer
-        from services.duels.slot_model import SlotModel
 
         async def run():
-            published = await balance.published(factory_of())
-            if published is not None:
-                await importer.reassess(factory_of(), SlotModel.load(published.body))
+            model = await balance.working_model(factory_of())
+            if model is not None:
+                await importer.reassess(factory_of(), model)
 
         running = discovering.get("reassess")
         if running is None or running.done():
-            discovering["reassess"] = asyncio.create_task(run())
+            discovering["reassess"] = watched(run(), "reassessing catalogue slots")
 
     async def publish_model(request, player, said, owners):
         from services.duels import balance
@@ -278,16 +290,13 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         running = discovering.get("training")
         if running is not None and not running.done():
             return {"started": False}
-        discovering["training"] = asyncio.create_task(training.train(factory_of()))
+        discovering["training"] = watched(training.train(factory_of()), "training Kamerton")
         return {"started": True}
 
     async def desk_queue(request, player, said, owners):
         from services.duels import balance, desk
-        from services.duels.slot_model import SlotModel
 
-        published = await balance.published(factory_of())
-        model = SlotModel.load(published.body) if published is not None else None
-        return {"tasks": await desk.queue(factory_of(), player, owners, model)}
+        return {"tasks": await desk.queue(factory_of(), player, owners, await balance.working_model(factory_of()))}
 
     async def desk_catalog(request, player, said, owners):
         from services.duels import desk
@@ -350,7 +359,6 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         import aiohttp
         from config.settings import DUEL_OSU_FOLDER
         from services.duels import balance, desk, importer, mirrors
-        from services.duels.slot_model import SlotModel
 
         band = said.get("band")
         if not isinstance(band, int) or isinstance(band, bool) or not 0 <= band < len(desk.BANDS):
@@ -365,14 +373,13 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             return web.json_response({"error": "SERVICE_RECOVERING"}, status=503)
 
         async def run():
-            published = await balance.published(factory_of())
-            model = SlotModel.load(published.body) if published is not None else None
+            model = await balance.working_model(factory_of())
             timeout = aiohttp.ClientTimeout(total=120, sock_read=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 await importer.discover(factory_of(), mirrors.aiohttp_fetch(session), osu_of(), DUEL_OSU_FOLDER, least, most, 2,
                                         model=model, report=lambda text: None)
 
-        discovering["task"] = asyncio.create_task(run())
+        discovering["task"] = watched(run(), "discovering catalogue maps")
         return {"started": True}
 
     async def rollback_model(request, player, said, owners):

@@ -8,7 +8,10 @@ from db.models.duel import (Duel, DuelAttempt, DuelAudit, DuelBalanceReview, Due
 from db.models.player import Player
 from services.duels import catalog, states
 from services.duels.errors import DuelError
+from utils.logger import get_logger
 from utils.timeutils import utcnow
+
+logger = get_logger(__name__)
 
 FITS = ("fits", "off")
 DIFFICULTIES = ("easy", "fine", "hard")
@@ -249,7 +252,7 @@ async def publish(factory, actor: int, version: str, reason: str, owners: tuple[
         async with session.begin():
             role = await _allowed(session, actor, MODEL_PUBLISHER, owners)
             chosen = await session.get(DuelModelVersion, version)
-            if chosen is None or chosen.state not in ("shadow", "retired"):
+            if chosen is None or chosen.state not in ("shadow", "retired") or not _fits(chosen.body):
                 raise DuelError("INVALID_STATE")
             for row in (await session.scalars(select(DuelModelVersion).where(DuelModelVersion.state == "published"))).all():
                 row.state = "retired"
@@ -268,6 +271,15 @@ async def delete_model(factory, actor: int, version: str, reason: str, owners: t
             await session.delete(chosen)
             _audit(session, actor, role, "delete_model", version, reason.strip(), before={"state": chosen.state}, now=now)
 
+def _fits(body) -> bool:
+    from services.duels.slot_model import SlotModel
+
+    try:
+        SlotModel.load(body)
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
 async def rollback(factory, actor: int, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> Optional[str]:
     now = now or utcnow()
     async with factory() as session:
@@ -283,6 +295,18 @@ async def rollback(factory, actor: int, reason: str, owners: tuple[int, ...] = (
             earlier.state = "published"
             _audit(session, actor, role, "rollback_model", earlier.version, reason, before={"published": current.version}, now=now)
             return earlier.version
+
+async def working_model(factory):
+    from services.duels.slot_model import SlotModel
+
+    chosen = await published(factory)
+    if chosen is None:
+        return None
+    try:
+        return SlotModel.load(chosen.body)
+    except (KeyError, TypeError, ValueError):
+        logger.warning("published duel slot model %s no longer fits the analyser; maps wait for reviewers", chosen.version)
+        return None
 
 async def published(factory) -> Optional[DuelModelVersion]:
     async with factory() as session:

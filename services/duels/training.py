@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from db.models.duel import DuelModelVersion
+from db.models.duel import DuelAudit, DuelModelVersion
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from services.duels import balance
 from services.duels.features import FEATURE_VERSION
@@ -17,6 +17,7 @@ NAME = "kamerton"
 NEW_LABELS_LEAST = 50
 EVERY = timedelta(days=1)
 HELD_OUT = 5
+busy = asyncio.Lock()
 
 def held_out(set_id: int) -> bool:
     return int(hashlib.sha256(str(set_id).encode()).hexdigest(), 16) % HELD_OUT == 0
@@ -51,10 +52,15 @@ def _people(found, decided) -> int:
     return sum(1 for row in found if row[5]) + len(decided)
 
 async def _number(session) -> int:
-    names = (await session.scalars(select(DuelModelVersion.version).where(DuelModelVersion.version.like(f"{NAME}-%")))).all()
+    names = list((await session.scalars(select(DuelModelVersion.version).where(DuelModelVersion.version.like(f"{NAME}-%")))).all())
+    names += (await session.scalars(select(DuelAudit.target).where(DuelAudit.action == "delete_model", DuelAudit.target.like(f"{NAME}-%")))).all()
     return max((int(name.split("-", 1)[1]) for name in names if name.split("-", 1)[1].isdigit()), default=0) + 1
 
 async def train(factory, steps: int = 400, now: Optional[datetime] = None) -> Optional[tuple[str, dict[str, Any]]]:
+    async with busy:
+        return await _train(factory, steps, now)
+
+async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple[str, dict[str, Any]]]:
     from services.duels import importer
 
     now = now or utcnow()
@@ -89,6 +95,8 @@ async def train(factory, steps: int = 400, now: Optional[datetime] = None) -> Op
     return version, found_report
 
 async def maybe_train(factory, now: Optional[datetime] = None, steps: int = 400) -> Optional[str]:
+    if busy.locked():
+        return None
     now = now or utcnow()
     async with factory() as session:
         last = await session.scalar(select(DuelModelVersion).order_by(DuelModelVersion.created_at.desc()))

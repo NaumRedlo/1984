@@ -192,6 +192,13 @@ def test_a_saved_model_predicts_the_same_and_refuses_other_features():
     body["paths"] = body["paths"][:-1]
     with pytest.raises(ValueError):
         SlotModel.load(body)
+    older = model.dump()
+    older["features"] = "features-v0"
+    with pytest.raises(ValueError):
+        SlotModel.load(older)
+    legacy = model.dump()
+    del legacy["features"]
+    assert SlotModel.load(legacy).predict(sample, 9, 5.2).probabilities == model.predict(sample, 9, 5.2).probabilities
 
 def test_reports_show_every_slot_and_splits_keep_sets_apart():
     from services.duels.slot_model import grouped_split, report

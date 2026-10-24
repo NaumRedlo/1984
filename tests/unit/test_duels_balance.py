@@ -182,6 +182,22 @@ async def test_a_shadow_model_is_trained_only_with_enough_new_labels_and_publish
     await balance.delete_model(factory, 1, "kamerton-9", "trained by mistake", owners=(555,))
     async with factory() as session:
         assert await session.get(DuelModelVersion, "kamerton-9") is None
+        assert await training._number(session) == 10
+    await balance.train(factory, "kamerton-10", {"paths": []}, {}, 0, clock.now)
+    with pytest.raises(DuelError):
+        await balance.publish(factory, 1, "kamerton-10", "built for another analyser", owners=(555,))
+    assert (await balance.working_model(factory)).version == made
+    async with factory() as session:
+        (await session.get(DuelModelVersion, made)).body = {**(await session.get(DuelModelVersion, made)).body, "features": "features-v0"}
+        await session.commit()
+    assert await balance.working_model(factory) is None
+
+async def test_two_trainings_at_once_never_share_a_number(factory):
+    import asyncio
+
+    await _labelled(factory, 20)
+    first, second = await asyncio.gather(training.train(factory, steps=20), training.train(factory, steps=20))
+    assert {first[0], second[0]} == {"kamerton-1", "kamerton-2"}
 
 async def _labelled_more(factory):
     from tests.unit.test_duels_analysis import _features

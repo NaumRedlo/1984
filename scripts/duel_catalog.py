@@ -11,13 +11,11 @@ import db.models
 from config.settings import DUEL_OSU_FOLDER
 from db.database import AsyncSessionFactory
 from services.duels import balance, importer, mirrors
-from services.duels.slot_model import SlotModel
 from utils.osu.api_client import OsuApiClient
 
 async def main(least: float, most: float, pages: int, amount: int) -> None:
-    published = await balance.published(AsyncSessionFactory)
-    model = SlotModel.load(published.body) if published is not None else None
-    print("slot model:", published.version if published is not None else "none, maps wait for a reviewer")
+    model = await balance.working_model(AsyncSessionFactory)
+    print("slot model:", model.version if model is not None else "none, maps wait for a reviewer")
     osu = OsuApiClient()
     try:
         timeout = aiohttp.ClientTimeout(total=120, sock_read=30)

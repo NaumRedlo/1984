@@ -12,7 +12,6 @@ import db.models
 from config.settings import ADMIN_IDS, DUEL_OSU_FOLDER
 from db.database import AsyncSessionFactory
 from services.duels import balance, importer, mirrors, training
-from services.duels.slot_model import SlotModel
 
 def _brief(found: dict) -> str:
     slots = {name: round(values["f1"], 2) for name, values in found["per_slot"].items() if values["support"]}
@@ -43,11 +42,11 @@ async def publish(version: str, actor: int, reason: str) -> None:
     print("published", version)
 
 async def assign() -> None:
-    published = await balance.published(AsyncSessionFactory)
-    if published is None:
-        print("no published slot model")
+    model = await balance.working_model(AsyncSessionFactory)
+    if model is None:
+        print("no published slot model that fits the analyser")
         return
-    print(await importer.reassess(AsyncSessionFactory, SlotModel.load(published.body)))
+    print(await importer.reassess(AsyncSessionFactory, model))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Teach the duel slot model on OWC 2021-2025 pools")
