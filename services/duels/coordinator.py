@@ -92,6 +92,7 @@ class Coordinator:
             "bonus_round": self.bonus_round,
             "adopt_room": self.adopt_room,
             "verify_bonus": self.verify_bonus,
+            "reinvite_room": self.reinvite_room,
         })
         self.gateway.listen(self.heard)
         self.gateway.listen(rooms.late_creations(self.factory, self.gateway))
@@ -148,6 +149,17 @@ class Coordinator:
                 room.capabilities = {"password": password}
         await self._control(match_id).setup(password, names)
         await series.room_ready(self.factory, duel_id)
+
+    async def reinvite_room(self, command: dict[str, Any]) -> None:
+        duel_id = command["payload"]["duel"]
+        async with self.factory() as session:
+            duel = await session.get(Duel, duel_id)
+        held = await self._room(duel_id)
+        if duel is None or duel.state != states.WAITING_PLAYERS or held is None or held.match_id is None:
+            return
+        seated = self.seated.get(held.match_id, set())
+        names = [player.osu_username for participant, player in await self._people(duel_id) if participant.player_id not in seated]
+        await self._control(held.match_id).invite(names)
 
     async def heard(self, event: Said) -> None:
         if not event.channel.startswith("#mp_"):

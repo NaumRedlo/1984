@@ -310,6 +310,14 @@ async def give_up(factory, duel_id: str, actor_id: int, operation_id: str, expec
         await _technical(step, duel, people, me, "surrender")
     return await _act(factory, duel_id, actor_id, operation_id, "give_up", expected_version, body, now)
 
+async def reinvite(factory, duel_id: str, actor_id: int, operation_id: str, expected_version: Optional[int] = None,
+                   now: Optional[datetime] = None) -> dict[str, Any]:
+    async def body(step, duel, me, people):
+        if duel.state != states.WAITING_PLAYERS:
+            raise DuelError("INVALID_STATE", await view(step.session, duel, actor_id))
+        step.command(duel, "reinvite_room", {"duel": duel.id})
+    return await _act(factory, duel_id, actor_id, operation_id, "reinvite", expected_version, body, now)
+
 System = Callable[[Step, Duel, list[DuelParticipant]], Awaitable[None]]
 
 async def _system(factory, duel_id: str, allowed: tuple[str, ...], body: System, now: Optional[datetime]) -> Optional[dict[str, Any]]:

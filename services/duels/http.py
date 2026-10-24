@@ -103,6 +103,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             return await service.surrender(factory_of(), duel_id, player, operation, version)
         return await series.give_up(factory_of(), duel_id, player, operation, version)
 
+    async def reinvite(duel_id, player, said, operation, version):
+        return await series.reinvite(factory_of(), duel_id, player, operation, version)
+
     async def pool_ack(duel_id, player, said, operation, version):
         manifest = said.get("manifest_hash")
         if not isinstance(manifest, str):
@@ -430,6 +433,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.post("/render/duels/{duel_id}/decline", handler(on_duel(decline))),
         web.post("/render/duels/{duel_id}/surrender", handler(on_duel(surrender))),
         web.post("/render/duels/{duel_id}/pool-ack", handler(on_duel(pool_ack))),
+        web.post("/render/duels/{duel_id}/reinvite", handler(on_duel(reinvite))),
         web.post("/render/duels/{duel_id}/draft-actions", handler(on_duel(draft))),
         web.post("/render/duels/{duel_id}/ready", handler(on_duel(ready))),
         web.post("/render/duels/{duel_id}/bonus-tb", handler(on_duel(bonus))),

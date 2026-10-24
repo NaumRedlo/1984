@@ -119,6 +119,11 @@ async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(f
 
     await bancho.emit("#mp_500", "one joined in slot 1.")
     assert await _state(factory, duel["id"]) == states.WAITING_PLAYERS
+    asked = await series.reinvite(factory, duel["id"], 1, "reinvite-e2e")
+    assert asked["actions"] == ["reinvite", "surrender"]
+    before = len(bancho.said)
+    assert await outbox.sweep(factory) == 1
+    assert bancho.said[before:] == ["!mp invite two"]
     await bancho.emit("#mp_500", "two joined in slot 2.")
     assert await _state(factory, duel["id"]) == states.PREPARING
 

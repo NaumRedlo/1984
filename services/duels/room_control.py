@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 
-from services.duels.bancho_text import Said, Settings, match_channel, mods_line, problems, setup_lines
+from services.duels.bancho_text import Said, Settings, invite_lines, match_channel, mods_line, problems, setup_lines
 
 SETTINGS_WAIT = 10.0
 REPLY_WAIT = 10.0
@@ -54,6 +54,10 @@ class RoomControl:
 
     async def setup(self, password: str, players: list[str]) -> None:
         for line in setup_lines(password, players, referee=getattr(self.gateway, "username", "")):
+            await self.gateway.say(self.channel, line)
+
+    async def invite(self, players: list[str]) -> None:
+        for line in invite_lines(players, referee=getattr(self.gateway, "username", "")):
             await self.gateway.say(self.channel, line)
 
     async def prepare(self, beatmap: int, mods: list[str], free: bool) -> bool:

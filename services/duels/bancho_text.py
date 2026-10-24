@@ -109,9 +109,12 @@ SETUP_SCORE_V2 = 3
 def irc_name(name: str) -> str:
     return name.replace(" ", "_").lower()
 
+def invite_lines(players: list[str], referee: str = "") -> list[str]:
+    return [f"!mp invite {name.replace(' ', '_')}" for name in players if irc_name(name) != irc_name(referee)]
+
 def setup_lines(password: str, players: list[str], size: int = 2, referee: str = "") -> list[str]:
     lines = [f"!mp set {SETUP_TEAM_HEAD_TO_HEAD} {SETUP_SCORE_V2} {size}", f"!mp password {password}", "!mp lock"]
-    lines.extend(f"!mp invite {name.replace(' ', '_')}" for name in players if irc_name(name) != irc_name(referee))
+    lines.extend(invite_lines(players, referee))
     return lines
 
 @dataclass

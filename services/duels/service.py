@@ -94,6 +94,8 @@ def _actions(duel: Duel, me: Optional[DuelParticipant]) -> list[str]:
         return ["accept", "decline"] if me.invited else ["decline"]
     if duel.state == states.MATCH_OFFERED:
         return [] if me.accepted_at is not None else ["accept", "decline"]
+    if duel.state == states.WAITING_PLAYERS:
+        return ["reinvite", "surrender"]
     if duel.state in states.BEFORE_PLAY:
         return ["surrender"]
     return []
