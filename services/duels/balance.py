@@ -260,7 +260,7 @@ async def published(factory) -> Optional[DuelModelVersion]:
         return await session.scalar(select(DuelModelVersion).where(DuelModelVersion.state == "published"))
 
 async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
-    from db.models.duel_catalog import DuelTrainingExample
+    from db.models.duel_catalog import DuelMapRevision, DuelTrainingExample
     from services.duels import corpus, importer
 
     async with factory() as session:
@@ -269,6 +269,8 @@ async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> lis
         rows = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.corpus_version.in_(corpus.LEARNED))
                                       .order_by(DuelTrainingExample.corpus_version, DuelTrainingExample.year.desc(),
                                                 DuelTrainingExample.stage, DuelTrainingExample.original_slot))).all()
+        hashes = [row.revision_hash for row in rows if row.revision_hash]
+        revisions = {revision.hash: revision for revision in (await session.scalars(select(DuelMapRevision).where(DuelMapRevision.hash.in_(hashes or [""])))).all()}
     cells: dict[tuple, dict[str, Any]] = {}
     for row in rows:
         key = (row.corpus_version, row.year, row.stage, row.original_slot)
@@ -277,6 +279,8 @@ async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> lis
         label, verified = importer.resolved(row, labels)
         cell["maps"].append({"beatmap_id": int(row.beatmap_id), "beatmapset_id": int(row.beatmapset_id) if row.beatmapset_id else None,
                              "label": label or corpus.EXCLUDED, "verified": verified, "file": row.revision_hash is not None,
+                             "title": getattr(revisions.get(row.revision_hash), "title", None), "artist": getattr(revisions.get(row.revision_hash), "artist", None),
+                             "version": getattr(revisions.get(row.revision_hash), "version", None), "mapper": getattr(revisions.get(row.revision_hash), "mapper", None),
                              "conflict": bool(row.conflict)})
     return list(cells.values())
 

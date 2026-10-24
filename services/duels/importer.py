@@ -171,7 +171,8 @@ async def _example_file(factory, fetch, example: corpus.Example, folder: str, no
         if revision is None:
             session.add(DuelMapRevision(beatmap_id=example.beatmap_id, beatmapset_id=example.beatmapset_id, hash=digest,
                                         format_version=beatmap.format_version, status="ok", source=source,
-                                        object_count=len(beatmap.objects), downloaded_at=now))
+                                        object_count=len(beatmap.objects), downloaded_at=now, mapper=beatmap.creator[:64] or None,
+                                        title=beatmap.title[:200] or None, artist=beatmap.artist[:200] or None, version=beatmap.version[:200] or None))
         held = await _analysed(session, digest)
         for mods, features in analyses.items():
             if mods not in held:
