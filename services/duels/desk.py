@@ -90,6 +90,8 @@ async def _map(session, beatmap_id: int, digest: Optional[str], model) -> dict[s
     rock_cs = (((rock.features or {}).get("effective") or {}).get("cs") if rock is not None else None) or effective.get("cs", 0.0)
     return {"beatmap_id": beatmap_id, "beatmapset_id": int(revision.beatmapset_id) if revision is not None and revision.beatmapset_id else None,
             "mapper": revision.mapper if revision is not None else None, "ranked_status": revision.ranked_status if revision is not None else None,
+            "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
+            "version": revision.version if revision is not None else None,
             "stars": plain.stars if plain is not None else None, "revision": digest,
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs)}
 
@@ -169,7 +171,7 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
             if analysis is None or analysis.stars is None or band_of(float(analysis.stars)) != band:
                 continue
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
-                          "stars": float(analysis.stars), "level": level, "mapper": revision.mapper})
+                          "stars": float(analysis.stars), "level": level, "mapper": revision.mapper, "title": revision.title})
         return sorted(found, key=lambda item: item["stars"])
 
 async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> list[dict[str, Any]]:
