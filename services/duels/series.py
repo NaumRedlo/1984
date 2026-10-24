@@ -92,6 +92,8 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
         "entries": [{"slot": e.slot, "beatmap_id": e.beatmap_id, "mods": e.mods, "banned_by": e.banned_by, "used": e.used,
                      "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state, **about.get(e.slot, {})} for e in entries],
     }
+    from services.duels import rating
+    found["rating"] = await rating.projection(session, duel, viewer_id) if duel.state == states.COMPLETED else None
     room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id, DuelRoom.status == "open").order_by(DuelRoom.id.desc()))
     mine = viewer_id is not None and any(person.player_id == viewer_id for person in people)
     found["room"] = None if room is None or not mine else {

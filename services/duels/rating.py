@@ -110,6 +110,23 @@ async def sweep(factory, now: Optional[datetime] = None, version: str = VERSION)
             break
     return done
 
+async def projection(session, duel: Duel, viewer_id: Optional[int], version: str = VERSION) -> Optional[dict[str, int]]:
+    if duel.mode != "rated" or duel.winner_id is None or viewer_id is None:
+        return None
+    people = (await session.scalars(select(DuelParticipant).where(DuelParticipant.duel_id == duel.id))).all()
+    if viewer_id not in {person.player_id for person in people} or len(people) != 2:
+        return None
+    other = next(person.player_id for person in people if person.player_id != viewer_id)
+    period = period_of(duel.finalized_at or utcnow())
+
+    async def held(player_id: int) -> glicko.Rating:
+        row = await session.scalar(select(DuelGlicko).where(DuelGlicko.player_id == player_id, DuelGlicko.version == version))
+        return _as_rating(row, period) if row is not None else glicko.Rating()
+
+    before = await held(viewer_id)
+    after = glicko.update(before, [glicko.Game(await held(other), 1.0 if duel.winner_id == viewer_id else 0.0)])
+    return {"before": round(before.rating), "after": round(after.rating)}
+
 async def standing(factory, player_id: int, now: Optional[datetime] = None, version: str = VERSION) -> dict[str, Any]:
     now = now or utcnow()
     async with factory() as session:

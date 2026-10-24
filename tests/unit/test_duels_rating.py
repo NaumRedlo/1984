@@ -100,3 +100,13 @@ async def test_five_natural_series_finish_calibration_and_quiet_hours_widen_rd(f
     assert not shown["calibrating"] and shown["rating"] is not None
     much_later = await rating.standing(factory, 1, end + timedelta(days=60))
     assert much_later["rd"] > shown["rd"]
+
+async def test_a_finished_duel_shows_its_players_what_it_will_do_to_their_rating(factory):
+    await _series(factory, 1, 1, 2, 1)
+    await _series(factory, 2, 1, 2, 1, mode="direct")
+    async with factory() as session:
+        won = await rating.projection(session, await session.get(Duel, "d1"), 1)
+        lost = await rating.projection(session, await session.get(Duel, "d1"), 2)
+        assert await rating.projection(session, await session.get(Duel, "d1"), 3) is None
+        assert await rating.projection(session, await session.get(Duel, "d2"), 1) is None
+    assert won["before"] == lost["before"] == 1500 and won["after"] > 1500 > lost["after"]
