@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
@@ -73,11 +74,47 @@ def _explain(model, features: dict[str, Any], base_ar: float, hr_cs: float) -> O
         prediction = model.predict(features, base_ar, hr_cs)
     except Exception:
         return None
+    from services.duels.slot_model import PATHS, vector
+
     ranked = sorted(prediction.probabilities.items(), key=lambda pair: -pair[1])[:4]
+    normaliser = getattr(model, "normaliser", None)
+    levels = dict(zip(PATHS, normaliser.apply(vector(features)))) if normaliser is not None else {}
     return {"slot": prediction.slot, "probability": prediction.probability, "margin": prediction.margin,
             "top": [{"slot": slot, "probability": value} for slot, value in ranked],
-            "reasons": [{"feature": name, "weight": weight} for name, weight in prediction.reasons],
+            "reasons": [{"feature": name, "weight": weight, "level": levels.get(name, 0.0)} for name, weight in prediction.reasons],
             "outside": prediction.outside, "version": model.version}
+
+SETTINGS = {"CircleSize": "cs", "ApproachRate": "ar", "OverallDifficulty": "od", "HPDrainRate": "hp"}
+
+def settings_of(digest: Optional[str], folder: Optional[str] = None) -> dict[str, float]:
+    if not digest:
+        return {}
+    if folder is None:
+        from config.settings import DUEL_OSU_FOLDER
+
+        folder = DUEL_OSU_FOLDER
+    found: dict[str, float] = {}
+    try:
+        with open(os.path.join(folder, f"{digest}.osu"), encoding="utf-8-sig", errors="replace") as handle:
+            inside = False
+            for line in handle:
+                line = line.strip()
+                if line.startswith("["):
+                    if inside:
+                        break
+                    inside = line == "[Difficulty]"
+                    continue
+                name, _, value = line.partition(":")
+                if inside and name.strip() in SETTINGS:
+                    try:
+                        found[SETTINGS[name.strip()]] = float(value.strip())
+                    except ValueError:
+                        pass
+    except OSError:
+        return {}
+    if "ar" not in found and "od" in found:
+        found["ar"] = found["od"]
+    return found
 
 async def _map(session, beatmap_id: int, digest: Optional[str], model) -> dict[str, Any]:
     revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == beatmap_id)
@@ -93,6 +130,7 @@ async def _map(session, beatmap_id: int, digest: Optional[str], model) -> dict[s
             "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
             "version": revision.version if revision is not None else None,
             "stars": plain.stars if plain is not None else None, "revision": digest,
+            "settings": settings_of(digest), "length": (features or {}).get("length_seconds"),
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs)}
 
 async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:

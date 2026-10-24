@@ -77,6 +77,14 @@ async def test_the_queue_lists_reviews_first_then_maps_waiting_for_a_slot(factor
     assert first["opinions"]["comments"] == ["это не стримы"]
     assert first["map"]["model"]["top"][0] == {"slot": "NM2", "probability": 0.7} and first["map"]["model"]["reasons"][0]["feature"] == "streams.share"
 
+def test_a_map_shows_its_own_difficulty_settings(tmp_path):
+    (tmp_path / "abc.osu").write_text("osu file format v14\n\n[Difficulty]\nHPDrainRate:6\nCircleSize:4.2\nOverallDifficulty:9\n"
+                                      "ApproachRate:9.6\nSliderMultiplier:1.8\n\n[Events]\nHPDrainRate:1\n", encoding="utf-8")
+    assert desk.settings_of("abc", str(tmp_path)) == {"hp": 6.0, "cs": 4.2, "od": 9.0, "ar": 9.6}
+    (tmp_path / "old.osu").write_text("osu file format v5\n[Difficulty]\nHPDrainRate:5\nCircleSize:4\nOverallDifficulty:7\n", encoding="utf-8")
+    assert desk.settings_of("old", str(tmp_path))["ar"] == 7.0
+    assert desk.settings_of("missing", str(tmp_path)) == {} and desk.settings_of(None, str(tmp_path)) == {}
+
 async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     stuck = await desk.stuck(factory, 1)
     assert [(d["id"], d["reason"], d["wins"]) for d in stuck] == [("stuck-1", "absence", {"A": 1, "B": 0})]
