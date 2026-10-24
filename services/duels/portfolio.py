@@ -146,8 +146,7 @@ async def from_attempts(session, player_id: int) -> int:
         .join(DuelMapAssignment, DuelMapAssignment.beatmap_id == UserMapAttempt.beatmap_id)
         .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
               & (DuelMapRevision.hash == DuelMapAssignment.revision_hash))
-        .where(UserMapAttempt.player_id == player_id, UserMapAttempt.passed.is_not(False), DuelMapAssignment.slot.is_not(None),
-               DuelMapAssignment.slot != "TB", DuelMapAssignment.state.in_(["AUTO_ASSIGNED", "HUMAN_APPROVED"]))
+        .where(UserMapAttempt.player_id == player_id, UserMapAttempt.passed.is_not(False), DuelMapAssignment.slot.in_([slot for slot in SLOTS if slot != "TB"]), DuelMapAssignment.state.in_(["AUTO_ASSIGNED", "HUMAN_APPROVED"]))
     )).all()
     made = 0
     for attempt, assignment, revision in rows:

@@ -10,6 +10,7 @@ from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRe
 from services.duels import balance
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
+from services.duels.importer import GROUP_MODS
 from services.duels.slot_model import OTHER, SlotModel, vector
 from utils.timeutils import utcnow
 
@@ -30,8 +31,8 @@ async def labelled(session) -> list[tuple[list[float], str, int]]:
     )).all()
     found = []
     for assignment, revision in rows:
-        label = assignment.slot if assignment.state == "HUMAN_APPROVED" else OTHER
-        mods = "".join(SLOT_MODS[assignment.slot]) if assignment.slot else "NF"
+        label = assignment.slot if assignment.state == "HUMAN_APPROVED" and assignment.slot in SLOT_MODS else OTHER
+        mods = "".join(SLOT_MODS[assignment.slot]) if assignment.slot in SLOT_MODS else GROUP_MODS.get((assignment.slot or "")[:2], "NF")
         analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
                                                                      DuelMapAnalysis.mods == mods,
                                                                      DuelMapAnalysis.feature_version == FEATURE_VERSION))

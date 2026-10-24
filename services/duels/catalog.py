@@ -4,7 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from db.models.duel_catalog import DuelAssignmentLog, DuelMapAssignment, DuelMapRevision
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, reserved
 from utils.timeutils import utcnow
 
 UNASSIGNED = "UNASSIGNED"
@@ -83,7 +83,7 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
         if row.state == REJECTED:
             raise CatalogRefusal("REJECTED_STAYS")
         wanted = slot or row.slot
-        if wanted not in SLOTS:
+        if wanted not in SLOTS and not reserved(wanted or ""):
             raise CatalogRefusal("UNKNOWN_SLOT")
         if row.slot is not None and wanted != row.slot:
             raise CatalogRefusal("SLOT_FIXED")
@@ -92,7 +92,7 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
     elif decision == "MOVE":
         if row.state == REJECTED:
             raise CatalogRefusal("REJECTED_STAYS")
-        if slot not in SLOTS:
+        if slot not in SLOTS and not reserved(slot or ""):
             raise CatalogRefusal("UNKNOWN_SLOT")
         row.slot = slot
         row.state = HUMAN_APPROVED
@@ -179,7 +179,7 @@ async def admit(session, beatmap_id: int, digest: str, ok: bool, reason: Optiona
     await session.flush()
 
 def playable(row: DuelMapAssignment, revision_row: Optional[DuelMapRevision]) -> Optional[str]:
-    if row.slot is None or not row.admitted or revision_row is None or revision_row.status != "ok":
+    if row.slot not in SLOTS or not row.admitted or revision_row is None or revision_row.status != "ok":
         return None
     if revision_row.ranked_status != "ranked":
         return None

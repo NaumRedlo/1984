@@ -2,14 +2,13 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, reserved as _reserved
 
 CORPUS_VERSION = "owc-2021-2025-v1"
 OWN_VERSION = "own-v1"
 LEARNED = (CORPUS_VERSION, OWN_VERSION)
 EXCLUDED = "NONE"
 LABELS = SLOTS + ("OTHER", EXCLUDED)
-_RESERVED = re.compile(r"(NM|HD|HR|DT|FM)[1-9]")
 _HEADING = re.compile(r"^#{2,6}\s+(.+?)\s*$")
 _SLOT = re.compile(r"(?<![A-Z0-9])(NM\d|HD\d|HR\d|DT\d|FM\d|EZ\d|FL\d|TB)(?![A-Z0-9])")
 _LINK = re.compile(r"osu\.ppy\.sh/(?:beatmapsets/(\d+)#osu/(\d+)|b/(\d+)|beatmaps/(\d+))")
@@ -82,7 +81,7 @@ def read_wiki(markdown: str, year: int, source: str) -> list[Example]:
     return found
 
 def reserved(label: str) -> bool:
-    return label not in SLOTS and _RESERVED.fullmatch(label) is not None
+    return _reserved(label)
 
 def allowed(label: str) -> bool:
     return label in LABELS or reserved(label)

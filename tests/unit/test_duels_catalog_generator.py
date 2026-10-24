@@ -69,7 +69,14 @@ async def test_a_reviewer_moves_a_wrong_slot_and_the_move_is_a_human_label(sessi
     moved = await catalog.review(session, 1, "MOVE", 1, "it is alternate, not technical", slot="NM3", now=NOW)
     assert (moved["slot"], moved["state"]) == ("NM3", "HUMAN_APPROVED")
     assert await _refused(catalog.propose(session, 1, "NM4", 0.9, 0.3, "kamerton-2", NOW, unsure_again=True)) == "DECIDED_BY_HUMAN"
-    assert await _refused(catalog.review(session, 1, "MOVE", 1, "no such slot", slot="NM5", now=NOW)) == "UNKNOWN_SLOT"
+    assert await _refused(catalog.review(session, 1, "MOVE", 1, "no such slot", slot="XX1", now=NOW)) == "UNKNOWN_SLOT"
+    await catalog.propose(session, 5, "NM1", 0.9, 0.3, "kamerton-1", NOW)
+    spare = await catalog.review(session, 5, "MOVE", 1, "a free mod pick, not for duels yet", slot="FM2", now=NOW)
+    assert (spare["slot"], spare["state"]) == ("FM2", "HUMAN_APPROVED")
+    made, _ = await catalog.revision(session, 5, "e" * 32, beatmapset_id=50, ranked_status="ranked", now=NOW)
+    made.status = "ok"
+    await catalog.admit(session, 5, "e" * 32, True, now=NOW)
+    assert catalog.playable(await session.get(DuelMapAssignment, 5), made) is None
     await catalog.propose(session, 2, "HD2", 0.9, 0.3, "kamerton-1", NOW)
     await catalog.review(session, 2, "REJECT", 1, "fits no slot", now=NOW)
     assert await _refused(catalog.review(session, 2, "MOVE", 1, "changed my mind", slot="NM1", now=NOW)) == "REJECTED_STAYS"
