@@ -98,6 +98,23 @@ async def test_reviewing_needs_the_role_and_is_audited(factory):
         assert (await session.scalar(select(DuelBalanceReview.decision))) == "REJECT"
     assert [r["beatmap_id"] for r in await balance.open_reviews(factory, 2)] == []
 
+async def test_a_role_goes_to_the_player_by_osu_id_or_name_and_can_be_taken_back(factory):
+    assert await balance.find_player(factory, "102") == 2
+    assert await balance.find_player(factory, "TWO") == 2
+    assert await balance.find_player(factory, "2") is None
+    assert await balance.find_player(factory, "nobody") is None
+    async with factory() as session:
+        (await session.get(Player, 1)).telegram_id = 555
+        await session.commit()
+    await balance.grant(factory, 1, 2, balance.BALANCE_REVIEWER, "", owners=(555,))
+    with pytest.raises(balance.Forbidden):
+        await balance.revoke(factory, 2, 2, balance.BALANCE_REVIEWER, "")
+    await balance.revoke(factory, 1, 2, balance.BALANCE_REVIEWER, "granted by mistake", owners=(555,))
+    async with factory() as session:
+        assert await session.get(DuelRole, (2, balance.BALANCE_REVIEWER)) is None
+    with pytest.raises(DuelError):
+        await balance.revoke(factory, 1, 2, balance.BALANCE_REVIEWER, "", owners=(555,))
+
 async def test_bad_feedback_raises_a_map_s_price_in_the_generator():
     plain = generator.Candidate(1, 1, "m", "NM1", 5.0, "confident", 0.9, "r")
     disliked = generator.Candidate(2, 2, "m", "NM1", 5.0, "confident", 0.9, "r", feedback=0.2)

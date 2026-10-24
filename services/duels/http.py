@@ -252,10 +252,26 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
     async def grant_role(request, player, said, owners):
         from services.duels import balance
 
+        if not isinstance(said.get("role"), str):
+            raise web.HTTPBadRequest(text="role is required")
+        if isinstance(said.get("who"), str):
+            whom = await balance.find_player(factory_of(), said["who"])
+            if whom is None:
+                return web.json_response({"error": "PLAYER_NOT_FOUND"}, status=404)
+        elif isinstance(said.get("player_id"), int):
+            whom = said["player_id"]
+        else:
+            raise web.HTTPBadRequest(text="who or player_id is required")
+        await balance.grant(factory_of(), player, whom, said["role"], said["reason"], owners)
+        return {"granted": said["role"], "player": whom}
+
+    async def revoke_role(request, player, said, owners):
+        from services.duels import balance
+
         if not isinstance(said.get("player_id"), int) or not isinstance(said.get("role"), str):
             raise web.HTTPBadRequest(text="player_id and role are required")
-        await balance.grant(factory_of(), player, said["player_id"], said["role"], said["reason"], owners)
-        return {"granted": said["role"]}
+        await balance.revoke(factory_of(), player, said["player_id"], said["role"], said["reason"], owners)
+        return {"revoked": said["role"]}
 
     def reassess_published():
         from services.duels import balance, importer
@@ -454,6 +470,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.get("/render/admin/duels/reviews", handler(admin(reviews))),
         web.post("/render/admin/duels/maps/{beatmap}/review", handler(admin(map_review))),
         web.post("/render/admin/duels/roles", handler(admin(grant_role))),
+        web.post("/render/admin/duels/roles/revoke", handler(admin(revoke_role))),
         web.get("/render/admin/duels/corpus", handler(admin(corpus_table))),
         web.post("/render/admin/duels/corpus/label", handler(admin(corpus_label))),
         web.post("/render/admin/duels/corpus/tournaments", handler(admin(corpus_tournament))),

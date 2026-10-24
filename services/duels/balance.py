@@ -187,6 +187,33 @@ async def grant(factory, actor: int, player_id: int, role: str, reason: str, own
                 session.add(DuelRole(player_id=player_id, role=role, granted_by=actor, granted_at=now or utcnow()))
             _audit(session, actor, granted, "grant", f"{player_id}:{role}", reason, now=now)
 
+async def find_player(factory, who: str) -> Optional[int]:
+    from sqlalchemy import func
+
+    who = who.strip()
+    if not who:
+        return None
+    async with factory() as session:
+        if who.isdigit():
+            found = await session.scalar(select(Player.id).where(Player.osu_user_id == int(who)))
+            if found is not None:
+                return int(found)
+        found = await session.scalar(select(Player.id).where(func.lower(Player.osu_username) == who.lower()))
+        return int(found) if found is not None else None
+
+async def revoke(factory, actor: int, player_id: int, role: str, reason: str, owners: tuple[int, ...] = (),
+                 now: Optional[datetime] = None) -> None:
+    if role not in ROLES or role == OWNER:
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            granted = await _allowed(session, actor, OWNER, owners)
+            held = await session.get(DuelRole, (player_id, role))
+            if held is None:
+                raise DuelError("INVALID_STATE")
+            await session.delete(held)
+            _audit(session, actor, granted, "revoke", f"{player_id}:{role}", reason, now=now)
+
 async def operator_cancel(factory, actor: int, duel_id: str, reason: str, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
     from services.duels import service
 
