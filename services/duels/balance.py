@@ -299,7 +299,7 @@ async def label_corpus(factory, actor: int, corpus_version: str, year: int, stag
     from services.duels import corpus
 
     now = now or utcnow()
-    if label not in corpus.LABELS or corpus_version not in corpus.LEARNED or not reason.strip():
+    if not corpus.allowed(label) or corpus_version not in corpus.LEARNED or not reason.strip():
         raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():

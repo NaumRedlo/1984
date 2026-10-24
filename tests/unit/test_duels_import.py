@@ -342,6 +342,11 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
         await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, "XX9", "нет такого")
     rows = await importer.corpus_rows(factory)
     assert sorted((row[1], row[5]) for row in rows) == [("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
+    await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "NM5", "пятый NM пока не в дуэлях")
+    cells = await balance.corpus_table(factory, 1)
+    assert [m["label"] for c in cells if c["slot"] == "NM5" for m in c["maps"] if m["beatmap_id"] == 3] == ["NM5"]
+    rows = await importer.corpus_rows(factory)
+    assert sorted((row[1], row[5]) for row in rows) == [("HD2", False), ("NM3", True), ("OTHER", True), ("TB", False)]
     added = await balance.add_tournament(factory, 1, "Russian Cup", 2024,
                                          "NM1 https://osu.ppy.sh/beatmapsets/80#osu/8\nDT1 https://osu.ppy.sh/b/9\nFM1 https://osu.ppy.sh/b/10\nтекст", "мой турнир")
     assert added == {"added": 3, "read": 3}
@@ -353,4 +358,4 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     assert found["own"] == 3 and found["verified"] == 5
     async with factory() as session:
         actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
-    assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label"]
+    assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]

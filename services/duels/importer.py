@@ -285,6 +285,7 @@ async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, b
             label, verified = resolved(example, labels)
             if label is None:
                 continue
+            label = corpus.learned(label)
             mods = "".join(SLOT_MODS[label]) if label in SLOT_MODS else (example.mods or GROUP_MODS.get(example.original_slot[:2]))
             if mods is None:
                 continue
