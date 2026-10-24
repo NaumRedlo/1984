@@ -89,6 +89,13 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
             raise CatalogRefusal("SLOT_FIXED")
         row.slot = wanted
         row.state = HUMAN_APPROVED
+    elif decision == "MOVE":
+        if row.state == REJECTED:
+            raise CatalogRefusal("REJECTED_STAYS")
+        if slot not in SLOTS:
+            raise CatalogRefusal("UNKNOWN_SLOT")
+        row.slot = slot
+        row.state = HUMAN_APPROVED
     elif decision == "REJECT":
         row.state = REJECTED
     elif decision == "QUARANTINE":

@@ -227,8 +227,8 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import balance, catalog
 
         beatmap = request.match_info["beatmap"]
-        if not beatmap.isdigit() or said.get("decision") not in ("APPROVE", "REJECT", "QUARANTINE"):
-            raise web.HTTPBadRequest(text="decision is APPROVE, REJECT or QUARANTINE")
+        if not beatmap.isdigit() or said.get("decision") not in ("APPROVE", "MOVE", "REJECT", "QUARANTINE"):
+            raise web.HTTPBadRequest(text="decision is APPROVE, MOVE, REJECT or QUARANTINE")
         try:
             return await balance.review_map(factory_of(), player, int(beatmap), said["decision"], said["reason"], owners, said.get("slot"))
         except catalog.CatalogRefusal as refusal:
