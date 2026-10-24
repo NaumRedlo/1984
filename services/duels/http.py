@@ -265,6 +265,12 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         reassess_published()
         return {"published": request.match_info["version"]}
 
+    async def delete_model(request, player, said, owners):
+        from services.duels import balance
+
+        await balance.delete_model(factory_of(), player, request.match_info["version"], said["reason"], owners)
+        return {"deleted": request.match_info["version"]}
+
     async def train_model(request, player, said, owners):
         from services.duels import balance, training
 
@@ -448,6 +454,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
         web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
         web.post("/render/admin/duels/models/train", handler(admin(train_model))),
+        web.post("/render/admin/duels/models/{version}/delete", handler(admin(delete_model))),
         web.post("/render/admin/duels/catalog/discover", handler(admin(catalog_discover))),
         web.post("/render/admin/duels/{duel_id}/cancel", handler(admin(operator_cancel))),
         web.post("/render/admin/duels/{duel_id}/finalize", handler(admin(finalize))),

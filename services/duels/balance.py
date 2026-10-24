@@ -256,6 +256,18 @@ async def publish(factory, actor: int, version: str, reason: str, owners: tuple[
             chosen.state, chosen.published_at, chosen.published_by = "published", now, actor
             _audit(session, actor, role, "publish_model", version, reason, now=now)
 
+async def delete_model(factory, actor: int, version: str, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> None:
+    if not reason.strip():
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, MODEL_PUBLISHER, owners)
+            chosen = await session.get(DuelModelVersion, version)
+            if chosen is None or chosen.state == "published":
+                raise DuelError("INVALID_STATE")
+            await session.delete(chosen)
+            _audit(session, actor, role, "delete_model", version, reason.strip(), before={"state": chosen.state}, now=now)
+
 async def rollback(factory, actor: int, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> Optional[str]:
     now = now or utcnow()
     async with factory() as session:

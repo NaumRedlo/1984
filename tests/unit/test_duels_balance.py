@@ -173,7 +173,15 @@ async def test_a_shadow_model_is_trained_only_with_enough_new_labels_and_publish
     await balance.publish(factory, 1, made, "beats the old one on held-out maps", owners=(555,))
     assert (await balance.published(factory)).version == made
     with pytest.raises(DuelError):
+        await balance.delete_model(factory, 1, made, "in use", owners=(555,))
+    with pytest.raises(DuelError):
         await balance.rollback(factory, 1, "nothing earlier", owners=(555,))
+    await balance.train(factory, "kamerton-9", {}, {}, 0, clock.now)
+    with pytest.raises(balance.Forbidden):
+        await balance.delete_model(factory, 2, "kamerton-9", "not mine to delete")
+    await balance.delete_model(factory, 1, "kamerton-9", "trained by mistake", owners=(555,))
+    async with factory() as session:
+        assert await session.get(DuelModelVersion, "kamerton-9") is None
 
 async def _labelled_more(factory):
     from tests.unit.test_duels_analysis import _features
