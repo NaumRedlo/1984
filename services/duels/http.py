@@ -305,6 +305,8 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         running = discovering.get("training")
         if running is not None and not running.done():
             return {"started": False}
+        if await training.unchanged(factory_of()):
+            return web.json_response({"error": "NOTHING_NEW"}, status=409)
         discovering["training"] = watched(training.train(factory_of()), "training Kamerton")
         return {"started": True}
 

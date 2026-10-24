@@ -209,12 +209,23 @@ async def test_a_shadow_model_is_trained_only_with_enough_new_labels_and_publish
         await session.commit()
     assert await balance.working_model(factory) is None
 
-async def test_two_trainings_at_once_never_share_a_number(factory):
+async def test_training_on_the_same_maps_makes_no_new_version(factory):
+    await _labelled(factory, 20)
+    assert not await training.unchanged(factory)
+    first = await training.train(factory, steps=20)
+    assert first[0] == "kamerton-1" and await training.unchanged(factory)
+    assert await training.train(factory, steps=20) is None
+    await _labelled_more(factory)
+    assert not await training.unchanged(factory)
+    assert (await training.train(factory, steps=20))[0] == "kamerton-2"
+
+async def test_two_trainings_at_once_make_one_version(factory):
     import asyncio
 
     await _labelled(factory, 20)
     first, second = await asyncio.gather(training.train(factory, steps=20), training.train(factory, steps=20))
-    assert {first[0], second[0]} == {"kamerton-1", "kamerton-2"}
+    assert sorted([first is None, second is None]) == [False, True]
+    assert (first or second)[0] == "kamerton-1"
 
 async def _labelled_more(factory):
     from tests.unit.test_duels_analysis import _features

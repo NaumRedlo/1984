@@ -48,6 +48,20 @@ async def _gathered(factory) -> tuple[list, list]:
         decided = await labelled(session)
     return found, decided
 
+def fingerprint(rows) -> str:
+    made = hashlib.sha256()
+    for features, label, set_id in sorted(rows, key=lambda row: (row[2], row[1], [round(value, 6) for value in row[0]])):
+        made.update(f"{set_id}:{label}:{','.join(f'{value:.6f}' for value in features)};".encode())
+    return made.hexdigest()
+
+async def unchanged(factory) -> bool:
+    found, decided = await _gathered(factory)
+    rows = [(row[0], row[1], row[2]) for row in found] + decided
+    async with factory() as session:
+        last = await session.scalar(select(DuelModelVersion).where(DuelModelVersion.version.like(f"{NAME}-%"))
+                                    .order_by(DuelModelVersion.created_at.desc()))
+    return last is not None and (last.report or {}).get("fingerprint") == fingerprint(rows)
+
 def _people(found, decided) -> int:
     return sum(1 for row in found if row[5]) + len(decided)
 
@@ -67,6 +81,12 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
     found, decided = await _gathered(factory)
     rows = [(row[0], row[1], row[2]) for row in found] + decided
     if len({label for _, label, _ in rows}) < 2:
+        return None
+    printed = fingerprint(rows)
+    async with factory() as session:
+        last = await session.scalar(select(DuelModelVersion).where(DuelModelVersion.version.like(f"{NAME}-%"))
+                                    .order_by(DuelModelVersion.created_at.desc()))
+    if last is not None and (last.report or {}).get("fingerprint") == printed:
         return None
     truth, guessed, sure, years = [], [], [], {}
     folds = [(str(year), [(row[0], row[1], row[2]) for row in found if not row[4] and row[3] == year])
@@ -90,7 +110,7 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
     model.version = version
     found_report = {"name": NAME, "number": number, "maps": len(rows), "corpus": len(found), "own": sum(1 for row in found if row[4]),
                     "queue": len(decided), "verified": sum(1 for row in found if row[5]), "test": importer.judged(truth, guessed, sure),
-                    "years": years}
+                    "years": years, "fingerprint": printed}
     await balance.train(factory, version, model.dump(), found_report, _people(found, decided), now)
     return version, found_report
 
