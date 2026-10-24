@@ -110,3 +110,20 @@ async def test_a_finished_duel_shows_its_players_what_it_will_do_to_their_rating
         assert await rating.projection(session, await session.get(Duel, "d1"), 3) is None
         assert await rating.projection(session, await session.get(Duel, "d2"), 1) is None
     assert won["before"] == lost["before"] == 1500 and won["after"] > 1500 > lost["after"]
+
+async def test_a_meeting_shows_both_records_and_what_happened_between_them(factory):
+    await _series(factory, 1, 1, 2, 1)
+    await _series(factory, 2, 1, 2, 2)
+    await _series(factory, 3, 1, 3, 1)
+    await _series(factory, 4, 2, 3, 3)
+    async with factory() as session:
+        duel = Duel(id="now", mode="rated", state="DRAFTING", rules_version="duels-v1", seed="s")
+        session.add(duel)
+        await session.flush()
+        session.add_all([DuelParticipant(duel_id="now", player_id=1, osu_user_id=101, side="A"), DuelParticipant(duel_id="now", player_id=2, osu_user_id=102, side="B")])
+        await session.commit()
+        shown = await rating.meeting(session, await session.get(Duel, "now"))
+    assert (shown["players"]["1"]["won"], shown["players"]["1"]["lost"]) == (2, 1)
+    assert (shown["players"]["2"]["won"], shown["players"]["2"]["lost"]) == (1, 2)
+    assert shown["between"] == {"1": 1, "2": 1}
+    assert shown["players"]["1"]["rating"] is None

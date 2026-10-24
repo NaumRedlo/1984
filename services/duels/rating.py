@@ -127,6 +127,30 @@ async def projection(session, duel: Duel, viewer_id: Optional[int], version: str
     after = glicko.update(before, [glicko.Game(await held(other), 1.0 if duel.winner_id == viewer_id else 0.0)])
     return {"before": round(before.rating), "after": round(after.rating)}
 
+async def meeting(session, duel: Duel, version: str = VERSION) -> dict[str, Any]:
+    people = (await session.scalars(select(DuelParticipant).where(DuelParticipant.duel_id == duel.id))).all()
+    ids = [person.player_id for person in people]
+    done = (await session.execute(
+        select(Duel.id, Duel.winner_id, DuelParticipant.player_id).join(DuelParticipant, DuelParticipant.duel_id == Duel.id)
+        .where(DuelParticipant.player_id.in_(ids or [0]), Duel.state == "COMPLETED", Duel.winner_id.is_not(None), Duel.id != duel.id)
+    )).all()
+    period = period_of(utcnow())
+    found: dict[str, Any] = {"players": {}, "between": {}}
+    for player in ids:
+        row = await session.scalar(select(DuelGlicko).where(DuelGlicko.player_id == player, DuelGlicko.version == version))
+        shown = _as_rating(row, period) if row is not None else None
+        calibrating = row is None or row.calibration_count < PARAMETERS["calibration_series"]
+        mine = {duel_id: winner for duel_id, winner, who in done if who == player}
+        found["players"][str(player)] = {
+            "rating": None if calibrating or shown is None else round(shown.rating), "rd": round(shown.rd) if shown is not None else None,
+            "won": sum(1 for winner in mine.values() if winner == player), "lost": sum(1 for winner in mine.values() if winner != player),
+        }
+    if len(ids) == 2:
+        first = {duel_id: winner for duel_id, winner, who in done if who == ids[0]}
+        shared = {duel_id: winner for duel_id, winner, who in done if who == ids[1] and duel_id in first}
+        found["between"] = {str(player): sum(1 for winner in shared.values() if winner == player) for player in ids}
+    return found
+
 async def standing(factory, player_id: int, now: Optional[datetime] = None, version: str = VERSION) -> dict[str, Any]:
     now = now or utcnow()
     async with factory() as session:
