@@ -302,6 +302,13 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     cells = await balance.corpus_table(factory, 1)
     assert [(c["slot"], c["maps"][0]["label"], c["maps"][0]["verified"]) for c in cells if c["slot"] in ("NM2", "NM5")] == [("NM2", "NM2", False), ("NM5", "OTHER", False)]
     assert all(m["title"] for c in cells for m in c["maps"] if m["file"])
+    from sqlalchemy import update
+    from db.models.duel_catalog import DuelMapRevision
+    async with factory() as session:
+        await session.execute(update(DuelMapRevision).values(title=None))
+        await session.commit()
+    await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
+    assert all(m["title"] == "Example Song" for c in await balance.corpus_table(factory, 1) for m in c["maps"] if m["file"])
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM2", None, "NM3", "в этом году NM2 был альтернированием")
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "NM4", "техника")
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, corpus.EXCLUDED, "спорная карта")

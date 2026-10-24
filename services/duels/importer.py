@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime
 from typing import Any, Optional
 
@@ -147,11 +148,29 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
             break
     return counted
 
+async def _name_revision(session, revision: DuelMapRevision, folder: str) -> None:
+    path = os.path.join(folder, f"{revision.hash}.osu")
+    if not os.path.exists(path):
+        return
+    try:
+        beatmap = await asyncio.to_thread(parse, await asyncio.to_thread(_read, path))
+    except (OSError, OsuFileError):
+        return
+    revision.title, revision.artist, revision.version = beatmap.title[:200] or None, beatmap.artist[:200] or None, beatmap.version[:200] or None
+    revision.mapper = revision.mapper or beatmap.creator[:64] or None
+    await session.commit()
+
+def _read(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
+
 async def _example_file(factory, fetch, example: corpus.Example, folder: str, now: datetime) -> Optional[str]:
     async with factory() as session:
         held = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == example.beatmap_id)
                                     .order_by(DuelMapRevision.downloaded_at.desc()))
         if held is not None and await _analysed(session, held.hash) >= set(ANALYSED):
+            if held.title is None:
+                await _name_revision(session, held, folder)
             return held.hash
     fetched = await mirrors.fetch_osu(fetch, example.beatmapset_id or 0, example.beatmap_id, None)
     if fetched is None:
