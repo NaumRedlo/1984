@@ -115,6 +115,8 @@ async def test_a_series_runs_from_the_pool_to_three_wins(factory):
     assert (done["state"], done["wins"], done["outcome"]) == (states.COMPLETED, {"A": 3, "B": 1}, "played")
     assert done["winner"] == _player(done, "A")
     assert [r["picked_by"] for r in done["rounds"]] == [_player(done, s) for s in ("B", "A", "B", "A")]
+    first_winner = str(_player(done, "A"))
+    assert done["rounds"][0]["scores"][first_winner]["score"] == 900000 and len(done["rounds"][0]["scores"]) == 2
     async with factory() as session:
         assert await session.scalar(select(func.count()).select_from(DuelLease)) == 0
 

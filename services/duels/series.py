@@ -95,8 +95,19 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
     found["bonus"] = None if extra is None else {"state": extra.state, "consents": extra.consents, "winner": extra.winner_id,
                                                   "scores": extra.scores}
     found["draft"] = [{"turn": t.turn_index, "type": t.type, "slot": t.slot, "by": t.actor_id, "automatic": t.automatic} for t in turns]
-    found["rounds"] = [{"ordinal": r.ordinal, "slot": r.slot, "state": r.state, "winner": r.winner_id, "ties": r.tie_count,
-                        "picked_by": r.selected_by} for r in await _rounds(session, duel.id)]
+    by_osu = {int(person.osu_user_id): person.player_id for person in people}
+    shown_rounds = []
+    for r in await _rounds(session, duel.id):
+        scores = {}
+        attempt = await _attempt(session, r.id)
+        if attempt is not None:
+            for score in (await session.scalars(select(DuelRoundScore).where(DuelRoundScore.attempt_id == attempt.id))).all():
+                player = by_osu.get(int(score.osu_user_id))
+                if player is not None:
+                    scores[str(player)] = {"score": int(score.score_v2), "accuracy": score.accuracy, "combo": score.max_combo}
+        shown_rounds.append({"ordinal": r.ordinal, "slot": r.slot, "state": r.state, "winner": r.winner_id, "ties": r.tie_count,
+                             "picked_by": r.selected_by, "scores": scores})
+    found["rounds"] = shown_rounds
     me = _side_of(people, viewer_id) if viewer_id is not None else None
     actions = list(found["actions"])
     if duel.state in (states.DRAFTING, states.SELECTING) and me is not None:
