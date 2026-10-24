@@ -179,7 +179,7 @@ async def test_a_shadow_model_is_trained_only_with_enough_new_labels_and_publish
     await balance.train(factory, "kamerton-9", {}, {}, 0, clock.now)
     with pytest.raises(balance.Forbidden):
         await balance.delete_model(factory, 2, "kamerton-9", "not mine to delete")
-    await balance.delete_model(factory, 1, "kamerton-9", "trained by mistake", owners=(555,))
+    await balance.delete_model(factory, 1, "kamerton-9", "", owners=(555,))
     async with factory() as session:
         assert await session.get(DuelModelVersion, "kamerton-9") is None
         assert await training._number(session) == 10

@@ -142,8 +142,6 @@ async def uncertain_revealed(session, duel_id: str, now: datetime) -> int:
 async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason: str, owners: tuple[int, ...] = (),
                      slot: Optional[str] = None, now: Optional[datetime] = None) -> dict[str, Any]:
     now = now or utcnow()
-    if not reason.strip():
-        raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
@@ -156,16 +154,12 @@ async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason
 
 async def note_discovery(factory, actor: int, least: float, most: float, reason: str, owners: tuple[int, ...] = (),
                          now: Optional[datetime] = None) -> None:
-    if not reason.strip():
-        raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             _audit(session, actor, role, "discover", f"{least:.1f}-{most:.1f}", reason.strip(), now=now)
 
 async def note_training(factory, actor: int, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> None:
-    if not reason.strip():
-        raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
@@ -260,8 +254,6 @@ async def publish(factory, actor: int, version: str, reason: str, owners: tuple[
             _audit(session, actor, role, "publish_model", version, reason, now=now)
 
 async def delete_model(factory, actor: int, version: str, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> None:
-    if not reason.strip():
-        raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, MODEL_PUBLISHER, owners)
@@ -343,7 +335,7 @@ async def label_corpus(factory, actor: int, corpus_version: str, year: int, stag
     from services.duels import corpus
 
     now = now or utcnow()
-    if not corpus.allowed(label) or corpus_version not in corpus.LEARNED or not reason.strip():
+    if not corpus.allowed(label) or corpus_version not in corpus.LEARNED:
         raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
@@ -369,7 +361,7 @@ async def add_tournament(factory, actor: int, name: str, year: int, text: str, r
 
     now = now or utcnow()
     name = name.strip()[:120]
-    if not name or not reason.strip():
+    if not name:
         raise DuelError("INVALID_STATE")
     found = corpus.read_pools(text, year, f"own:{name}")
     async with factory() as session:

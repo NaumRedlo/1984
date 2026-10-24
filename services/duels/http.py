@@ -210,8 +210,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             from services.duels import balance
 
             reason = said.get("reason")
-            if request.method == "POST" and (not isinstance(reason, str) or not reason.strip()):
-                raise web.HTTPBadRequest(text="reason is required")
+            said = {**said, "reason": reason.strip()[:2000] if isinstance(reason, str) else ""}
             try:
                 return await work(request, player, said, tuple(ADMIN_IDS))
             except balance.Forbidden as role:
