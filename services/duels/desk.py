@@ -243,6 +243,7 @@ async def live(factory, now: Optional[datetime] = None, watchers: Optional[Calla
                     entry_ = await session.scalar(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
                                                   .where(DuelPool.duel_id == duel.id, DuelPoolEntry.slot == round_.slot))
                     found["beatmap_id"] = int(entry_.beatmap_id) if entry_ is not None else None
+                    found["stars"] = (entry_.metrics_snapshot or {}).get("stars") if entry_ is not None else None
                     revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == entry_.beatmap_id,
                                                                                  DuelMapRevision.hash == entry_.revision_hash)) if entry_ is not None else None
                     found["title"] = revision.title if revision is not None else None
