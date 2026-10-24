@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy import func, select
 
-from db.models.duel_catalog import DuelMapRevision
+from db.models.duel_catalog import DuelMapAnalysis, DuelMapRevision
 from db.models.duel import (Duel, DuelAttempt, DuelBonus, DuelDraftAction, DuelParticipant, DuelPool, DuelPoolDelivery, DuelPoolEntry,
                             DuelRoom, DuelRound, DuelRoundScore)
 from services.duels import states
@@ -79,8 +79,14 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
         for e in entries:
             revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == e.beatmap_id, DuelMapRevision.hash == e.revision_hash))
             if revision is not None:
+                analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == e.revision_hash,
+                                                                              DuelMapAnalysis.mods == "".join(SLOT_MODS.get(e.slot, ())))
+                                                .order_by(DuelMapAnalysis.created_at.desc()))
+                features = (analysis.features or {}) if analysis is not None else {}
+                length, rate = features.get("length_seconds"), (features.get("effective") or {}).get("rate", 1.0)
                 about[e.slot] = {"title": revision.title, "artist": revision.artist, "version": revision.version, "mapper": revision.mapper,
-                                 "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None}
+                                 "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
+                                 "song_seconds": round(length * rate, 3) if length is not None else None}
     found["pool"] = None if not shown else {
         "manifest": pool.manifest_hash,
         "entries": [{"slot": e.slot, "beatmap_id": e.beatmap_id, "mods": e.mods, "banned_by": e.banned_by, "used": e.used,
