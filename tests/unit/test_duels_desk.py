@@ -1,4 +1,5 @@
 from datetime import timedelta
+import pytest
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -86,3 +87,12 @@ async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     shown = await desk.live(factory, watchers=lambda duel_id: 4)
     assert [d["id"] for d in shown["running"]] == ["stuck-1"] and shown["running"][0]["watching"] == 4
     assert [(d["id"], d["winner"]) for d in shown["finished"]] == [("done-1", 2)] and shown["finished"][0]["seconds_ago"] < 60
+
+async def test_a_search_on_the_mirrors_is_kept_in_the_journal_and_needs_a_reviewer(factory):
+    from services.duels import balance
+
+    with pytest.raises(balance.Forbidden):
+        await balance.note_discovery(factory, 2, 5.5, 6.0, "мало альтернейта")
+    await balance.note_discovery(factory, 1, 5.5, 6.0, "мало альтернейта")
+    entries = await desk.journal(factory, 1)
+    assert (entries[0]["action"], entries[0]["target"], entries[0]["reason"]) == ("discover", "5.5-6.0", "мало альтернейта")

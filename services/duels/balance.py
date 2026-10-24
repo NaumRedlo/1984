@@ -151,6 +151,15 @@ async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason
             _audit(session, actor, role, f"map_{decision.lower()}", str(beatmap_id), reason, after=after, now=now)
             return after
 
+async def note_discovery(factory, actor: int, least: float, most: float, reason: str, owners: tuple[int, ...] = (),
+                         now: Optional[datetime] = None) -> None:
+    if not reason.strip():
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            _audit(session, actor, role, "discover", f"{least:.1f}-{most:.1f}", reason.strip(), now=now)
+
 async def open_reviews(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
     async with factory() as session:
         await _allowed(session, actor, BALANCE_REVIEWER, owners)
