@@ -1610,7 +1610,20 @@ def _duel_routes(guard) -> list[web.RouteDef]:
 
         return AsyncSessionFactory
 
-    return duel_http.routes(guard, _who, factory, lambda: _osu)
+    async def who(request):
+        owner = await _who(request)
+        if owner is None or owner.player_id is not None or not owner.telegram_id:
+            return owner
+        from sqlalchemy import select
+        from db.models.player import Player
+
+        async with factory()() as session:
+            player = await session.scalar(select(Player).where(Player.telegram_id == owner.telegram_id))
+            if player is None:
+                return owner
+            return invites.Owner(int(player.telegram_id), player.osu_username or owner.name, player.id)
+
+    return duel_http.routes(guard, who, factory, lambda: _osu)
 
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:

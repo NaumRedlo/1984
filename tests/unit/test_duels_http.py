@@ -223,3 +223,34 @@ async def test_the_live_list_my_roles_and_the_balance_desk_are_served(client, fa
     assert people == {"people": [{"player": 1, "name": "one", "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]}
     assert await (await client.get("/render/admin/duels/models", headers=_as(1))).json() == {"models": []}
     assert await (await client.get("/render/admin/duels/journal", headers=_as(1))).json() == {"entries": []}
+
+@pytest.mark.parametrize("identity,expected", [("telegram", 200), ("unlinked", 403), ("player", 200), ("deleted", 404)])
+async def test_render_duel_routes_resolve_legacy_telegram_identity(factory, monkeypatch, identity, expected):
+    import db.database
+    import config.settings
+    from services.render_farm import http as farm_http, invites
+
+    async with factory() as session:
+        player = await session.get(Player, 1)
+        player.telegram_id = 700
+        await session.commit()
+    monkeypatch.setattr(db.database, "AsyncSessionFactory", factory)
+    monkeypatch.setattr(config.settings, "ADMIN_IDS", [700])
+    owners = {
+        "telegram": invites.Owner(700, "old name"),
+        "unlinked": invites.Owner(701, "one"),
+        "player": invites.Owner(0, "old name", 1),
+        "deleted": invites.Owner(700, "old name", 999),
+    }
+    monkeypatch.setattr(invites, "owner", lambda token: owners[identity])
+    app = web.Application()
+    app.add_routes(farm_http._duel_routes(_guard))
+    async with TestClient(TestServer(app)) as client:
+        response = await client.get("/render/duels/roles/me", headers=_as("legacy"))
+        assert response.status == expected
+        if expected == 200:
+            assert "OWNER" in (await response.json())["roles"]
+            profile = await client.get("/render/duels/profile/me", headers=_as("legacy"))
+            assert profile.status == 200
+        elif expected == 403:
+            assert (await response.json())["error"] == "NOT_LINKED"
