@@ -86,6 +86,9 @@ def reserved(label: str) -> bool:
 def allowed(label: str) -> bool:
     return label in LABELS or reserved(label)
 
+def read_back(label: Optional[str], original_slot: str) -> Optional[str]:
+    return original_slot if label == "OTHER" and reserved(original_slot) else label
+
 def learned(label: str) -> str:
     return label
 

@@ -347,7 +347,7 @@ async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> lis
     for row in rows:
         key = (row.corpus_version, row.year, row.stage, row.original_slot)
         cell = cells.setdefault(key, {"corpus": row.corpus_version, "year": row.year, "stage": row.stage, "slot": row.original_slot,
-                                      "label": labels.get(key + (None,)), "maps": []})
+                                      "label": corpus.read_back(labels.get(key + (None,)), row.original_slot), "maps": []})
         label, verified = importer.resolved(row, labels)
         cell["maps"].append({"beatmap_id": int(row.beatmap_id), "beatmapset_id": int(row.beatmapset_id) if row.beatmapset_id else None,
                              "label": label or corpus.EXCLUDED, "verified": verified, "file": row.revision_hash is not None,

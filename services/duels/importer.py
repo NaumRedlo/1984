@@ -242,6 +242,7 @@ def resolved(example, labels: dict[tuple, str]) -> tuple[Optional[str], bool]:
         chosen, verified = labels[cell + (None,)], True
     else:
         chosen, verified = corpus.label(example.original_slot) or example.normalized_label, False
+    chosen = corpus.read_back(chosen, example.original_slot)
     return (None if chosen == corpus.EXCLUDED else chosen), verified
 
 async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=print, now: Optional[datetime] = None) -> dict[str, int]:
