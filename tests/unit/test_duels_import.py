@@ -258,6 +258,12 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     assert again == {"filed": 6}
     rows = await importer.corpus_rows(factory)
     assert sorted(row[1] for row in rows) == ["FL1", "HD2", "NM1", "NM2", "NM5", "TB"]
+    from services.duels.slot_model import vector
+    hidden = next(row for row in rows if row[1] == "HD2")
+    async with factory() as session:
+        example = next(e for e in (await session.scalars(select(db.models.duel_catalog.DuelTrainingExample))).all() if e.original_slot == "HD2")
+        plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash, DuelMapAnalysis.mods == "NF"))
+    assert hidden[0] == vector(plain.features)
     version, found = await training.train(factory, steps=20)
     assert version == "kamerton-1" and found["maps"] == 6 and found["test"]["count"] == 0 and found["years"] == {}
     async with factory() as session:

@@ -27,6 +27,7 @@ def suitable(entry: dict[str, Any]) -> bool:
 
 WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
 YEARS = (2021, 2022, 2023, 2024, 2025)
+SEEN_AS = "NF"
 GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "EZ": "NF", "FL": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
 
 async def known(factory, entry: dict[str, Any]) -> bool:
@@ -283,11 +284,8 @@ async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, b
             if label is None:
                 continue
             label = corpus.learned(label)
-            mods = "".join(SLOT_MODS[label]) if label in SLOT_MODS else (example.mods or GROUP_MODS.get(example.original_slot[:2]))
-            if mods is None:
-                continue
             analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash,
-                                                                         DuelMapAnalysis.mods == mods,
+                                                                         DuelMapAnalysis.mods == SEEN_AS,
                                                                          DuelMapAnalysis.feature_version == FEATURE_VERSION))
             if analysis is None or not analysis.features:
                 continue
