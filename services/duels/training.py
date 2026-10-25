@@ -10,8 +10,8 @@ from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRe
 from services.duels import balance
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
-from services.duels.importer import SEEN_AS
-from services.duels.slot_model import OTHER, SlotModel, vector
+from services.duels.importer import seen_of
+from services.duels.slot_model import OTHER, SEEN, SlotModel, seen_vector
 from utils.timeutils import utcnow
 
 NAME = "kamerton"
@@ -32,12 +32,10 @@ async def labelled(session) -> list[tuple[list[float], str, int]]:
     found = []
     for assignment, revision in rows:
         label = assignment.slot
-        analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
-                                                                     DuelMapAnalysis.mods == SEEN_AS,
-                                                                     DuelMapAnalysis.feature_version == FEATURE_VERSION))
-        if analysis is None or not analysis.features:
+        plain, views = await seen_of(session, revision.hash)
+        if not plain:
             continue
-        found.append((vector(analysis.features), label, int(revision.beatmapset_id or assignment.beatmap_id)))
+        found.append((seen_vector(plain, views), label, int(revision.beatmapset_id or assignment.beatmap_id)))
     return found
 
 async def _gathered(factory) -> tuple[list, list]:
@@ -101,11 +99,11 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
         rest = [row for row in rows if row[2] not in sets]
         if len({label for _, label, _ in rest}) < 2:
             continue
-        model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rest], [label for _, label, _ in rest], 0.01, steps)
+        model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rest], [label for _, label, _ in rest], 0.01, steps, paths=SEEN)
         part = importer.guesses(model, held)
         years[name] = importer.judged(*part)
         truth, guessed, sure = truth + part[0], guessed + part[1], sure + part[2]
-    model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rows], [label for _, label, _ in rows], 0.01, steps)
+    model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rows], [label for _, label, _ in rows], 0.01, steps, paths=SEEN)
     async with factory() as session:
         number = await _number(session)
     version = f"{NAME}-{number}"

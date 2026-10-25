@@ -7,7 +7,7 @@ from sqlalchemy import select
 from db.models.duel import Duel, DuelAudit, DuelBalanceReview, DuelFeedback, DuelModelVersion, DuelParticipant, DuelPool, DuelPoolEntry, DuelRole, DuelRound
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
-from services.duels import balance, catalog, states
+from services.duels import balance, catalog, importer, states
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
 from services.duels.rules import SLOTS
@@ -67,18 +67,19 @@ async def _opinions(session, beatmap_id: int) -> dict[str, Any]:
     return {"played": played, "fits": fits["fits"], "off": fits["off"], "difficulty": difficulty,
             "comments": [row.comment for row in rows if row.comment][-5:]}
 
-def _explain(model, features: dict[str, Any], base_ar: float, hr_cs: float) -> Optional[dict[str, Any]]:
+def _explain(model, features: dict[str, Any], base_ar: float, hr_cs: float, views: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
     if model is None or not features:
         return None
     try:
-        prediction = model.predict(features, base_ar, hr_cs)
+        prediction = model.predict(features, base_ar, hr_cs, views)
     except Exception:
         return None
-    from services.duels.slot_model import PATHS, vector
+    from services.duels.slot_model import PATHS, seen_vector
 
     ranked = sorted(((slot, value) for slot, value in prediction.probabilities.items() if slot != "OTHER"), key=lambda pair: -pair[1])[:4]
     normaliser = getattr(model, "normaliser", None)
-    levels = dict(zip(PATHS, normaliser.apply(vector(features)))) if normaliser is not None else {}
+    paths = getattr(model, "paths", PATHS)
+    levels = dict(zip(paths, normaliser.apply(seen_vector(features, views, paths)))) if normaliser is not None else {}
     return {"slot": prediction.slot, "probability": prediction.probability, "margin": prediction.margin,
             "top": [{"slot": slot, "probability": value} for slot, value in ranked],
             "reasons": [{"feature": name, "weight": weight, "level": levels.get(name, 0.0)} for name, weight in prediction.reasons],
@@ -116,7 +117,7 @@ def settings_of(digest: Optional[str], folder: Optional[str] = None) -> dict[str
         found["ar"] = found["od"]
     return found
 
-async def _map(session, beatmap_id: int, digest: Optional[str], model) -> dict[str, Any]:
+async def _map(session, beatmap_id: int, digest: Optional[str], model, slot: Optional[str] = None) -> dict[str, Any]:
     revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == beatmap_id)
                                     .order_by(DuelMapRevision.downloaded_at.desc()))
     digest = digest or (revision.hash if revision is not None else None)
@@ -125,13 +126,21 @@ async def _map(session, beatmap_id: int, digest: Optional[str], model) -> dict[s
     features = plain.features if plain is not None else {}
     effective = (features or {}).get("effective") or {}
     rock_cs = (((rock.features or {}).get("effective") or {}).get("cs") if rock is not None else None) or effective.get("cs", 0.0)
+    mods = [mod for mod in SLOT_MODS.get(slot or "", ()) if mod != "NF"]
+    slotted = await _analysis(session, digest, "".join(SLOT_MODS[slot])) if mods else None
+    settings = settings_of(digest)
+    played = (slotted.features or {}) if slotted is not None else features or {}
+    if slotted is not None:
+        settings.update({name: value for name, value in (played.get("effective") or {}).items() if name in ("cs", "ar", "od")})
+        if "HR" in mods and "hp" in settings:
+            settings["hp"] = min(10.0, settings["hp"] * 1.4)
     return {"beatmap_id": beatmap_id, "beatmapset_id": int(revision.beatmapset_id) if revision is not None and revision.beatmapset_id else None,
             "mapper": revision.mapper if revision is not None else None, "ranked_status": revision.ranked_status if revision is not None else None,
             "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
             "version": revision.version if revision is not None else None,
-            "stars": plain.stars if plain is not None else None, "revision": digest,
-            "settings": settings_of(digest), "length": (features or {}).get("length_seconds"),
-            "model": _explain(model, features, effective.get("ar", 0.0), rock_cs)}
+            "stars": (slotted or plain).stars if (slotted or plain) is not None else None, "plain_stars": plain.stars if plain is not None else None,
+            "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"),
+            "model": _explain(model, features, effective.get("ar", 0.0), rock_cs, (await importer.seen_of(session, digest))[1])}
 
 async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:
     async with factory() as session:
@@ -146,7 +155,8 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
             found.append({"kind": "review", "id": review.id, "reason": review.reason, "since": _stamp(review.requested_at),
                           "slot": assignment.slot if assignment is not None else None,
                           "state": assignment.state if assignment is not None else None,
-                          "map": await _map(session, int(review.beatmap_id), review.revision_hash, model),
+                          "map": await _map(session, int(review.beatmap_id), review.revision_hash, model,
+                                           assignment.slot if assignment is not None else None),
                           "opinions": await _opinions(session, int(review.beatmap_id)),
                           "feedback": await balance.weigh(session, int(review.beatmap_id))})
         unsure = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.AUTO_ASSIGNED,
@@ -159,7 +169,7 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
                 continue
             seen.add(int(assignment.beatmap_id))
             found.append({"kind": "review", "id": None, "reason": "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
-                          "state": assignment.state, "map": await _map(session, int(assignment.beatmap_id), assignment.revision_hash, model),
+                          "state": assignment.state, "map": await _map(session, int(assignment.beatmap_id), assignment.revision_hash, model, assignment.slot),
                           "opinions": await _opinions(session, int(assignment.beatmap_id)), "feedback": None})
         waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
                                                                          DuelMapAssignment.admitted.is_(True))

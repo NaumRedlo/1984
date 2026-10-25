@@ -36,6 +36,22 @@ PATHS = (
     "tap_windows.2s.median", "tap_windows.2s.p90", "tap_windows.2s.max", "tap_windows.10s.p90", "tap_windows.30s.loaded_share",
 )
 
+VIEWS = (
+    ("NFDT", ("interval_ms.median", "interval_ms.p90", "speed_px_ms.median", "speed_px_ms.p90", "speed_px_ms.p99", "aim_windows.2s.p90",
+              "aim_windows.2s.max", "tap_windows.2s.median", "tap_windows.2s.p90", "tap_windows.2s.max", "effective.ar", "effective.od",
+              "length_seconds")),
+    ("NFHR", ("spacing_radii.median", "spacing_radii.p90", "speed_px_ms.p90", "aim_windows.2s.p90", "aim_windows.2s.max", "effective.cs",
+              "effective.ar", "effective.od")),
+)
+SEEN = PATHS + tuple(f"{mods}:{path}" for mods, paths in VIEWS for path in paths)
+
+def seen_vector(features: dict[str, Any], views: Optional[dict[str, dict[str, Any]]] = None, paths: tuple[str, ...] = SEEN) -> list[float]:
+    found = vector(features)
+    for name in paths[len(PATHS):]:
+        mods, path = name.split(":", 1)
+        found.append(_get((views or {}).get(mods) or {}, path))
+    return found
+
 def vector(features: dict[str, Any]) -> list[float]:
     found = [_get(features, path) for path in PATHS]
     objects = max(1.0, _get(features, "objects") if math.isfinite(_get(features, "objects")) else 1.0)
@@ -103,16 +119,18 @@ class SlotModel:
     bias: list[float]
     version: str = MODEL_VERSION
     classes: tuple[str, ...] = CLASSES
+    paths: tuple[str, ...] = PATHS
 
     @classmethod
-    def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5) -> "SlotModel":
+    def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5,
+            paths: tuple[str, ...] = PATHS) -> "SlotModel":
         classes = SLOTS + tuple(sorted({label for label in labels if reserved(label)}))
         kept = [(row, label) for row, label in zip(rows, labels) if label in classes]
         rows, labels = [row for row, _ in kept], [label for _, label in kept]
         normaliser = Normaliser.fit(rows)
         data = [normaliser.apply(row) for row in rows]
         targets = [classes.index(label) for label in labels]
-        width = len(PATHS)
+        width = len(paths)
         weights = [[0.0] * width for _ in classes]
         bias = [0.0] * len(classes)
         count = max(1, len(data))
@@ -131,10 +149,10 @@ class SlotModel:
                 bias[k] -= rate * grad_b[k] / count
                 for j in range(width):
                     weights[k][j] -= rate * (grad_w[k][j] / count + strength * weights[k][j])
-        return cls(normaliser, weights, bias, MODEL_VERSION, classes)
+        return cls(normaliser, weights, bias, MODEL_VERSION, classes, paths)
 
-    def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float) -> Prediction:
-        raw = vector(features)
+    def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float, views: Optional[dict[str, dict[str, Any]]] = None) -> Prediction:
+        raw = seen_vector(features, views, self.paths)
         row = self.normaliser.apply(raw)
         scores = [b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(self.weights, self.bias)]
         classes = self.classes
@@ -146,27 +164,28 @@ class SlotModel:
         best = ranked[0]
         second = next((k for k in ranked[1:] if classes[k] != OTHER), None)
         margin = probabilities[best] - (probabilities[second] if second is not None else 0.0)
-        reasons = sorted(((PATHS[j], self.weights[best][j] * row[j]) for j in range(len(PATHS))), key=lambda pair: -abs(pair[1]))[:5]
+        reasons = sorted(((self.paths[j], self.weights[best][j] * row[j]) for j in range(len(self.paths))), key=lambda pair: -abs(pair[1]))[:5]
         outside = self.normaliser.outside(raw)
         slot = classes[best] if classes[best] in SLOTS and not outside else None
         return Prediction(slot, probabilities[best], margin, dict(zip(classes, probabilities)), outside, reasons)
 
     def dump(self) -> dict[str, Any]:
-        return {"version": self.version, "features": FEATURE_VERSION, "paths": list(PATHS), "classes": list(self.classes), "weights": self.weights, "bias": self.bias,
+        return {"version": self.version, "features": FEATURE_VERSION, "paths": list(self.paths), "classes": list(self.classes), "weights": self.weights, "bias": self.bias,
                 "centre": self.normaliser.centre, "spread": self.normaliser.spread, "low": self.normaliser.low,
                 "high": self.normaliser.high}
 
     @classmethod
     def load(cls, body: dict[str, Any]) -> "SlotModel":
         classes = tuple(body.get("classes") or ())
-        if body.get("paths") != list(PATHS) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
+        paths = tuple(body.get("paths") or ())
+        if paths not in (PATHS, SEEN) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
             raise ValueError("model was built for other features")
         extra = classes[len(SLOTS):-1] if classes[-1:] == (OTHER,) else classes[len(SLOTS):]
         if classes[:len(SLOTS)] != SLOTS or not all(reserved(name) for name in extra) \
                 or len(body.get("weights") or ()) != len(classes) or len(body.get("bias") or ()) != len(classes):
             raise ValueError("model was built for other classes")
         return cls(Normaliser(body["centre"], body["spread"], body["low"], body["high"]), body["weights"], body["bias"],
-                   body.get("version", MODEL_VERSION), classes)
+                   body.get("version", MODEL_VERSION), classes, paths)
 
 def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
     seen = set(truth) | set(guessed)

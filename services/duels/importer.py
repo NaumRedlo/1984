@@ -10,7 +10,7 @@ from services.duels import catalog, corpus, mirrors
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
-from services.duels.slot_model import OTHER, SlotModel, _softmax, report as scored
+from services.duels.slot_model import OTHER, SlotModel, _softmax, report as scored, seen_vector
 from utils.timeutils import utcnow
 
 MOD_BITS = {"NF": 1, "HD": 8, "HR": 16, "DT": 64}
@@ -28,6 +28,14 @@ def suitable(entry: dict[str, Any]) -> bool:
 WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
 YEARS = (2021, 2022, 2023, 2024, 2025)
 SEEN_AS = "NF"
+VIEWED = ("NFDT", "NFHR")
+
+async def seen_of(session, digest: Optional[str]) -> tuple[Optional[dict[str, Any]], dict[str, dict[str, Any]]]:
+    rows = (await session.scalars(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == digest,
+                                                                DuelMapAnalysis.mods.in_((SEEN_AS,) + VIEWED),
+                                                                DuelMapAnalysis.feature_version == FEATURE_VERSION))).all() if digest else []
+    found = {row.mods: row.features for row in rows if row.features}
+    return found.get(SEEN_AS), {mods: found[mods] for mods in VIEWED if mods in found}
 GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "EZ": "NF", "FL": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
 
 async def known(factory, entry: dict[str, Any]) -> bool:
@@ -81,7 +89,7 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
     prediction = None
     if model is not None:
         hr_cs = apply_mods(beatmap, "HR")[0]
-        prediction = model.predict(analyses["NF"][0], beatmap.ar, hr_cs)
+        prediction = model.predict(analyses["NF"][0], beatmap.ar, hr_cs, {mods: analyses[mods][0] for mods in VIEWED if mods in analyses})
     async with factory() as session:
         made, _ = await catalog.revision(session, entry["beatmap_id"], digest, beatmapset_id=entry["beatmapset_id"],
                                          ranked_status=entry.get("status"), mapper=entry.get("mapper"), source=source,
@@ -272,7 +280,6 @@ async def corpus_labels(session) -> dict[tuple, str]:
             for row in rows}
 
 async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, bool]]:
-    from services.duels.slot_model import vector
 
     async with factory() as session:
         labels = await corpus_labels(session)
@@ -285,12 +292,10 @@ async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, b
             if label is None:
                 continue
             label = corpus.learned(label)
-            analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash,
-                                                                         DuelMapAnalysis.mods == SEEN_AS,
-                                                                         DuelMapAnalysis.feature_version == FEATURE_VERSION))
-            if analysis is None or not analysis.features:
+            plain, views = await seen_of(session, example.revision_hash)
+            if not plain:
                 continue
-            found.append((vector(analysis.features), label, int(example.beatmapset_id or example.beatmap_id), example.year,
+            found.append((seen_vector(plain, views), label, int(example.beatmapset_id or example.beatmap_id), example.year,
                           example.corpus_version == corpus.OWN_VERSION, verified))
     return found
 
@@ -332,7 +337,8 @@ async def reassess(factory, model: SlotModel, now: Optional[datetime] = None) ->
             if plain is None or rock is None:
                 counted["no_analysis"] = counted.get("no_analysis", 0) + 1
                 continue
-            prediction = model.predict(plain.features, plain.features["effective"]["ar"], rock.features["effective"]["cs"])
+            _, views = await seen_of(session, assignment.revision_hash)
+            prediction = model.predict(plain.features, plain.features["effective"]["ar"], rock.features["effective"]["cs"], views)
             outcome = "below_threshold"
             if prediction.slot is not None:
                 try:

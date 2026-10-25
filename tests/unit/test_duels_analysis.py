@@ -225,6 +225,29 @@ def test_a_slot_outside_duels_is_learned_and_named_but_never_assigned():
     with pytest.raises(ValueError):
         SlotModel.load(body)
 
+def test_the_dt_view_tells_apart_maps_that_look_alike_unmodded():
+    import copy
+    from services.duels.slot_model import PATHS, SEEN, SlotModel, seen_vector
+
+    rows, labels = [], []
+    for seed in range(12):
+        plain = _features("jumps", seed)
+        slow = copy.deepcopy(plain)
+        fast = copy.deepcopy(plain)
+        fast["speed_px_ms"]["p90"] = plain["speed_px_ms"]["p90"] * 3
+        rows.append(seen_vector(plain, {"NFDT": slow, "NFHR": plain}))
+        labels.append("NM1")
+        rows.append(seen_vector(plain, {"NFDT": fast, "NFHR": plain}))
+        labels.append("DT1")
+    model = SlotModel.fit(rows, labels, steps=200, paths=SEEN)
+    plain = _features("jumps", 99)
+    fast = copy.deepcopy(plain)
+    fast["speed_px_ms"]["p90"] = plain["speed_px_ms"]["p90"] * 3
+    assert model.predict(plain, 9, 5.2, {"NFDT": fast, "NFHR": plain}).slot == "DT1"
+    assert model.predict(plain, 9, 5.2, {"NFDT": plain, "NFHR": plain}).slot == "NM1"
+    assert SlotModel.load(model.dump()).paths == SEEN and _trained().paths == PATHS
+    assert SlotModel.load(_trained().dump()).predict(plain, 9, 5.2).probabilities
+
 def test_reports_show_every_slot_and_splits_keep_sets_apart():
     from services.duels.slot_model import grouped_split, report
 

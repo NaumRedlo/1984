@@ -172,7 +172,7 @@ async def test_a_published_model_proposes_a_slot_on_import(factory, tmp_path):
     class Model:
         version = "slots-test"
 
-        def predict(self, features, base_ar, hr_cs):
+        def predict(self, features, base_ar, hr_cs, views=None):
             assert features["mods"] == "NF" and base_ar == 9
             return Prediction("NM1", 0.9, 0.5, {"NM1": 0.9}, False)
 
@@ -263,7 +263,7 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     async with factory() as session:
         example = next(e for e in (await session.scalars(select(db.models.duel_catalog.DuelTrainingExample))).all() if e.original_slot == "HD2")
         plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash, DuelMapAnalysis.mods == "NF"))
-    assert hidden[0] == vector(plain.features)
+    assert hidden[0][:len(vector(plain.features))] == vector(plain.features) and len(hidden[0]) > len(vector(plain.features))
     version, found = await training.train(factory, steps=20)
     assert version == "kamerton-1" and found["maps"] == 6 and found["test"]["count"] == 0 and found["years"] == {}
     async with factory() as session:
@@ -297,7 +297,7 @@ async def test_a_published_model_sorts_waiting_catalogue_maps(factory, tmp_path)
     class Model:
         version = "slots-test"
 
-        def predict(self, features, base_ar, hr_cs):
+        def predict(self, features, base_ar, hr_cs, views=None):
             assert base_ar == 9 and hr_cs == pytest.approx(5.2)
             sure = features["objects"] == 40
             return Prediction("DT1" if sure else None, 0.9 if sure else 0.4, 0.5 if sure else 0.05, {}, False)

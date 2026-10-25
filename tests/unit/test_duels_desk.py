@@ -66,7 +66,7 @@ async def test_the_queue_lists_reviews_first_then_maps_waiting_for_a_slot(factor
     class Model:
         version = "slots-test"
 
-        def predict(self, features, base_ar, hr_cs):
+        def predict(self, features, base_ar, hr_cs, views=None):
             from services.duels.slot_model import Prediction
             return Prediction("NM2", 0.7, 0.3, {"NM2": 0.7, "NM3": 0.2, "OTHER": 0.1}, False, [("streams.share", 1.2)])
 
@@ -90,11 +90,17 @@ async def test_maps_kamerton_is_unsure_about_wait_in_the_queue_before_maps_witho
         digest = f"{6:032x}"
         session.add(DuelMapRevision(beatmap_id=6, beatmapset_id=60, hash=digest, status="ok", ranked_status="ranked", mapper="Meg", version="Insane"))
         session.add(DuelMapAssignment(beatmap_id=6, slot="DT2", state="AUTO_ASSIGNED", revision_hash=digest, admitted=True, confidence=0.62, margin=0.11))
+        for mods, stars, ar, length in (("NF", 5.0, 9.0, 150.0), ("NFDT", 7.0, 10.33, 100.0)):
+            session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version="t", feature_version=FEATURE_VERSION, model_version="none",
+                                        stars=stars, features={"effective": {"ar": ar, "cs": 4.0, "od": 8.0}, "length_seconds": length}))
         await session.commit()
     tasks = await desk.queue(factory, 1)
     assert [(t["kind"], t["reason"], t["map"]["beatmap_id"]) for t in tasks] == [
         ("review", "uncertain_revealed", 3), ("review", "uncertain", 6), ("unassigned", "unassigned", 4)]
     assert tasks[1]["slot"] == "DT2"
+    played = tasks[1]["map"]
+    assert (played["stars"], played["plain_stars"], played["mods"], played["length"]) == (7.0, 5.0, ["DT"], 100.0)
+    assert played["settings"].get("ar") == 10.33
     cell = await desk.coverage_cell(factory, 1, "DT2", desk.band_of(5.0))
     assert cell == [] or all("version" in found for found in cell)
 
