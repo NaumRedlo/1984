@@ -172,7 +172,7 @@ def test_slot_filters_and_unknown_inputs_keep_maps_out():
     from services.duels.slot_model import CLASSES, SlotModel
 
     model = _trained()
-    with_hd = SlotModel(model.normaliser, [row[:] for row in model.weights], model.bias[:])
+    with_hd = SlotModel(model.normaliser, [row[:] for row in model.weights], model.bias[:], model.version, model.classes)
     with_hd.bias[CLASSES.index("HD2")] = 50.0
     assert with_hd.predict(_features("jumps", 1), base_ar=9.0, hr_cs=5.2).probabilities["HD2"] == 0.0
     assert with_hd.predict(_features("jumps", 1), base_ar=8.0, hr_cs=5.2).slot == "HD2"
@@ -210,13 +210,18 @@ def test_a_slot_outside_duels_is_learned_and_named_but_never_assigned():
         rows.append(vector(_features("jumps", seed)))
         labels.append("FM1")
     model = SlotModel.fit(rows, labels, steps=150)
-    assert "FM1" in model.classes and model.classes[-1] == OTHER
+    assert "FM1" in model.classes and OTHER not in model.classes
     guess = model.predict(_features("jumps", 99), base_ar=9, hr_cs=5.2)
     assert max(guess.probabilities, key=guess.probabilities.get) == "FM1" and guess.slot is None
     again = SlotModel.load(model.dump())
     assert again.classes == model.classes and again.predict(_features("jumps", 99), 9, 5.2).probabilities == guess.probabilities
     body = model.dump()
-    body["classes"] = body["classes"][:-2] + ["XX1", OTHER]
+    older = model.dump()
+    older["classes"] = older["classes"] + [OTHER]
+    older["weights"] = older["weights"] + [[0.0] * len(older["weights"][0])]
+    older["bias"] = older["bias"] + [-50.0]
+    assert SlotModel.load(older).predict(_features("jumps", 99), 9, 5.2).slot is None
+    body["classes"] = body["classes"][:-1] + ["XX1"]
     with pytest.raises(ValueError):
         SlotModel.load(body)
 

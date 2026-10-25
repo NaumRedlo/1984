@@ -106,10 +106,12 @@ class SlotModel:
 
     @classmethod
     def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5) -> "SlotModel":
-        classes = SLOTS + tuple(sorted({label for label in labels if reserved(label)})) + (OTHER,)
+        classes = SLOTS + tuple(sorted({label for label in labels if reserved(label)}))
+        kept = [(row, label) for row, label in zip(rows, labels) if label in classes]
+        rows, labels = [row for row, _ in kept], [label for _, label in kept]
         normaliser = Normaliser.fit(rows)
         data = [normaliser.apply(row) for row in rows]
-        targets = [classes.index(label) if label in classes else classes.index(OTHER) for label in labels]
+        targets = [classes.index(label) for label in labels]
         width = len(PATHS)
         weights = [[0.0] * width for _ in classes]
         bias = [0.0] * len(classes)
@@ -159,14 +161,16 @@ class SlotModel:
         classes = tuple(body.get("classes") or ())
         if body.get("paths") != list(PATHS) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
             raise ValueError("model was built for other features")
-        if classes[:len(SLOTS)] != SLOTS or classes[-1:] != (OTHER,) or not all(reserved(name) for name in classes[len(SLOTS):-1]) \
+        extra = classes[len(SLOTS):-1] if classes[-1:] == (OTHER,) else classes[len(SLOTS):]
+        if classes[:len(SLOTS)] != SLOTS or not all(reserved(name) for name in extra) \
                 or len(body.get("weights") or ()) != len(classes) or len(body.get("bias") or ()) != len(classes):
             raise ValueError("model was built for other classes")
         return cls(Normaliser(body["centre"], body["spread"], body["low"], body["high"]), body["weights"], body["bias"],
                    body.get("version", MODEL_VERSION), classes)
 
 def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
-    names = list(SLOTS) + sorted({name for name in list(truth) + list(guessed) if name and reserved(name)}) + [OTHER]
+    seen = set(truth) | set(guessed)
+    names = list(SLOTS) + sorted({name for name in seen if name and reserved(name)}) + ([OTHER] if OTHER in seen else [])
     per_slot = {}
     for name in names:
         hit = sum(1 for t, g in zip(truth, guessed) if g == name and t == name)

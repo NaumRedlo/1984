@@ -76,7 +76,7 @@ def _explain(model, features: dict[str, Any], base_ar: float, hr_cs: float) -> O
         return None
     from services.duels.slot_model import PATHS, vector
 
-    ranked = sorted(prediction.probabilities.items(), key=lambda pair: -pair[1])[:4]
+    ranked = sorted(((slot, value) for slot, value in prediction.probabilities.items() if slot != "OTHER"), key=lambda pair: -pair[1])[:4]
     normaliser = getattr(model, "normaliser", None)
     levels = dict(zip(PATHS, normaliser.apply(vector(features)))) if normaliser is not None else {}
     return {"slot": prediction.slot, "probability": prediction.probability, "margin": prediction.margin,

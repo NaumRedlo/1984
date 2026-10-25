@@ -18,7 +18,6 @@ NAME = "kamerton"
 NEW_LABELS_LEAST = 50
 EVERY = timedelta(days=1)
 HELD_OUT = 5
-RESERVE_LEAST = 5
 busy = asyncio.Lock()
 
 def held_out(set_id: int) -> bool:
@@ -28,11 +27,11 @@ async def labelled(session) -> list[tuple[list[float], str, int]]:
         select(DuelMapAssignment, DuelMapRevision)
         .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
               & (DuelMapRevision.hash == DuelMapAssignment.revision_hash))
-        .where(DuelMapAssignment.state.in_(["HUMAN_APPROVED", "REJECTED"]))
+        .where(DuelMapAssignment.state == "HUMAN_APPROVED", DuelMapAssignment.slot.is_not(None))
     )).all()
     found = []
     for assignment, revision in rows:
-        label = assignment.slot if assignment.state == "HUMAN_APPROVED" and assignment.slot else OTHER
+        label = assignment.slot
         mods = "".join(SLOT_MODS[assignment.slot]) if assignment.slot in SLOT_MODS else GROUP_MODS.get((assignment.slot or "")[:2], "NF")
         analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
                                                                      DuelMapAnalysis.mods == mods,
@@ -49,13 +48,8 @@ async def _gathered(factory) -> tuple[list, list]:
     found = await importer.corpus_rows(factory)
     async with factory() as session:
         decided = await labelled(session)
-    counted: dict[str, int] = {}
-    for label in [row[1] for row in found] + [row[1] for row in decided]:
-        counted[label] = counted.get(label, 0) + 1
-    rare = {label for label, count in counted.items() if reserved(label) and count < RESERVE_LEAST}
-    found = [(row[0], OTHER if row[1] in rare else row[1], *row[2:]) for row in found]
-    decided = [(row[0], OTHER if row[1] in rare else row[1], row[2]) for row in decided]
-    return found, decided
+    known = lambda label: label in SLOT_MODS or reserved(label)
+    return [row for row in found if known(row[1])], [row for row in decided if known(row[1])]
 
 def fingerprint(rows) -> str:
     made = hashlib.sha256()
