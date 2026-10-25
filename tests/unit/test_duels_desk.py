@@ -85,6 +85,19 @@ def test_a_map_shows_its_own_difficulty_settings(tmp_path):
     assert desk.settings_of("old", str(tmp_path))["ar"] == 7.0
     assert desk.settings_of("missing", str(tmp_path)) == {} and desk.settings_of(None, str(tmp_path)) == {}
 
+async def test_maps_kamerton_is_unsure_about_wait_in_the_queue_before_maps_without_a_slot(factory):
+    async with factory() as session:
+        digest = f"{6:032x}"
+        session.add(DuelMapRevision(beatmap_id=6, beatmapset_id=60, hash=digest, status="ok", ranked_status="ranked", mapper="Meg", version="Insane"))
+        session.add(DuelMapAssignment(beatmap_id=6, slot="DT2", state="AUTO_ASSIGNED", revision_hash=digest, admitted=True, confidence=0.62, margin=0.11))
+        await session.commit()
+    tasks = await desk.queue(factory, 1)
+    assert [(t["kind"], t["reason"], t["map"]["beatmap_id"]) for t in tasks] == [
+        ("review", "uncertain_revealed", 3), ("review", "uncertain", 6), ("unassigned", "unassigned", 4)]
+    assert tasks[1]["slot"] == "DT2"
+    cell = await desk.coverage_cell(factory, 1, "DT2", desk.band_of(5.0))
+    assert cell == [] or all("version" in found for found in cell)
+
 async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     stuck = await desk.stuck(factory, 1)
     assert [(d["id"], d["reason"], d["wins"]) for d in stuck] == [("stuck-1", "absence", {"A": 1, "B": 0})]

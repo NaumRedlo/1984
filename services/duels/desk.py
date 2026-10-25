@@ -149,6 +149,18 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
                           "map": await _map(session, int(review.beatmap_id), review.revision_hash, model),
                           "opinions": await _opinions(session, int(review.beatmap_id)),
                           "feedback": await balance.weigh(session, int(review.beatmap_id))})
+        unsure = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.AUTO_ASSIGNED,
+                                                                        DuelMapAssignment.admitted.is_(True))
+                                        .order_by(DuelMapAssignment.confidence, DuelMapAssignment.margin))).all()
+        for assignment in unsure:
+            if len(found) >= QUEUE_MOST:
+                break
+            if int(assignment.beatmap_id) in seen or catalog.confidence_level(assignment.confidence, assignment.margin) == "confident":
+                continue
+            seen.add(int(assignment.beatmap_id))
+            found.append({"kind": "review", "id": None, "reason": "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
+                          "state": assignment.state, "map": await _map(session, int(assignment.beatmap_id), assignment.revision_hash, model),
+                          "opinions": await _opinions(session, int(assignment.beatmap_id)), "feedback": None})
         waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
                                                                          DuelMapAssignment.admitted.is_(True))
                                          .order_by(DuelMapAssignment.updated_at).limit(max(0, QUEUE_MOST - len(found))))).all()
@@ -209,7 +221,8 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
             if analysis is None or analysis.stars is None or band_of(float(analysis.stars)) != band:
                 continue
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
-                          "stars": float(analysis.stars), "level": level, "mapper": revision.mapper, "title": revision.title})
+                          "stars": float(analysis.stars), "level": level, "mapper": revision.mapper, "title": revision.title,
+                          "version": revision.version})
         return sorted(found, key=lambda item: item["stars"])
 
 async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> list[dict[str, Any]]:
