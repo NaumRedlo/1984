@@ -123,3 +123,85 @@ async def test_a_search_on_the_mirrors_is_kept_in_the_journal_and_needs_a_review
     await balance.note_discovery(factory, 1, 5.5, 6.0, "мало альтернейта")
     entries = await desk.journal(factory, 1)
     assert (entries[0]["action"], entries[0]["target"], entries[0]["reason"]) == ("discover", "5.5-6.0", "мало альтернейта")
+
+
+def test_discovery_uses_half_star_windows_even_for_the_open_top_column():
+    assert desk.discovery_range(0) == (4.0, 4.5)
+    assert desk.discovery_range(7) == (7.5, 8.0)
+    for bad in (-1, 8, True):
+        with pytest.raises(ValueError):
+            desk.discovery_range(bad)
+
+
+async def test_confident_maps_can_be_inspected_moved_and_removed_by_reviewers(factory):
+    from services.duels import balance
+    task = await desk.inspect_map(factory, 1, 2)
+    assert task["map"]["beatmap_id"] == 2 and task["state"] == "AUTO_ASSIGNED"
+    with pytest.raises(balance.Forbidden):
+        await desk.inspect_map(factory, 2, 2)
+    changed = await balance.review_map(factory, 1, 2, "MOVE", "corrected", slot="FM4")
+    assert changed["slot"] == "FM4" and changed["state"] == "HUMAN_APPROVED"
+    removed = await balance.review_map(factory, 1, 2, "REJECT", "not suitable")
+    assert removed["state"] == "REJECTED"
+    assert await desk.inspect_map(factory, 1, 9999) is None
+
+
+async def test_presence_requires_a_role_updates_context_and_expires(factory):
+    from services.duels import balance, presence
+    now = utcnow()
+    with pytest.raises(balance.Forbidden):
+        await presence.touch(factory, 2, "queue", 2, now=now)
+    async with factory() as session:
+        session.add(DuelRole(player_id=2, role="BALANCE_REVIEWER"))
+        await session.commit()
+    await presence.touch(factory, 1, "queue", 2, now=now)
+    live = await presence.touch(factory, 2, "label", 2, now=now)
+    assert len(live) == 2
+    assert [p["name"] for p in live if not p["mine"] and p["beatmap"] == 2] == ["one"]
+    live = await presence.touch(factory, 1, "catalog", now=now + timedelta(seconds=10))
+    assert next(p for p in live if p["mine"])["beatmap"] is None
+    live = await presence.touch(factory, 1, "live", now=now + timedelta(seconds=46))
+    assert len(live) == 1 and live[0]["mine"]
+    assert await presence.touch(factory, 1, None, now=now + timedelta(seconds=47)) == []
+    for section, beatmap in [([], None), ("not-a-section", None), ("queue", True), ("queue", -1)]:
+        with pytest.raises(ValueError):
+            await presence.touch(factory, 1, section, beatmap, now=now)
+
+
+def test_bpm_uses_the_longest_timing_section_and_ignores_inherited_points(tmp_path):
+    (tmp_path / "map.osu").write_text("[TimingPoints]\n0,500,4,2,0,100,1,0\n2000,-100,4,2,0,100,0,0\n3000,400,4,2,0,100,1,0\n[HitObjects]\n1,1,10000,1,0\n")
+    assert desk.bpm_of("map", str(tmp_path)) == 150.0
+    assert desk.bpm_of("missing", str(tmp_path)) is None
+
+
+async def test_unlabelled_batch_waits_for_a_person_and_accepts_bare_ids(factory):
+    from sqlalchemy import select
+    from services.duels import balance, corpus, importer
+    from db.models.duel_catalog import DuelTrainingExample
+    result = await balance.add_tournament(factory, 1, "Speed samples", 0,
+        "123\nhttps://osu.ppy.sh/beatmaps/456\nDT1 789\n123\nhttps://osu.ppy.sh/beatmapsets/999", "batch")
+    assert result == {"added": 3, "read": 3}
+    async with factory() as session:
+        rows = (await session.scalars(select(DuelTrainingExample).order_by(DuelTrainingExample.beatmap_id))).all()
+        labels = await importer.corpus_labels(session)
+        assert [int(row.beatmap_id) for row in rows] == [123, 456, 789]
+        assert all(len(row.original_slot) <= DuelTrainingExample.__table__.c.original_slot.type.length for row in rows)
+        assert importer.resolved(rows[0], labels) == (None, False)
+        assert importer.resolved(rows[1], labels) == (None, False)
+        assert importer.resolved(rows[2], labels) == ("DT1", True)
+    await balance.label_corpus(factory, 1, corpus.OWN_VERSION, 0, "Speed samples", "PENDING", 123, "FM4", "reviewed")
+    async with factory() as session:
+        labels = await importer.corpus_labels(session)
+        assert importer.resolved(rows[0], labels) == ("FM4", True)
+
+async def test_pool_probe_reports_catalogue_deficits_without_creating_a_duel(factory, monkeypatch):
+    from sqlalchemy import func, select
+    from scripts import duel_probe
+    monkeypatch.setattr(duel_probe, "AsyncSessionFactory", factory)
+    async with factory() as session:
+        before = await session.scalar(select(func.count()).select_from(Duel))
+    result = await duel_probe.probe(5.0, 5.2, True, "test")
+    assert result["status"] == "unavailable" and result["deficits"]
+    assert result["catalogue"] == {"NM1": 1}
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(Duel)) == before

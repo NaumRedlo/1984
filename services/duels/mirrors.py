@@ -4,6 +4,7 @@ import json
 import os
 import time
 import zipfile
+from urllib.parse import quote
 from typing import Any, Awaitable, Callable, Optional
 
 from services.duels.osu_file import FILE_MOST
@@ -25,7 +26,7 @@ LOOKUPS = (
     ("catboy.best", "https://catboy.best/api/v2/b/{beatmap_id}"),
 )
 SEARCHES = (
-    ("osu.direct", "https://osu.direct/api/v2/search?q=&status={status}&mode=0&amount={amount}&offset={offset}"),
+    ("osu.direct", "https://osu.direct/api/v2/search?q={query}&status={status}&mode=0&amount={amount}&offset={offset}"),
     ("catboy.best", "https://catboy.best/api/v2/search?query=&status={status}&mode=0&limit={amount}&offset={offset}"),
 )
 STATUSES = {"ranked": 1, "approved": 2, "loved": 4}
@@ -149,28 +150,38 @@ def read_search(body: bytes, least: float, most: float) -> list[dict[str, Any]]:
             if not isinstance(beatmap, dict) or beatmap.get("mode") not in ("osu", 0) or beatmap.get("convert"):
                 continue
             entry = _entry(beatmapset, beatmap)
-            if entry is not None and least <= entry["stars"] <= most and entry["status"] in STATUSES:
+            if entry is not None and least <= entry["stars"] < most and entry["status"] in STATUSES:
                 found.append(entry)
     return found
 
 async def search(fetch: Fetch, status: str, offset: int, amount: int, least: float, most: float,
                  clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, list[dict[str, Any]], int]]:
+    empty = None
+    query = quote(f"[beatmaps.difficulty_rating >= {least:g} AND beatmaps.difficulty_rating < {most:g}]", safe="")
     for name, address in SEARCHES:
         if not _awake(name, clock):
             continue
         try:
-            body = await fetch(address.format(status=STATUSES[status], offset=offset, amount=amount))
+            body = await fetch(address.format(status=STATUSES[status], offset=offset, amount=amount, query=query))
         except Exception:
             _tired(name, clock)
             continue
         if body is None:
             continue
         try:
-            seen = len(json.loads(body))
+            decoded = json.loads(body)
+            sets = decoded.get("beatmapsets") if isinstance(decoded, dict) else decoded
+            if not isinstance(sets, list):
+                continue
+            seen = len(sets)
         except (ValueError, TypeError, UnicodeDecodeError):
             continue
-        return name, read_search(body, least, most), seen
-    return None
+        entries = read_search(body, least, most)
+        if entries:
+            return name, entries, seen
+        if empty is None or seen > empty[2]:
+            empty = name, [], seen
+    return empty
 
 def aiohttp_fetch(session) -> Fetch:
     async def fetch(address: str) -> Optional[bytes]:

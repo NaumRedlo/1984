@@ -390,15 +390,15 @@ async def add_tournament(factory, actor: int, name: str, year: int, text: str, r
     name = name.strip()[:120]
     if not name:
         raise DuelError("INVALID_STATE")
-    found = corpus.read_pools(text, year, f"own:{name}")
+    found = corpus.read_batch(text, year, f"own:{name}")
+    if not found or year < 0 or year > 9999:
+        raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             added = 0
             for example in corpus.distinct(found):
                 label = corpus.label(example.original_slot)
-                if label is None:
-                    continue
                 stage = name[:32]
                 held = await session.scalar(select(DuelTrainingExample).where(
                     DuelTrainingExample.corpus_version == corpus.OWN_VERSION, DuelTrainingExample.year == year,
@@ -408,9 +408,10 @@ async def add_tournament(factory, actor: int, name: str, year: int, text: str, r
                     continue
                 session.add(DuelTrainingExample(corpus_version=corpus.OWN_VERSION, source=f"own:{name}"[:256], year=year, stage=stage,
                                                 original_slot=example.original_slot, beatmap_id=example.beatmap_id,
-                                                beatmapset_id=example.beatmapset_id, normalized_label=label, conflict=False, fetched_at=now))
-                session.add(DuelCorpusLabel(corpus_version=corpus.OWN_VERSION, year=year, stage=stage, original_slot=example.original_slot,
-                                            beatmap_id=example.beatmap_id, label=label, reviewer_id=actor, reason=reason.strip(), updated_at=now))
+                                                beatmapset_id=example.beatmapset_id, normalized_label=label or corpus.EXCLUDED, conflict=False, fetched_at=now))
+                if label is not None:
+                    session.add(DuelCorpusLabel(corpus_version=corpus.OWN_VERSION, year=year, stage=stage, original_slot=example.original_slot,
+                                                beatmap_id=example.beatmap_id, label=label, reviewer_id=actor, reason=reason.strip(), updated_at=now))
                 added += 1
             _audit(session, actor, role, "add_tournament", name[:64], reason.strip(), after={"maps": added, "year": year}, now=now)
     return {"added": added, "read": len(found)}

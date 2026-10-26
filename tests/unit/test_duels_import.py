@@ -370,3 +370,28 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     async with factory() as session:
         actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
     assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]
+
+
+async def test_mirror_search_sends_star_filter_and_tries_fallback_after_empty():
+    from urllib.parse import urlparse, parse_qs
+    requested = []
+    raw = _map(1)
+    async def fetch(url):
+        requested.append(url)
+        if "osu.direct" in url:
+            query = parse_qs(urlparse(url).query)["q"][0]
+            assert query == "[beatmaps.difficulty_rating >= 7.5 AND beatmaps.difficulty_rating < 8]"
+            return b"[]"
+        return json.dumps({"beatmapsets": [_set(10, [(1, 7.7, "osu", 120, raw), (2, 8.0, "osu", 120, raw)])]}).encode()
+    name, entries, count = await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0)
+    assert name == "catboy.best" and len(requested) == 2
+    assert count == 1 and [e["beatmap_id"] for e in entries] == [1]
+
+
+async def test_error_json_is_not_a_successful_empty_search():
+    requested = []
+    async def fetch(url):
+        requested.append(url)
+        return b'{"error":"maintenance"}'
+    assert await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0) is None
+    assert len(requested) == 2

@@ -29,6 +29,12 @@ def band_of(stars: float) -> int:
             found = index
     return found
 
+def discovery_range(band: int) -> tuple[float, float]:
+    if type(band) is not int or not 0 <= band < len(BANDS):
+        raise ValueError("band")
+    low = BANDS[band]
+    return low, BANDS[band + 1] if band + 1 < len(BANDS) else low + 0.5
+
 async def _any_role(session, actor: int, owners: tuple[int, ...]) -> set[str]:
     held = await balance.roles_of(session, actor, owners)
     if not held:
@@ -117,6 +123,46 @@ def settings_of(digest: Optional[str], folder: Optional[str] = None) -> dict[str
         found["ar"] = found["od"]
     return found
 
+def bpm_of(digest: Optional[str], folder: Optional[str] = None) -> Optional[float]:
+    if not digest:
+        return None
+    if folder is None:
+        from config.settings import DUEL_OSU_FOLDER
+        folder = DUEL_OSU_FOLDER
+    import math
+    from collections import defaultdict
+    timing, last, section = [], 0.0, ""
+    try:
+        with open(os.path.join(folder, f"{digest}.osu"), encoding="utf-8-sig", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if line.startswith("["):
+                    section = line
+                    continue
+                values = line.split(",")
+                try:
+                    if section == "[TimingPoints]" and len(values) >= 2:
+                        time, beat = float(values[0]), float(values[1])
+                        red = len(values) < 7 or values[6] == "1"
+                        if red and math.isfinite(time) and math.isfinite(beat) and beat > 0:
+                            timing.append((time, beat))
+                    elif section == "[HitObjects]" and len(values) >= 3:
+                        time = float(values[2])
+                        if math.isfinite(time):
+                            last = max(last, time)
+                except ValueError:
+                    continue
+    except OSError:
+        return None
+    if not timing:
+        return None
+    timing.sort()
+    durations = defaultdict(float)
+    for at, (time, beat) in enumerate(timing):
+        end = timing[at + 1][0] if at + 1 < len(timing) else last
+        durations[beat] += max(0.0, min(end, last) - max(0.0, time))
+    return 60000.0 / max(durations, key=durations.get)
+
 async def _map(session, beatmap_id: int, digest: Optional[str], model, slot: Optional[str] = None) -> dict[str, Any]:
     revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == beatmap_id)
                                     .order_by(DuelMapRevision.downloaded_at.desc()))
@@ -134,12 +180,15 @@ async def _map(session, beatmap_id: int, digest: Optional[str], model, slot: Opt
         settings.update({name: value for name, value in (played.get("effective") or {}).items() if name in ("cs", "ar", "od")})
         if "HR" in mods and "hp" in settings:
             settings["hp"] = min(10.0, settings["hp"] * 1.4)
+    bpm = bpm_of(digest)
+    if bpm is not None and ("DT" in mods or "NC" in mods):
+        bpm *= 1.5
     return {"beatmap_id": beatmap_id, "beatmapset_id": int(revision.beatmapset_id) if revision is not None and revision.beatmapset_id else None,
             "mapper": revision.mapper if revision is not None else None, "ranked_status": revision.ranked_status if revision is not None else None,
             "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
             "version": revision.version if revision is not None else None,
             "stars": (slotted or plain).stars if (slotted or plain) is not None else None, "plain_stars": plain.stars if plain is not None else None,
-            "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"),
+            "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"), "bpm": bpm,
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs, (await importer.seen_of(session, digest))[1])}
 
 async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:
@@ -212,6 +261,17 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
             elif level == "uncertain":
                 totals["uncertain"] += 1
         return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "totals": totals}
+
+async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
+    async with factory() as session:
+        await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
+        assignment = await session.get(DuelMapAssignment, beatmap_id)
+        if assignment is None:
+            return None
+        model = await balance.working_model(factory)
+        return {"kind": "review", "id": None, "reason": "manual", "slot": assignment.slot,
+                "state": assignment.state, "map": await _map(session, beatmap_id, assignment.revision_hash, model, assignment.slot),
+                "opinions": await _opinions(session, beatmap_id)}
 
 async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
     async with factory() as session:

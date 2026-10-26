@@ -328,6 +328,25 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             raise web.HTTPBadRequest(text="slot and band are required")
         return {"maps": await desk.coverage_cell(factory_of(), player, slot, int(band), owners)}
 
+    async def desk_inspect(request, player, said, owners):
+        from services.duels import desk
+
+        beatmap = request.match_info["beatmap"]
+        if not beatmap.isdigit():
+            raise web.HTTPBadRequest(text="beatmap is required")
+        found = await desk.inspect_map(factory_of(), player, int(beatmap), owners)
+        if found is None:
+            raise web.HTTPNotFound()
+        return found
+
+    async def desk_presence(request, player, said, owners):
+        from services.duels import presence
+
+        try:
+            return {"people": await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners)}
+        except ValueError:
+            raise web.HTTPBadRequest(text="valid section and beatmap are required")
+
     async def desk_stuck(request, player, said, owners):
         from services.duels import desk
 
@@ -380,8 +399,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         band = said.get("band")
         if not isinstance(band, int) or isinstance(band, bool) or not 0 <= band < len(desk.BANDS):
             raise web.HTTPBadRequest(text="band is required")
-        least = desk.BANDS[band]
-        most = desk.BANDS[band + 1] if band + 1 < len(desk.BANDS) else 15.0
+        least, most = desk.discovery_range(band)
         await balance.note_discovery(factory_of(), player, least, most, said["reason"], owners)
         running = discovering.get("task")
         if running is not None and not running.done():
@@ -394,7 +412,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             timeout = aiohttp.ClientTimeout(total=120, sock_read=30)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 await importer.discover(factory_of(), mirrors.aiohttp_fetch(session), osu_of(), DUEL_OSU_FOLDER, least, most, 2,
-                                        model=model, report=lambda text: None)
+                                        model=model, report=lambda text: logger.info("Catalogue discovery: %s", text))
 
         discovering["task"] = watched(run(), "discovering catalogue maps")
         return {"started": True}
@@ -464,6 +482,8 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.get("/render/duels/roles/me", handler(roles_me)),
         web.get("/render/admin/duels/queue", handler(admin(desk_queue))),
         web.get("/render/admin/duels/catalog", handler(admin(desk_catalog))),
+        web.get("/render/admin/duels/maps/{beatmap}/inspect", handler(admin(desk_inspect))),
+        web.post("/render/admin/duels/presence", handler(admin(desk_presence))),
         web.get("/render/admin/duels/catalog/{slot}/{band}", handler(admin(desk_cell))),
         web.get("/render/admin/duels/stuck", handler(admin(desk_stuck))),
         web.get("/render/admin/duels/journal", handler(admin(desk_journal))),

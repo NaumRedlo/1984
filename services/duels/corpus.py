@@ -45,6 +45,26 @@ def read_pools(markdown: str, year: int, source: str) -> list[Example]:
         found.append(Example(year, stage, slot.group(1), beatmap, set_id, source))
     return found
 
+def read_batch(text: str, year: int, source: str) -> list[Example]:
+    found, seen = [], set()
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        slot = parts[0].upper()
+        labelled = slot in SLOTS or reserved(slot)
+        token = parts[1] if labelled and len(parts) > 1 else parts[0]
+        match = _LINK.fullmatch(token.removeprefix("https://").removeprefix("http://"))
+        set_id = int(match.group(1)) if match and match.group(1) else None
+        value = (match.group(2) or match.group(3) or match.group(4)) if match else token
+        if not value.isascii() or not value.isdigit() or int(value) <= 0:
+            continue
+        beatmap = int(value)
+        if beatmap not in seen:
+            seen.add(beatmap)
+            found.append(Example(year, "unknown", slot if labelled else "PENDING", beatmap, set_id, source))
+    return found
+
 _GROUPS = {"no mod": "NM", "nomod": "NM", "hidden": "HD", "hard rock": "HR", "hardrock": "HR", "double time": "DT",
            "doubletime": "DT", "free mod": "FM", "freemod": "FM", "tiebreaker": "TB", "tie breaker": "TB", "easy": "EZ",
            "flashlight": "FL"}

@@ -118,3 +118,12 @@ class DuelCorpusLabel(Base):
     updated_at = Column(DateTime, nullable=False, default=utcnow)
 
     __table_args__ = (Index("ix_duel_corpus_labels_cell", "corpus_version", "year", "stage", "original_slot"),)
+
+
+class DuelDeskPresence(Base):
+    __tablename__ = "duel_desk_presence"
+
+    player_id = Column(Integer, ForeignKey("players.id"), primary_key=True)
+    section = Column(String(16), nullable=False)
+    beatmap_id = Column(BigInteger, nullable=True)
+    updated_at = Column(DateTime, nullable=False, index=True)

@@ -254,3 +254,22 @@ async def test_render_duel_routes_resolve_legacy_telegram_identity(factory, monk
             assert profile.status == 200
         elif expected == 403:
             assert (await response.json())["error"] == "NOT_LINKED"
+
+
+async def test_balance_presence_is_authenticated_and_requires_a_role(client, factory):
+    from db.models.duel import DuelRole
+    path = "/render/admin/duels/presence"
+    assert (await client.post(path, json={"section": "queue"})).status == 401
+    assert (await client.post(path, json={"section": "queue"}, headers=_as(1))).status == 403
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    response = await client.post(path, json={"section": "label", "beatmap": 123}, headers=_as(1))
+    assert response.status == 200
+    assert (await response.json())["people"][0]["beatmap"] == 123
+    for body in ({"section": []}, {"section": "queue", "beatmap": True}):
+        assert (await client.post(path, json=body, headers=_as(1))).status == 400
+    response = await client.post(path, json={"section": None}, headers=_as(1))
+    assert (await response.json())["people"] == []
+    assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(2))).status == 403
+    assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(1))).status == 404
