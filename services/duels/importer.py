@@ -296,7 +296,7 @@ async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, b
         labels = await corpus_labels(session)
         examples = (await session.scalars(select(DuelTrainingExample).where(
             DuelTrainingExample.corpus_version.in_(corpus.LEARNED), DuelTrainingExample.conflict.is_(False),
-            DuelTrainingExample.revision_hash.is_not(None)))).all()
+            DuelTrainingExample.excluded.isnot(True), DuelTrainingExample.revision_hash.is_not(None)))).all()
         found = []
         for example in examples:
             label, verified = resolved(example, labels)

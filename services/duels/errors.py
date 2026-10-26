@@ -19,6 +19,8 @@ MESSAGES = {
     "EVIDENCE_PENDING": ("Результат ещё проверяется.", True),
     "INCOMPATIBLE_CLIENT": ("Эта версия Dossier не поддерживает дуэли.", False),
     "SERVICE_RECOVERING": ("Сервис дуэлей восстанавливается, попробуйте чуть позже.", True),
+    "BATCH_NOT_FOUND": ("Набор карт не найден.", False),
+    "BATCH_EXISTS": ("Набор с таким названием и годом уже есть.", False),
 }
 
 class DuelError(Exception):

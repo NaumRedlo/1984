@@ -96,6 +96,7 @@ class DuelTrainingExample(Base):
     ranked_status = Column(String(16), nullable=True)
     normalized_label = Column(String(8), nullable=True)
     conflict = Column(Boolean, nullable=False, default=False)
+    excluded = Column(Boolean, nullable=True, default=False)
     fetched_at = Column(DateTime, nullable=False, default=utcnow)
 
     __table_args__ = (
