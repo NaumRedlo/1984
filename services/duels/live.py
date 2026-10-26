@@ -17,6 +17,7 @@ FRAMES_MOST = 2000
 STATE_KEYS = {"beatmap_id", "mods", "time", "score", "combo", "counts", "accuracy", "screen"}
 WITNESS_LOSSES = {"quit", "left_map"}
 PUMP_EVERY = 0.5
+SEND_PATIENCE = 2.0
 LIVE = (states.PREPARING, states.DRAFTING, states.SELECTING, states.ROUND_SETUP, states.WAITING_READY, states.STARTING,
         states.PLAYING, states.WAITING_PLAYERS)
 
@@ -65,13 +66,18 @@ class Hub:
         return last is not None and self.clock() - last <= PARAMETERS["app_absence_seconds"]
 
     async def send(self, duel_id: str, message: dict[str, Any], skip: Optional[web.WebSocketResponse] = None) -> None:
-        for socket in list(self.watching.get(duel_id, ())):
-            if socket is skip or socket.closed:
-                continue
+        async def one(socket: web.WebSocketResponse) -> None:
             try:
-                await socket.send_json(message)
+                await asyncio.wait_for(socket.send_json(message), SEND_PATIENCE)
             except (ConnectionError, RuntimeError):
-                self.watching[duel_id].discard(socket)
+                self.watching.get(duel_id, set()).discard(socket)
+            except asyncio.TimeoutError:
+                self.watching.get(duel_id, set()).discard(socket)
+                logger.warning("closing a duel socket that did not take an event within %.0f s", SEND_PATIENCE)
+                asyncio.create_task(socket.close())
+
+        sockets = [socket for socket in list(self.watching.get(duel_id, ())) if socket is not skip and not socket.closed]
+        await asyncio.gather(*(one(socket) for socket in sockets))
 
     def forget(self, socket: web.WebSocketResponse) -> None:
         for sockets in self.watching.values():
