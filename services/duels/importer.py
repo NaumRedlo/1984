@@ -154,6 +154,17 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
             break
     return counted
 
+async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=None,
+                     now: Optional[datetime] = None) -> tuple[str, Optional[dict[str, Any]]]:
+    entry = await mirrors.describe(fetch, beatmap_id)
+    if entry is None:
+        return "not_found", None
+    if not entry["standard"]:
+        return "not_standard", entry
+    if not SHORTEST <= entry["length"] <= LONGEST:
+        return "length", entry
+    return await ingest(factory, fetch, osu, entry, folder, model, now), entry
+
 async def _name_revision(session, revision: DuelMapRevision, folder: str) -> None:
     path = os.path.join(folder, f"{revision.hash}.osu")
     if not os.path.exists(path):

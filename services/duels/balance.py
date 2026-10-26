@@ -152,6 +152,34 @@ async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason
             _audit(session, actor, role, f"map_{decision.lower()}", str(beatmap_id), reason, after=after, now=now)
             return after
 
+NOT_ADDED = {"not_found": "MAP_NOT_FOUND", "not_standard": "NOT_STANDARD", "length": "MAP_LENGTH", "no_file": "NO_FILE",
+             "parse_failed": "PARSE_FAILED", "recovering": "SERVICE_RECOVERING"}
+
+async def add_map(factory, actor: int, beatmap_id: int, slot: Optional[str], reason: str, owners: tuple[int, ...], bring,
+                  now: Optional[datetime] = None) -> dict[str, Any]:
+    from db.models.duel_catalog import DuelMapAssignment
+    from services.duels.rules import SLOTS, reserved
+
+    async with factory() as session:
+        await _allowed(session, actor, BALANCE_REVIEWER, owners)
+    if slot is not None and slot not in SLOTS and not reserved(slot):
+        raise catalog.CatalogRefusal("UNKNOWN_SLOT")
+    outcome, entry = await bring(beatmap_id)
+    if outcome in NOT_ADDED:
+        raise catalog.CatalogRefusal(NOT_ADDED[outcome])
+    status = (entry or {}).get("status")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            held = await session.get(DuelMapAssignment, beatmap_id)
+            if held is not None and held.state == catalog.REJECTED:
+                raise catalog.CatalogRefusal("REJECTED_STAYS")
+            _audit(session, actor, role, "map_add", str(beatmap_id), reason, after={"slot": slot, "outcome": outcome, "status": status}, now=now)
+            decision = "APPROVE" if held is None or held.slot in (None, slot) else "MOVE"
+    if slot is not None:
+        await review_map(factory, actor, beatmap_id, decision, reason, owners, slot, now)
+    return {"outcome": outcome, "status": status}
+
 async def note_discovery(factory, actor: int, least: float, most: float, reason: str, owners: tuple[int, ...] = (),
                          now: Optional[datetime] = None) -> None:
     async with factory() as session:
