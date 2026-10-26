@@ -16,6 +16,12 @@ QUARANTINED = "QUARANTINED"
 CONFIDENT = (0.80, 0.20)
 UNCERTAIN = (0.60, 0.10)
 
+KEEP = object()
+
+def secondary_of(row: Optional[DuelMapAssignment]) -> Optional[str]:
+    held = row.secondary_slots if row is not None else None
+    return held[0] if isinstance(held, list) and held else None
+
 class CatalogRefusal(Exception):
     def __init__(self, code: str):
         super().__init__(code)
@@ -33,7 +39,7 @@ def confidence_level(probability: Optional[float], margin: Optional[float]) -> O
 def _view(row: Optional[DuelMapAssignment]) -> Optional[dict[str, Any]]:
     if row is None:
         return None
-    return {"slot": row.slot, "state": row.state, "confidence": row.confidence, "margin": row.margin,
+    return {"slot": row.slot, "secondary": secondary_of(row), "state": row.state, "confidence": row.confidence, "margin": row.margin,
             "version": row.assignment_version, "revision": row.revision_hash, "admitted": row.admitted,
             "locked": row.locked_at is not None}
 
@@ -73,7 +79,7 @@ async def propose(session, beatmap_id: int, slot: str, probability: float, margi
     return _view(row)
 
 async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note: str, slot: Optional[str] = None,
-                 now: Optional[datetime] = None) -> dict[str, Any]:
+                 now: Optional[datetime] = None, secondary: Any = KEEP) -> dict[str, Any]:
     now = now or utcnow()
     row = await _row(session, beatmap_id)
     if row is None:
@@ -102,6 +108,12 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
         row.state = QUARANTINED
     else:
         raise CatalogRefusal("UNKNOWN_DECISION")
+    if decision in ("APPROVE", "MOVE") and secondary is not KEEP:
+        if secondary not in (None, "") and (secondary == row.slot or (secondary not in SLOTS and not reserved(secondary))):
+            raise CatalogRefusal("UNKNOWN_SECONDARY")
+        row.secondary_slots = [secondary] if secondary else None
+    elif secondary_of(row) == row.slot:
+        row.secondary_slots = None
     row.reviewer_id = reviewer_id
     row.reviewed_at = now
     row.note = note

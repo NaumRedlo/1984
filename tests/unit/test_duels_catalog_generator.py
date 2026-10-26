@@ -220,3 +220,23 @@ def test_a_thousand_pools_never_break_the_hard_rules():
         assert pool.status == "ready"
         assert [choice.candidate.slot for choice in pool.entries] == list(SLOTS)
         assert len({choice.candidate.beatmap_id for choice in pool.entries}) == 9
+
+
+async def test_a_person_gives_a_map_a_secondary_slot_and_an_older_app_keeps_it(session):
+    await catalog.propose(session, 7, "NM1", 0.7, 0.05, "kamerton-1", NOW)
+    both = await catalog.review(session, 7, "APPROVE", 1, "jumps that also read well with HR", slot="NM1", now=NOW, secondary="HR1")
+    assert (both["slot"], both["secondary"], both["state"]) == ("NM1", "HR1", "HUMAN_APPROVED")
+    kept = await catalog.review(session, 7, "APPROVE", 1, "approved again by an older app", now=NOW)
+    assert kept["secondary"] == "HR1", "a review without the field leaves the secondary slot alone"
+    assert await _refused(catalog.review(session, 7, "APPROVE", 1, "same as primary", now=NOW, secondary="NM1")) == "UNKNOWN_SECONDARY"
+    assert await _refused(catalog.review(session, 7, "APPROVE", 1, "no such slot", now=NOW, secondary="XX9")) == "UNKNOWN_SECONDARY"
+    moved = await catalog.review(session, 7, "MOVE", 1, "really an HR map", slot="HR1", now=NOW)
+    assert (moved["slot"], moved["secondary"]) == ("HR1", None), "the secondary that became primary is dropped"
+    cleared = await catalog.review(session, 7, "APPROVE", 1, "one slot is enough", now=NOW, secondary=None)
+    assert cleared["secondary"] is None
+
+def test_a_secondary_slot_costs_more_than_the_same_map_in_its_own_slot():
+    a = {slot: Skill(5.5, 0.4) for slot in SLOTS}
+    own = Candidate(1, 1, "m", "HD2", 5.5, "human", None, "r")
+    borrowed = Candidate(1, 1, "m", "HD2", 5.5, "human", None, "r", secondary=True)
+    assert generator.cost(generator.parts(borrowed, a, a, 0.0)) == pytest.approx(generator.cost(generator.parts(own, a, a, 0.0)) + generator.SECONDARY_COST)
