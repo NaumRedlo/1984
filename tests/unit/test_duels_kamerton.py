@@ -62,6 +62,6 @@ def test_signatures_are_measured_against_labels_and_both_models_are_compared_on_
     assert truth["precision"] is None, "a skill without labelled maps cannot be measured"
     found = kamerton.compare(examples, steps=60, report_to=lambda said: None)
     for scope in ("working", "catalogue"):
-        assert set(found[scope]) == {"current", "skill_mod"}
+        assert set(found[scope]) == {"current", "skill_mod", "stacked"}
         assert {"macro_f1", "per_slot", "confident", "top2"} <= set(found[scope]["skill_mod"])
     assert found["working"]["skill_mod"]["count"] == len(examples)

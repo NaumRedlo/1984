@@ -176,6 +176,70 @@ class SkillModModel:
         slot = best if best in SLOTS and not outside else None
         return Prediction(slot, probability, margin, probabilities, outside)
 
+@dataclass
+class SkillLayer:
+    norm: Normaliser
+    weights: list[list[float]]
+    bias: list[float]
+
+    @classmethod
+    def fit(cls, examples: list[Example], strength: float, steps: int, rate: float) -> "SkillLayer":
+        norm = Normaliser.fit([vector(example.plain) for example in examples])
+        rows = [cls.row_of(norm, example.plain) for example in examples]
+        targets = [[skill_target(example.slot, example.secondary).get(skill, 0.0) for skill in SKILLS] for example in examples]
+        return cls(norm, *fit_softmax(rows, targets, strength, steps, rate))
+
+    @staticmethod
+    def row_of(norm: Normaliser, plain: dict[str, Any]) -> list[float]:
+        z = norm.apply(vector(plain))
+        return z + profile(z)
+
+    def skills(self, plain: dict[str, Any]) -> list[float]:
+        row = self.row_of(self.norm, plain)
+        return _softmax([b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(self.weights, self.bias)])
+
+    def both(self, plain: dict[str, Any], views: dict[str, dict[str, Any]]) -> list[float]:
+        return self.skills(plain) + self.skills(views.get("NFDT") or plain)
+
+STACK_FOLDS = 3
+
+@dataclass
+class StackedModel:
+    layer: SkillLayer
+    slots: SlotModel
+    version: str = VERSION + "-stacked"
+
+    @classmethod
+    def fit(cls, examples: list[Example], strength: float = 0.01, steps: int = 300, rate: float = 0.5) -> "StackedModel":
+        known = [example for example in examples if example.slot in PARTS]
+        outside: dict[int, list[float]] = {}
+        sets = sorted({example.set_id for example in known})
+        for fold in range(STACK_FOLDS):
+            held = {set_id for at, set_id in enumerate(sets) if at % STACK_FOLDS == fold}
+            layer = SkillLayer.fit([example for example in known if example.set_id not in held], strength, steps, rate)
+            for at, example in enumerate(known):
+                if example.set_id in held:
+                    outside[at] = layer.both(example.plain, example.views)
+        rows = [seen_vector(example.plain, example.views) + outside[at] for at, example in enumerate(known)]
+        named = tuple(f"skill:{skill}" for skill in SKILLS) + tuple(f"NFDT:skill:{skill}" for skill in SKILLS)
+        slots = SlotModel.fit(rows, [example.slot for example in known], strength, steps, rate, paths=SEEN + named)
+        return cls(SkillLayer.fit(known, strength, steps, rate), slots)
+
+    def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float, views: Optional[dict[str, dict[str, Any]]] = None) -> Prediction:
+        raw = seen_vector(features, views) + self.layer.both(features, views or {})
+        model = self.slots
+        row = model.normaliser.apply(raw)
+        scores = [b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(model.weights, model.bias)]
+        allowed = [(name != "HD2" or base_ar <= HD2_MOST_AR) and (name != "HR2" or hr_cs >= HR2_LEAST_CS) for name in model.classes]
+        probabilities = _softmax([score if ok else -math.inf for score, ok in zip(scores, allowed)])
+        ranked = sorted(range(len(model.classes)), key=lambda k: -probabilities[k])
+        best = ranked[0]
+        second = next((k for k in ranked[1:] if model.classes[k] != OTHER), None)
+        margin = probabilities[best] - (probabilities[second] if second is not None else 0.0)
+        outside = model.normaliser.outside(raw)
+        slot = model.classes[best] if model.classes[best] in SLOTS and not outside else None
+        return Prediction(slot, probabilities[best], margin, dict(zip(model.classes, probabilities)), outside)
+
 def decide(model, example: Example) -> Prediction:
     base_ar, hr_cs = example.gates()
     return model.predict(example.plain, base_ar, hr_cs, example.views)
@@ -213,19 +277,22 @@ def compare(examples: list[Example], steps: int = 300, report_to: Callable[[str]
     truth: list[str] = []
     old: list[Prediction] = []
     new: list[Prediction] = []
+    stacked: list[Prediction] = []
     for year in sorted({example.year for example in examples if not example.own}):
         held = [example for example in examples if example.year == year and not example.own]
         sets = {example.set_id for example in held}
         rest = [example for example in examples if example.set_id not in sets and not (example.year == year and not example.own)]
         baseline = SlotModel.fit([seen_vector(example.plain, example.views) for example in rest], [example.slot for example in rest], 0.01, steps, paths=SEEN)
         layered = SkillModModel.fit(rest, steps=steps)
+        stack = StackedModel.fit(rest, steps=steps)
         for example in held:
             truth.append(example.slot)
             old.append(decide(baseline, example))
             new.append(decide(layered, example))
+            stacked.append(decide(stack, example))
         report_to(f"held out {year}: {len(held)} maps")
-    return {"working": {"current": _scored(truth, old, True), "skill_mod": _scored(truth, new, True)},
-            "catalogue": {"current": _scored(truth, old, False), "skill_mod": _scored(truth, new, False)},
+    return {"working": {"current": _scored(truth, old, True), "skill_mod": _scored(truth, new, True), "stacked": _scored(truth, stacked, True)},
+            "catalogue": {"current": _scored(truth, old, False), "skill_mod": _scored(truth, new, False), "stacked": _scored(truth, stacked, False)},
             "signatures": signature_truth(examples)}
 
 async def corpus_examples(factory) -> list[Example]:
