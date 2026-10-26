@@ -397,7 +397,7 @@ async def corpus_table(factory, actor: int, owners: tuple[int, ...] = ()) -> lis
                              "label": label or corpus.EXCLUDED, "verified": verified, "file": row.revision_hash is not None,
                              "title": getattr(revisions.get(row.revision_hash), "title", None), "artist": getattr(revisions.get(row.revision_hash), "artist", None),
                              "version": getattr(revisions.get(row.revision_hash), "version", None), "mapper": getattr(revisions.get(row.revision_hash), "mapper", None),
-                             "conflict": bool(row.conflict)})
+                             "conflict": bool(row.conflict), "excluded": bool(row.excluded)})
     return list(cells.values())
 
 async def label_corpus(factory, actor: int, corpus_version: str, year: int, stage: str, original_slot: str, beatmap_id: Optional[int],
@@ -459,3 +459,101 @@ async def add_tournament(factory, actor: int, name: str, year: int, text: str, r
                 added += 1
             _audit(session, actor, role, "add_tournament", name[:64], reason.strip(), after={"maps": added, "year": year}, now=now)
     return {"added": added, "read": len(found)}
+
+async def batches(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
+    from db.models.duel_catalog import DuelTrainingExample
+    from services.duels import corpus, importer
+
+    async with factory() as session:
+        await _allowed(session, actor, OWNER, owners)
+        labels = await importer.corpus_labels(session)
+        rows = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.corpus_version == corpus.OWN_VERSION))).all()
+        added = (await session.scalars(select(DuelAudit).where(DuelAudit.action == "add_tournament").order_by(DuelAudit.id))).all()
+        found: dict[tuple[int, str], dict[str, Any]] = {}
+        for row in rows:
+            batch = found.setdefault((row.year, row.stage), {"name": row.stage, "year": row.year, "maps": 0, "labelled": 0, "excluded": 0,
+                                                             "author": None, "added_at": None})
+            batch["maps"] += 1
+            batch["labelled"] += int(importer.resolved(row, labels)[1])
+            batch["excluded"] += int(bool(row.excluded))
+        for audit in added:
+            year = (audit.after or {}).get("year")
+            batch = found.get((year, (audit.target or "")[:32]))
+            if batch is not None:
+                batch["author"] = audit.actor_id
+                batch["added_at"] = audit.created_at.isoformat() + "Z" if audit.created_at else None
+        authors = {int(batch["author"]) for batch in found.values() if batch["author"] is not None}
+        people = {row.id: row for row in (await session.scalars(select(Player).where(Player.id.in_(authors or {0})))).all()}
+        for batch in found.values():
+            held = people.get(batch["author"])
+            batch["author"] = {"player": held.id, "name": held.osu_username, "osu_id": held.osu_user_id} if held is not None else None
+        return sorted(found.values(), key=lambda batch: (batch["added_at"] or "", batch["year"], batch["name"]), reverse=True)
+
+async def _batch_rows(session, name: str, year: int, beatmap_id: Optional[int]):
+    from db.models.duel_catalog import DuelCorpusLabel, DuelTrainingExample
+    from services.duels import corpus
+
+    examples = select(DuelTrainingExample).where(DuelTrainingExample.corpus_version == corpus.OWN_VERSION,
+                                                 DuelTrainingExample.year == year, DuelTrainingExample.stage == name)
+    labels = select(DuelCorpusLabel).where(DuelCorpusLabel.corpus_version == corpus.OWN_VERSION,
+                                           DuelCorpusLabel.year == year, DuelCorpusLabel.stage == name)
+    if beatmap_id is not None:
+        examples = examples.where(DuelTrainingExample.beatmap_id == beatmap_id)
+        labels = labels.where(DuelCorpusLabel.beatmap_id == beatmap_id)
+    found = (await session.scalars(examples.with_for_update())).all()
+    if not found:
+        raise DuelError("BATCH_NOT_FOUND")
+    return found, (await session.scalars(labels.with_for_update())).all()
+
+def _batch_target(name: str, year: int, beatmap_id: Optional[int]) -> str:
+    return (f"{year}:{name}" + (f":{beatmap_id}" if beatmap_id is not None else ""))[:64]
+
+async def rename_batch(factory, actor: int, name: str, year: int, new_name: str, new_year: int, reason: str,
+                       owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
+    from db.models.duel_catalog import DuelTrainingExample
+    from services.duels import corpus
+
+    stage = new_name.strip()[:32]
+    if not stage or not 0 <= new_year <= 9999:
+        raise DuelError("INVALID_STATE")
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, OWNER, owners)
+            examples, labels = await _batch_rows(session, name, year, None)
+            if (stage, new_year) != (name, year) and await session.scalar(select(DuelTrainingExample.id).where(
+                    DuelTrainingExample.corpus_version == corpus.OWN_VERSION, DuelTrainingExample.year == new_year,
+                    DuelTrainingExample.stage == stage).limit(1)) is not None:
+                raise DuelError("BATCH_EXISTS")
+            for row in examples:
+                row.stage, row.year, row.source = stage, new_year, f"own:{new_name.strip()}"[:256]
+            for row in labels:
+                row.stage, row.year = stage, new_year
+            after = {"name": stage, "year": new_year}
+            _audit(session, actor, role, "batch_rename", _batch_target(name, year, None), reason.strip(),
+                   before={"name": name, "year": year}, after=after, now=now)
+            return after
+
+async def delete_batch(factory, actor: int, name: str, year: int, beatmap_id: Optional[int], reason: str,
+                       owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, OWNER, owners)
+            examples, labels = await _batch_rows(session, name, year, beatmap_id)
+            for row in list(examples) + list(labels):
+                await session.delete(row)
+            after = {"maps": len(examples)}
+            _audit(session, actor, role, "batch_delete", _batch_target(name, year, beatmap_id), reason.strip(), after=after, now=now)
+            return after
+
+async def exclude_batch(factory, actor: int, name: str, year: int, beatmap_id: Optional[int], excluded: bool, reason: str,
+                        owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, OWNER, owners)
+            examples, _ = await _batch_rows(session, name, year, beatmap_id)
+            for row in examples:
+                row.excluded = excluded
+            after = {"maps": len(examples), "excluded": excluded}
+            _audit(session, actor, role, "batch_exclude" if excluded else "batch_include", _batch_target(name, year, beatmap_id),
+                   reason.strip(), after=after, now=now)
+            return after

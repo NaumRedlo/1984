@@ -49,6 +49,13 @@ async def _names(session, player_ids) -> dict[int, str]:
     rows = (await session.execute(select(Player.id, Player.osu_username).where(Player.id.in_(ids)))).all()
     return {int(row[0]): row[1] for row in rows}
 
+async def _faces(session, player_ids) -> dict[int, int]:
+    ids = {int(value) for value in player_ids if value is not None}
+    if not ids:
+        return {}
+    rows = (await session.execute(select(Player.id, Player.osu_user_id).where(Player.id.in_(ids)))).all()
+    return {int(row[0]): int(row[1]) for row in rows if row[1] is not None}
+
 async def my_roles(factory, actor: int, owners: tuple[int, ...] = ()) -> list[str]:
     async with factory() as session:
         return sorted(await balance.roles_of(session, actor, owners))
@@ -334,6 +341,7 @@ async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional
             found.append({"id": duel.id, "state": duel.state, "reason": duel.pause_reason or duel.state.lower(), "since": _stamp(duel.updated_at),
                           "wins": {"A": duel.wins_a, "B": duel.wins_b}, "mode": duel.mode,
                           "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id),
+                                       "osu_id": int(person.osu_user_id) if person.osu_user_id else None,
                                        "present": present(person.player_id) if present is not None else None} for person in people],
                           **await _stuck_detail(session, duel)})
         return found
@@ -346,7 +354,8 @@ async def journal(factory, actor: int, owners: tuple[int, ...] = (), before: Opt
             query = query.where(DuelAudit.id < before)
         rows = (await session.scalars(query)).all()
         names = await _names(session, [row.actor_id for row in rows])
-        return [{"id": row.id, "actor": row.actor_id, "name": names.get(row.actor_id), "role": row.role, "action": row.action,
+        faces = await _faces(session, [row.actor_id for row in rows])
+        return [{"id": row.id, "actor": row.actor_id, "name": names.get(row.actor_id), "osu_id": faces.get(row.actor_id), "role": row.role, "action": row.action,
                  "target": row.target, "reason": row.reason, "before": row.before, "after": row.after, "at": _stamp(row.created_at)} for row in rows]
 
 async def people(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
@@ -354,9 +363,11 @@ async def people(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict
         await _any_role(session, actor, owners)
         rows = (await session.scalars(select(DuelRole).order_by(DuelRole.player_id, DuelRole.role))).all()
         names = await _names(session, [row.player_id for row in rows])
+        faces = await _faces(session, [row.player_id for row in rows])
         grouped: dict[int, dict[str, Any]] = {}
         for row in rows:
-            entry = grouped.setdefault(int(row.player_id), {"player": int(row.player_id), "name": names.get(int(row.player_id)), "roles": []})
+            entry = grouped.setdefault(int(row.player_id), {"player": int(row.player_id), "name": names.get(int(row.player_id)),
+                                                            "osu_id": faces.get(int(row.player_id)), "roles": []})
             entry["roles"].append(row.role)
         return list(grouped.values())
 
