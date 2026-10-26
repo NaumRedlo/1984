@@ -343,7 +343,8 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import presence
 
         try:
-            return {"people": await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners)}
+            people = await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners)
+            return {"people": people, "revision": await presence.revision(factory_of())}
         except ValueError:
             raise web.HTTPBadRequest(text="valid section and beatmap are required")
 

@@ -205,3 +205,25 @@ async def test_pool_probe_reports_catalogue_deficits_without_creating_a_duel(fac
     assert result["catalogue"] == {"NM1": 1}
     async with factory() as session:
         assert await session.scalar(select(func.count()).select_from(Duel)) == before
+
+
+async def test_balance_revision_changes_with_data_but_not_presence(factory):
+    from services.duels import presence
+    from sqlalchemy import delete
+
+    first = await presence.revision(factory)
+    await presence.touch(factory, 1, "queue", 2)
+    assert await presence.revision(factory) == first
+    async with factory() as session:
+        item = await session.get(DuelMapAssignment, 4)
+        item.slot = "NM2"
+        item.updated_at = utcnow() + timedelta(seconds=1)
+        await session.commit()
+    second = await presence.revision(factory)
+    assert second != first
+    await presence.touch(factory, 1, "label", 3)
+    assert await presence.revision(factory) == second
+    async with factory() as session:
+        await session.execute(delete(DuelMapAssignment).where(DuelMapAssignment.beatmap_id == 4))
+        await session.commit()
+    assert await presence.revision(factory) != second
