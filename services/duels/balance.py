@@ -145,11 +145,12 @@ async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            before = catalog._view(await catalog._row(session, beatmap_id))
             after = await catalog.review(session, beatmap_id, decision, actor, reason, slot=slot, now=now)
             for review in (await session.scalars(select(DuelBalanceReview).where(DuelBalanceReview.beatmap_id == beatmap_id,
                                                                                  DuelBalanceReview.decision.is_(None)))).all():
                 review.decision, review.reviewer_id, review.decided_at = decision, actor, now
-            _audit(session, actor, role, f"map_{decision.lower()}", str(beatmap_id), reason, after=after, now=now)
+            _audit(session, actor, role, f"map_{decision.lower()}", str(beatmap_id), reason, before=before, after=after, now=now)
             return after
 
 async def _within_stars(session, held, slot: Optional[str]) -> bool:

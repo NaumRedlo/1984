@@ -4,7 +4,8 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 
-from db.models.duel import Duel, DuelAudit, DuelBalanceReview, DuelFeedback, DuelModelVersion, DuelParticipant, DuelPool, DuelPoolEntry, DuelRole, DuelRound
+from db.models.duel import (Duel, DuelAudit, DuelBalanceReview, DuelDeadline, DuelEvent, DuelFeedback, DuelModelVersion, DuelParticipant, DuelPool,
+                            DuelPoolEntry, DuelRole, DuelRoom, DuelRound)
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
 from services.duels import balance, catalog, importer, states
@@ -295,7 +296,32 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
                           "version": revision.version})
         return sorted(found, key=lambda item: item["stars"])
 
-async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> list[dict[str, Any]]:
+async def _stuck_detail(session, duel: Duel) -> dict[str, Any]:
+    room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id).order_by(DuelRoom.id.desc()).limit(1))
+    played = await session.scalar(select(DuelRound).where(DuelRound.duel_id == duel.id).order_by(DuelRound.ordinal.desc()).limit(1))
+    beatmap, title = None, None
+    if played is not None:
+        entry = await session.scalar(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
+                                     .where(DuelPool.duel_id == duel.id, DuelPoolEntry.slot == played.slot).limit(1))
+        if entry is not None:
+            beatmap = int(entry.beatmap_id)
+            revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.hash == entry.revision_hash).limit(1))
+            title = revision.title if revision is not None else None
+    events = (await session.scalars(select(DuelEvent).where(DuelEvent.duel_id == duel.id)
+                                    .order_by(DuelEvent.sequence.desc()).limit(8))).all()
+    deadline = await session.scalar(select(DuelDeadline).where(DuelDeadline.duel_id == duel.id, DuelDeadline.processed_at.is_(None))
+                                    .order_by(DuelDeadline.expires_at).limit(1))
+    return {
+        "room": {"match_id": room.match_id, "name": room.room_name, "status": room.status} if room is not None else None,
+        "round": {"ordinal": played.ordinal, "slot": played.slot, "state": played.state, "beatmap_id": beatmap, "title": title}
+                 if played is not None else None,
+        "events": [{"type": event.type, "reason": (event.payload or {}).get("reason") or (event.payload or {}).get("to"),
+                    "at": _stamp(event.occurred_at)} for event in events],
+        "deadline": {"kind": deadline.kind, "at": _stamp(deadline.expires_at)} if deadline is not None else None,
+    }
+
+async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional[datetime] = None,
+                present: Optional[Callable[[int], bool]] = None) -> list[dict[str, Any]]:
     now = now or utcnow()
     async with factory() as session:
         await balance._allowed(session, actor, balance.TECHNICAL_OPERATOR, owners)
@@ -307,7 +333,9 @@ async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional
             names = await _names(session, [person.player_id for person in people])
             found.append({"id": duel.id, "state": duel.state, "reason": duel.pause_reason or duel.state.lower(), "since": _stamp(duel.updated_at),
                           "wins": {"A": duel.wins_a, "B": duel.wins_b}, "mode": duel.mode,
-                          "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id)} for person in people]})
+                          "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id),
+                                       "present": present(person.player_id) if present is not None else None} for person in people],
+                          **await _stuck_detail(session, duel)})
         return found
 
 async def journal(factory, actor: int, owners: tuple[int, ...] = (), before: Optional[int] = None, limit: int = 50) -> list[dict[str, Any]]:
