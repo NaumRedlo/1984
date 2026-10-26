@@ -7,4 +7,4 @@ python-dotenv==1.2.2
 SQLAlchemy[asyncio]==2.0.47
 Pillow>=12.3.0
 fonttools>=4.67.0
-cryptography>=50.0.1
+cryptography>=50.0.2
