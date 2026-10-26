@@ -35,4 +35,10 @@ RESERVE_SLOTS = ("NM5", "NM6", "HD1", "HD3", "HD4", "HR1", "HR3", "HR4", "DT3", 
 def reserved(slot: str) -> bool:
     return slot not in SLOTS and len(slot) == 3 and slot[:2] in RESERVE_GROUPS and slot[2] in "123456789"
 
+STARS_LEAST = 5.0
+STARS_MOST = 10.0
+
+def in_catalogue(stars) -> bool:
+    return stars is not None and STARS_LEAST <= float(stars) <= STARS_MOST
+
 MODES = ("direct", "rated")

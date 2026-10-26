@@ -152,6 +152,19 @@ async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason
             _audit(session, actor, role, f"map_{decision.lower()}", str(beatmap_id), reason, after=after, now=now)
             return after
 
+async def _within_stars(session, held, slot: Optional[str]) -> bool:
+    from db.models.duel_catalog import DuelMapAnalysis
+    from services.duels.features import FEATURE_VERSION
+    from services.duels.generator import SLOT_MODS
+    from services.duels.rules import in_catalogue
+
+    if held is None or not held.revision_hash:
+        return False
+    rows = (await session.execute(select(DuelMapAnalysis.mods, DuelMapAnalysis.stars).where(
+        DuelMapAnalysis.revision_hash == held.revision_hash, DuelMapAnalysis.feature_version == FEATURE_VERSION))).all()
+    wanted = {"".join(SLOT_MODS[slot])} if slot in SLOT_MODS else {mods for mods, _ in rows}
+    return any(in_catalogue(stars) for mods, stars in rows if mods in wanted)
+
 NOT_ADDED = {"not_found": "MAP_NOT_FOUND", "not_standard": "NOT_STANDARD", "length": "MAP_LENGTH", "no_file": "NO_FILE",
              "parse_failed": "PARSE_FAILED", "recovering": "SERVICE_RECOVERING"}
 
@@ -174,6 +187,8 @@ async def add_map(factory, actor: int, beatmap_id: int, slot: Optional[str], rea
             held = await session.get(DuelMapAssignment, beatmap_id)
             if held is not None and held.state == catalog.REJECTED:
                 raise catalog.CatalogRefusal("REJECTED_STAYS")
+            if not await _within_stars(session, held, slot):
+                raise catalog.CatalogRefusal("STARS_RANGE")
             _audit(session, actor, role, "map_add", str(beatmap_id), reason, after={"slot": slot, "outcome": outcome, "status": status}, now=now)
             decision = "APPROVE" if held is None or held.slot in (None, slot) else "MOVE"
     if slot is not None:

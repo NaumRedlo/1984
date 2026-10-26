@@ -60,7 +60,7 @@ async def test_the_catalogue_is_counted_by_slot_and_star_band(factory):
     assert found["totals"] == {"playable": 3, "human": 1, "uncertain": 1, "quarantined": 1, "unassigned": 1}
     cell = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(6.1))
     assert [(m["beatmap_id"], m["level"]) for m in cell] == [(2, "confident")]
-    assert desk.band_of(3.2) == 0 and desk.band_of(9.0) == len(desk.BANDS) - 1
+    assert desk.band_of(5.2) == 0 and desk.band_of(9.7) == desk.band_of(10.0) == len(desk.BANDS) - 1
 
 async def test_the_queue_lists_reviews_first_then_maps_waiting_for_a_slot(factory):
     class Model:
@@ -126,9 +126,9 @@ async def test_a_search_on_the_mirrors_is_kept_in_the_journal_and_needs_a_review
 
 
 def test_discovery_uses_half_star_windows_even_for_the_open_top_column():
-    assert desk.discovery_range(0) == (4.0, 4.5)
-    assert desk.discovery_range(7) == (7.5, 8.0)
-    for bad in (-1, 8, True):
+    assert desk.discovery_range(0) == (5.0, 5.5)
+    assert desk.discovery_range(9) == (9.5, 10.0)
+    for bad in (-1, 10, True):
         with pytest.raises(ValueError):
             desk.discovery_range(bad)
 

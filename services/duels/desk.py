@@ -10,10 +10,10 @@ from db.models.player import Player
 from services.duels import balance, catalog, importer, states
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, STARS_MOST, in_catalogue
 from utils.timeutils import utcnow
 
-BANDS = (4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5)
+BANDS = (5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5)
 STUCK_AFTER = timedelta(minutes=5)
 WAITING_STATES = frozenset({states.PAUSED, states.RECOVERING, states.VERIFYING, states.ABORTING, states.ROOM_SETUP, states.WAITING_ROOM})
 RECENT = timedelta(hours=6)
@@ -33,7 +33,7 @@ def discovery_range(band: int) -> tuple[float, float]:
     if type(band) is not int or not 0 <= band < len(BANDS):
         raise ValueError("band")
     low = BANDS[band]
-    return low, BANDS[band + 1] if band + 1 < len(BANDS) else low + 0.5
+    return low, BANDS[band + 1] if band + 1 < len(BANDS) else STARS_MOST
 
 async def _any_role(session, actor: int, owners: tuple[int, ...]) -> set[str]:
     held = await balance.roles_of(session, actor, owners)
@@ -252,7 +252,7 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
             if level is None:
                 continue
             analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[assignment.slot]))
-            if analysis is None or analysis.stars is None:
+            if analysis is None or not in_catalogue(analysis.stars):
                 continue
             grid[assignment.slot][band_of(float(analysis.stars))] += 1
             totals["playable"] += 1
@@ -288,7 +288,7 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
             if level is None:
                 continue
             analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[slot]))
-            if analysis is None or analysis.stars is None or band_of(float(analysis.stars)) != band:
+            if analysis is None or not in_catalogue(analysis.stars) or band_of(float(analysis.stars)) != band:
                 continue
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
                           "stars": float(analysis.stars), "level": level, "mapper": revision.mapper, "title": revision.title,
