@@ -470,3 +470,21 @@ async def test_error_json_is_not_a_successful_empty_search():
         return b'{"error":"maintenance"}'
     assert await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0) is None
     assert len(requested) == 2
+
+
+async def test_stored_maps_are_analysed_again_for_a_new_feature_version_keeping_their_stars(factory, tmp_path):
+    raw = _map(31)
+    digest = mirrors.store(str(tmp_path), raw)
+    async with factory() as session:
+        session.add(DuelMapRevision(beatmap_id=31, beatmapset_id=310, hash=digest, status="ok"))
+        session.add(DuelMapAnalysis(revision_hash=digest, mods="NFDT", engine_version="old", feature_version="features-v1",
+                                    model_version="none", stars=6.4, features={}))
+        session.add(DuelMapRevision(beatmap_id=32, beatmapset_id=320, hash="f" * 32, status="ok"))
+        await session.commit()
+    seen = []
+    assert await importer.reanalyse(factory, str(tmp_path), report=seen.append) == {"analysed": 1, "missing_file": 1, "unreadable": 0}
+    async with factory() as session:
+        fresh = {row.mods: row for row in (await session.scalars(select(DuelMapAnalysis).where(
+            DuelMapAnalysis.feature_version == importer.FEATURE_VERSION))).all()}
+    assert set(fresh) == set(importer.ANALYSED) and fresh["NFDT"].stars == 6.4 and fresh["NF"].stars is None
+    assert await importer.reanalyse(factory, str(tmp_path), report=seen.append) == {"analysed": 0, "missing_file": 1, "unreadable": 0}
