@@ -295,3 +295,31 @@ async def test_http_search_presence_matches_without_a_websocket(client, factory)
     client.hub.seen.clear()
     await client.get("/render/duels", headers=_as(1))
     assert client.hub.present(1) and not client.hub.present(2)
+
+
+async def test_a_slow_socket_cannot_hold_back_the_others(monkeypatch):
+    import time
+
+    monkeypatch.setattr(live, "SEND_PATIENCE", 0.05)
+
+    class Socket:
+        def __init__(self, stuck):
+            self.stuck, self.closed, self.got = stuck, False, []
+
+        async def send_json(self, message):
+            if self.stuck:
+                await asyncio.sleep(10)
+            self.got.append(message)
+
+        async def close(self):
+            self.closed = True
+
+    hub = live.Hub()
+    slow, quick = Socket(True), Socket(False)
+    hub.watching["d"] = {slow, quick}
+    started = time.monotonic()
+    await hub.send("d", {"type": "event"})
+    assert time.monotonic() - started < 1
+    assert quick.got == [{"type": "event"}] and slow not in hub.watching["d"]
+    await asyncio.sleep(0)
+    assert slow.closed, "the stuck socket is closed so its app reconnects and watches again"
