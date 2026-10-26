@@ -352,7 +352,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
     async def desk_stuck(request, player, said, owners):
         from services.duels import desk
 
-        return {"duels": await desk.stuck(factory_of(), player, owners)}
+        from services.duels import live
+
+        return {"duels": await desk.stuck(factory_of(), player, owners, present=live.hub.present)}
 
     async def desk_journal(request, player, said, owners):
         from services.duels import desk

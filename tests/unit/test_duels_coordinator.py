@@ -14,7 +14,7 @@ from services.duels import deadlines, outbox, series, service, states
 from services.duels.bancho_text import parse_line, said
 from services.duels.coordinator import Coordinator
 from services.duels.features import FEATURE_VERSION
-from services.duels.generator import SLOT_MODS
+from services.duels.generator import SLOT_MODS, Skill
 from services.duels.rules import SLOTS
 from services.duels.verifier import Budget
 from utils.timeutils import utcnow
@@ -84,7 +84,7 @@ async def factory(tmp_path):
         session.add_all([Player(id=1, osu_user_id=101, osu_username="one"), Player(id=2, osu_user_id=102, osu_username="two")])
         number = 0
         for slot in SLOTS:
-            for stars in (2.2, 2.3, 2.4):
+            for stars in (5.2, 5.3, 5.4):
                 number += 1
                 digest = f"{number:032x}"
                 session.add(DuelMapRevision(beatmap_id=number, beatmapset_id=number, hash=digest, status="ok", ranked_status="ranked",
@@ -96,6 +96,10 @@ async def factory(tmp_path):
     yield made
     await engine.dispose()
 
+async def _fives(factory, people):
+    skills = {slot: Skill(5.5, 0.5) for slot in SLOTS}
+    return skills, skills
+
 async def _state(factory, duel_id):
     async with factory() as session:
         return (await session.get(Duel, duel_id)).state
@@ -103,7 +107,7 @@ async def _state(factory, duel_id):
 async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(factory, monkeypatch):
     monkeypatch.setattr(outbox, "HANDLERS", {})
     bancho, osu = FakeBancho(), FakeOsu()
-    coordinator = Coordinator(factory, bancho, osu, budget=Budget(per_minute=1000))
+    coordinator = Coordinator(factory, bancho, osu, profiles=_fives, budget=Budget(per_minute=1000))
     coordinator.install()
 
     duel = await service.invite(factory, 1, 2, "invite-e2e")

@@ -93,8 +93,10 @@ async def test_reviewing_needs_the_role_and_is_audited(factory):
     with pytest.raises(balance.Forbidden):
         await balance.operator_cancel(factory, 2, "x", "reviewers do not cancel")
     async with factory() as session:
-        audit = [(row.action, row.role) for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
+        rows = (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()
+        audit = [(row.action, row.role) for row in rows]
         assert audit == [("grant", "OWNER"), ("map_reject", "BALANCE_REVIEWER")]
+        assert rows[1].before["state"] != rows[1].after["state"] == "REJECTED", "the journal keeps what the map was before"
         assert (await session.scalar(select(DuelBalanceReview.decision))) == "REJECT"
     assert [r["beatmap_id"] for r in await balance.open_reviews(factory, 2)] == []
 
