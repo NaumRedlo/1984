@@ -274,6 +274,12 @@ async def test_balance_presence_is_authenticated_and_requires_a_role(client, fac
     assert (await response.json())["people"] == []
     assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(2))).status == 403
     assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(1))).status == 404
+    adding = "/render/admin/duels/catalog/maps"
+    for body in ({}, {"beatmap_id": "7"}, {"beatmap_id": True}, {"beatmap_id": 0}, {"beatmap_id": 7, "slot": 2}):
+        assert (await client.post(adding, json=body, headers=_as(1))).status == 400, body
+    assert (await client.post(adding, json={"beatmap_id": 7}, headers=_as(2))).status == 403
+    recovering = await client.post(adding, json={"beatmap_id": 7, "slot": "NM1"}, headers=_as(1))
+    assert recovering.status == 503 and (await recovering.json())["error"] == "SERVICE_RECOVERING"
 
 
 async def test_http_search_presence_matches_without_a_websocket(client, factory):

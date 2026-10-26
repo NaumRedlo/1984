@@ -419,6 +419,29 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         discovering["task"] = watched(run(), "discovering catalogue maps")
         return {"started": True}
 
+    async def catalog_add(request, player, said, owners):
+        import aiohttp
+        from config.settings import DUEL_OSU_FOLDER
+        from services.duels import balance, catalog, desk, importer, mirrors
+
+        beatmap, slot = said.get("beatmap_id"), said.get("slot")
+        if not isinstance(beatmap, int) or isinstance(beatmap, bool) or beatmap <= 0 or not (slot is None or isinstance(slot, str)):
+            raise web.HTTPBadRequest(text="beatmap_id is required")
+
+        async def bring(beatmap_id: int):
+            if osu_of() is None:
+                return "recovering", None
+            model = await balance.working_model(factory_of())
+            timeout = aiohttp.ClientTimeout(total=60, sock_read=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                return await importer.ingest_one(factory_of(), mirrors.aiohttp_fetch(session), osu_of(), beatmap_id, DUEL_OSU_FOLDER, model)
+
+        try:
+            added = await balance.add_map(factory_of(), player, beatmap, slot, said["reason"], owners, bring)
+        except catalog.CatalogRefusal as refusal:
+            return web.json_response({"error": refusal.code}, status={"MAP_NOT_FOUND": 404, "SERVICE_RECOVERING": 503}.get(refusal.code, 409))
+        return {**added, "task": await desk.inspect_map(factory_of(), player, beatmap, owners)}
+
     async def rollback_model(request, player, said, owners):
         from services.duels import balance
 
@@ -503,6 +526,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.post("/render/admin/duels/models/train", handler(admin(train_model))),
         web.post("/render/admin/duels/models/{version}/delete", handler(admin(delete_model))),
         web.post("/render/admin/duels/catalog/discover", handler(admin(catalog_discover))),
+        web.post("/render/admin/duels/catalog/maps", handler(admin(catalog_add))),
         web.post("/render/admin/duels/{duel_id}/cancel", handler(admin(operator_cancel))),
         web.post("/render/admin/duels/{duel_id}/finalize", handler(admin(finalize))),
         web.post("/render/duels/notifications/seen", handler(seen)),

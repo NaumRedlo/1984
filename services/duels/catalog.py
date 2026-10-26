@@ -181,7 +181,7 @@ async def admit(session, beatmap_id: int, digest: str, ok: bool, reason: Optiona
 def playable(row: DuelMapAssignment, revision_row: Optional[DuelMapRevision]) -> Optional[str]:
     if row.slot not in SLOTS or not row.admitted or revision_row is None or revision_row.status != "ok":
         return None
-    if revision_row.ranked_status != "ranked":
+    if revision_row.ranked_status != "ranked" and row.state != HUMAN_APPROVED:
         return None
     if row.state == HUMAN_APPROVED:
         return "human"

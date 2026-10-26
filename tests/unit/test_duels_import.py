@@ -199,6 +199,80 @@ async def test_a_broken_file_is_quarantined_not_offered(factory, tmp_path):
         assignment = await session.get(DuelMapAssignment, 6)
     assert revision.status == "quarantined" and assignment.admitted is False
 
+def _described(beatmap_id: int, raw: bytes, status: str = "graveyard", mode="osu", length: int = 120) -> bytes:
+    return json.dumps({"id": beatmap_id, "beatmapset_id": beatmap_id * 10, "mode": mode, "status": status, "total_length": length,
+                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40, "checksum": hashlib.md5(raw).hexdigest(),
+                       "beatmapset": {"title": "Graveyard Song", "artist": "Artist", "creator": "Meg", "status": status}}).encode()
+
+async def test_one_map_is_described_by_the_mirror_and_checked_before_import(factory, tmp_path):
+    raw = _map(9)
+    answers = {"api/v2/b/9": _described(9, raw), "/osu/9": raw, "api/v2/b/10": _described(10, raw, mode="mania"),
+               "api/v2/b/11": _described(11, raw, length=30)}
+
+    async def fetch(address):
+        return next((body for part, body in answers.items() if part in address), None)
+
+    outcome, entry = await importer.ingest_one(factory, fetch, Osu(), 9, str(tmp_path))
+    assert (outcome, entry["beatmapset_id"], entry["status"], entry["title"]) == ("unassigned", 90, "graveyard", "Graveyard Song")
+    assert (await importer.ingest_one(factory, fetch, Osu(), 10, str(tmp_path)))[0] == "not_standard"
+    assert (await importer.ingest_one(factory, fetch, Osu(), 11, str(tmp_path)))[0] == "length"
+    assert await importer.ingest_one(factory, fetch, Osu(), 12, str(tmp_path)) == ("not_found", None)
+    async with factory() as session:
+        revision = await session.scalar(select(DuelMapRevision))
+    assert (revision.beatmap_id, revision.ranked_status, revision.status) == (9, "graveyard", "ok")
+
+async def test_a_reviewer_adds_one_map_and_an_unranked_one_plays_only_with_a_person_s_slot(factory, tmp_path):
+    from db.models.duel import DuelAudit, DuelRole
+    from db.models.player import Player
+    from services.duels import balance, catalog
+
+    first, second = _map(21), _map(22)
+    answers = {"api/v2/b/21": _described(21, first), "/osu/21": first, "api/v2/b/22": _described(22, second, status="loved"), "/osu/22": second}
+
+    async def fetch(address):
+        return next((body for part, body in answers.items() if part in address), None)
+
+    brought = []
+
+    async def bring(beatmap_id):
+        brought.append(beatmap_id)
+        return await importer.ingest_one(factory, fetch, Osu(), beatmap_id, str(tmp_path))
+
+    async with factory() as session:
+        session.add_all([Player(id=1, osu_user_id=101, osu_username="one"), Player(id=2, osu_user_id=102, osu_username="two")])
+        session.add(DuelRole(player_id=1, role=balance.BALANCE_REVIEWER))
+        await session.commit()
+    with pytest.raises(balance.Forbidden):
+        await balance.add_map(factory, 2, 21, "NM2", "not a reviewer", (), bring)
+    with pytest.raises(catalog.CatalogRefusal) as unknown:
+        await balance.add_map(factory, 1, 21, "XX9", "no such slot", (), bring)
+    assert unknown.value.code == "UNKNOWN_SLOT" and brought == []
+    with pytest.raises(catalog.CatalogRefusal) as missing:
+        await balance.add_map(factory, 1, 23, None, "not on any mirror", (), bring)
+    assert missing.value.code == "MAP_NOT_FOUND"
+    assert await balance.add_map(factory, 1, 21, "NM2", "a fine graveyard aim map", (), bring) == {"outcome": "unassigned", "status": "graveyard"}
+    assert await balance.add_map(factory, 1, 22, None, "let Kamerton look", (), bring) == {"outcome": "unassigned", "status": "loved"}
+    async with factory() as session:
+        rows = {row.beatmap_id: row for row in (await session.scalars(select(DuelMapAssignment))).all()}
+        revisions = {row.beatmap_id: row for row in (await session.scalars(select(DuelMapRevision))).all()}
+        audit = [(row.action, row.target) for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
+    assert (rows[21].slot, rows[21].state) == ("NM2", catalog.HUMAN_APPROVED)
+    assert catalog.playable(rows[21], revisions[21]) == "human"
+    assert (rows[22].slot, rows[22].state) == (None, catalog.UNASSIGNED)
+    rows[22].slot, rows[22].state, rows[22].confidence, rows[22].margin = "NM1", catalog.AUTO_ASSIGNED, 0.95, 0.5
+    assert catalog.playable(rows[22], revisions[22]) is None, "a model alone never plays a map that is not ranked"
+    assert audit == [("map_add", "21"), ("map_approve", "21"), ("map_add", "22")]
+    assert await balance.add_map(factory, 1, 21, "NM3", "moved after a second look", (), bring) == {"outcome": "known", "status": "graveyard"}
+    async with factory() as session:
+        assert (await session.get(DuelMapAssignment, 21)).slot == "NM3"
+    await balance.review_map(factory, 1, 22, "REJECT", "not a duel map")
+    with pytest.raises(catalog.CatalogRefusal) as stays:
+        await balance.add_map(factory, 1, 22, "NM1", "try again", (), bring)
+    assert stays.value.code == "REJECTED_STAYS"
+    async with factory() as session:
+        audit = [row.action for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
+    assert audit[-1] == "map_reject", "a refused addition leaves no trace in the journal"
+
 WIKI_PAGE = """# osu! World Cup 2023
 
 ## Mappools

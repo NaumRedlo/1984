@@ -72,7 +72,7 @@ def pick(archive: bytes, beatmap_id: Optional[int], checksum: Optional[str]) -> 
                     break
     return None
 
-async def lookup(fetch: Fetch, beatmap_id: int, clock: Callable[[], float] = time.monotonic) -> Optional[tuple[int, Optional[str]]]:
+async def _looked_up(fetch: Fetch, beatmap_id: int, clock: Callable[[], float]) -> Optional[dict[str, Any]]:
     for name, address in LOOKUPS:
         if not _awake(name, clock):
             continue
@@ -84,12 +84,29 @@ async def lookup(fetch: Fetch, beatmap_id: int, clock: Callable[[], float] = tim
         except Exception:
             _tired(name, clock)
             continue
-        if not isinstance(body, dict) or body.get("id") != beatmap_id:
-            continue
-        set_id = body.get("beatmapset_id")
-        checksum = body.get("checksum")
-        return (int(set_id) if isinstance(set_id, int) else 0, checksum if isinstance(checksum, str) and checksum else None)
+        if isinstance(body, dict) and body.get("id") == beatmap_id:
+            return body
     return None
+
+async def lookup(fetch: Fetch, beatmap_id: int, clock: Callable[[], float] = time.monotonic) -> Optional[tuple[int, Optional[str]]]:
+    body = await _looked_up(fetch, beatmap_id, clock)
+    if body is None:
+        return None
+    set_id = body.get("beatmapset_id")
+    checksum = body.get("checksum")
+    return (int(set_id) if isinstance(set_id, int) else 0, checksum if isinstance(checksum, str) and checksum else None)
+
+async def describe(fetch: Fetch, beatmap_id: int, clock: Callable[[], float] = time.monotonic) -> Optional[dict[str, Any]]:
+    body = await _looked_up(fetch, beatmap_id, clock)
+    if body is None:
+        return None
+    beatmapset = body.get("beatmapset") or body.get("set")
+    beatmapset = dict(beatmapset) if isinstance(beatmapset, dict) else {}
+    beatmapset["id"] = beatmapset.get("id") or body.get("beatmapset_id")
+    entry = _entry(beatmapset, body)
+    if entry is not None:
+        entry["standard"] = body.get("mode") in ("osu", 0) and not body.get("convert")
+    return entry
 
 async def fetch_osu(fetch: Fetch, set_id: int, beatmap_id: Optional[int], checksum: Optional[str],
                     clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, bytes]]:
