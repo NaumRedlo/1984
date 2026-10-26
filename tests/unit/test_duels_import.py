@@ -201,7 +201,7 @@ async def test_a_broken_file_is_quarantined_not_offered(factory, tmp_path):
 
 def _described(beatmap_id: int, raw: bytes, status: str = "graveyard", mode="osu", length: int = 120) -> bytes:
     return json.dumps({"id": beatmap_id, "beatmapset_id": beatmap_id * 10, "mode": mode, "status": status, "total_length": length,
-                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40, "checksum": hashlib.md5(raw).hexdigest(),
+                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40, "checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
                        "beatmapset": {"title": "Graveyard Song", "artist": "Artist", "creator": "Meg", "status": status}}).encode()
 
 async def test_one_map_is_described_by_the_mirror_and_checked_before_import(factory, tmp_path):
