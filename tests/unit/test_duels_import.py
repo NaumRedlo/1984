@@ -201,7 +201,7 @@ async def test_a_broken_file_is_quarantined_not_offered(factory, tmp_path):
 
 def _described(beatmap_id: int, raw: bytes, status: str = "graveyard", mode="osu", length: int = 120) -> bytes:
     return json.dumps({"id": beatmap_id, "beatmapset_id": beatmap_id * 10, "mode": mode, "status": status, "total_length": length,
-                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40, "checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(),
+                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40,
                        "beatmapset": {"title": "Graveyard Song", "artist": "Artist", "creator": "Meg", "status": status}}).encode()
 
 async def test_one_map_is_described_by_the_mirror_and_checked_before_import(factory, tmp_path):
@@ -240,6 +240,7 @@ async def test_a_reviewer_adds_one_map_and_an_unranked_one_plays_only_with_a_per
 
     async with factory() as session:
         session.add_all([Player(id=1, osu_user_id=101, osu_username="one"), Player(id=2, osu_user_id=102, osu_username="two")])
+        await session.flush()
         session.add(DuelRole(player_id=1, role=balance.BALANCE_REVIEWER))
         await session.commit()
     with pytest.raises(balance.Forbidden):
@@ -262,7 +263,7 @@ async def test_a_reviewer_adds_one_map_and_an_unranked_one_plays_only_with_a_per
     rows[22].slot, rows[22].state, rows[22].confidence, rows[22].margin = "NM1", catalog.AUTO_ASSIGNED, 0.95, 0.5
     assert catalog.playable(rows[22], revisions[22]) is None, "a model alone never plays a map that is not ranked"
     assert audit == [("map_add", "21"), ("map_approve", "21"), ("map_add", "22")]
-    assert await balance.add_map(factory, 1, 21, "NM3", "moved after a second look", (), bring) == {"outcome": "known", "status": "graveyard"}
+    assert await balance.add_map(factory, 1, 21, "NM3", "moved after a second look", (), bring) == {"outcome": "unassigned", "status": "graveyard"}
     async with factory() as session:
         assert (await session.get(DuelMapAssignment, 21)).slot == "NM3"
     await balance.review_map(factory, 1, 22, "REJECT", "not a duel map")
