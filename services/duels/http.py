@@ -81,6 +81,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
                 return _answer({"error": "no one"}, 404)
             if owner.player_id is None:
                 return _refused(DuelError("NOT_LINKED"))
+            live.hub.heard(owner.player_id)
             said = await _body(request) if request.method != "GET" else {}
             try:
                 found = await work(request, owner.player_id, said)
@@ -464,7 +465,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             return await series.view(session, duel, player)
 
     async def mine(request, player, said):
-        return {"duels": await service.mine(factory_of(), player)}
+        return {"duels": await service.mine(factory_of(), player), "queue": await service.queue_state(factory_of(), player)}
 
     async def events(request, player, said):
         after = request.query.get("after", "0")

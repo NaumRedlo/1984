@@ -9,7 +9,7 @@ from sqlalchemy.pool import NullPool
 
 import db.models
 from db.database import Base
-from db.models.duel import Duel, DuelCommand, DuelDeadline, DuelEvent, DuelLease, DuelNotification, DuelOperation
+from db.models.duel import Duel, DuelCommand, DuelDeadline, DuelEvent, DuelLease, DuelQueueEntry, DuelNotification, DuelOperation
 from db.models.player import Player
 from services.duels import deadlines, outbox, service, states
 from services.duels.errors import DuelError
@@ -156,8 +156,9 @@ async def test_events_are_numbered_without_gaps_and_can_be_read_after_a_cursor(f
     assert await _code(service.events_after(factory, duel["id"], 3, 0)) == "NOT_PARTICIPANT"
 
 async def test_the_queue_holds_one_place_and_lets_go(factory):
-    await service.enter_queue(factory, 1, "in", now=NOW)
-    assert await _code(service.enter_queue(factory, 1, "in-again", now=NOW)) == "ALREADY_BUSY"
+    entered = await service.enter_queue(factory, 1, "in", now=NOW)
+    assert await service.enter_queue(factory, 1, "in-again", now=NOW) == entered
+    assert await _count(factory, DuelQueueEntry, DuelQueueEntry.status == "waiting") == 1
     assert await service.busy(factory, [1, 2]) == {1}
     invited = await service.invite(factory, 2, 1, "call", now=NOW)
     assert await _code(service.accept(factory, invited["id"], 1, "take", now=NOW)) == "ALREADY_BUSY"

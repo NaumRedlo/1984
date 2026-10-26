@@ -222,6 +222,10 @@ async def accept(factory, duel_id: str, actor_id: int, operation_id: str, expect
                 await step.emit(duel, "pair_accepted", {"by": actor_id})
                 await step.session.flush()
                 return await snapshot(step.session, duel, actor_id)
+            for entry in (await step.session.scalars(select(DuelQueueEntry).where(
+                DuelQueueEntry.player_id.in_([person.player_id for person in people]), DuelQueueEntry.status == "offered"))).all():
+                entry.status = "matched"
+                entry.left_at = step.now
             await step.move(duel, states.ACCEPTED)
             step.command(duel, "generate_pool", {"duel": duel.id, "version": duel.state_version})
             await step.session.flush()
@@ -296,13 +300,42 @@ async def enter_queue(factory, actor_id: int, operation_id: str, mode: str = "ra
         player = await step.session.get(Player, actor_id)
         if player is None or not player.osu_user_id:
             raise DuelError("NOT_LINKED")
+        lease = await step.session.scalar(select(DuelLease).where(DuelLease.player_id == actor_id).with_for_update())
+        if lease is not None and lease.kind == "queue":
+            waiting = await step.session.scalar(select(DuelQueueEntry).where(
+                DuelQueueEntry.player_id == actor_id, DuelQueueEntry.status == "waiting").order_by(DuelQueueEntry.id.desc()))
+            if waiting is not None:
+                waiting.heartbeat_at = step.now
+                return {"queue": _queue_view(waiting)}
+            await step.session.delete(lease)
+            await step.session.flush()
+        elif lease is not None and lease.duel_id is not None:
+            held = await step.session.get(Duel, lease.duel_id)
+            if held is not None and held.state in states.TERMINAL:
+                await step.session.delete(lease)
+                await step.session.flush()
         await step.occupy([actor_id], "queue")
+        # Old offered rows must not be picked when a later offer returns to the queue.
+        for previous in (await step.session.scalars(select(DuelQueueEntry).where(
+            DuelQueueEntry.player_id == actor_id, DuelQueueEntry.status.in_(["waiting", "offered"])))).all():
+            previous.status = "left"
+            previous.left_at = step.now
         entry = DuelQueueEntry(player_id=actor_id, mode=mode, enqueued_at=step.now, heartbeat_at=step.now, status="waiting")
         step.session.add(entry)
         await step.session.flush()
-        return {"queue": {"mode": mode, "since": _stamp(step.now), "status": "waiting"}}
+        return {"queue": _queue_view(entry)}
 
     return await _run(factory, operation_id, actor_id, "enter_queue", body, now)
+
+def _queue_view(entry: DuelQueueEntry) -> dict[str, Any]:
+    return {"mode": entry.mode, "since": _stamp(entry.enqueued_at), "status": entry.status}
+
+async def queue_state(factory, actor_id: int) -> Optional[dict[str, Any]]:
+    async with factory() as session:
+        entry = await session.scalar(select(DuelQueueEntry).join(DuelLease, DuelLease.player_id == DuelQueueEntry.player_id)
+            .where(DuelQueueEntry.player_id == actor_id, DuelQueueEntry.status == "waiting", DuelLease.kind == "queue")
+            .order_by(DuelQueueEntry.id.desc()))
+        return _queue_view(entry) if entry is not None else None
 
 async def leave_queue(factory, actor_id: int, operation_id: str, now: Optional[datetime] = None) -> dict[str, Any]:
     async def body(step: Step) -> dict[str, Any]:

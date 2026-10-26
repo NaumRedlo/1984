@@ -123,3 +123,55 @@ async def test_a_third_rated_meeting_within_a_day_is_not_arranged(factory):
     assert await matchmaker.offer(factory, now=NOW) is None
     await _queue(factory, 3, NOW)
     assert await matchmaker.offer(factory, now=NOW) is not None
+
+
+async def test_pool_failure_allows_requeue_and_the_next_offer_uses_new_entries(factory):
+    from services.duels import generator, series
+
+    for player in (1, 2):
+        await _queue(factory, player, NOW)
+    first = await matchmaker.offer(factory, now=NOW)
+    for player in (1, 2):
+        await service.accept(factory, first, player, f"first-accept-{player}", now=NOW)
+    gone = await series.pool_built(factory, first, generator.Pool("unavailable", deficits=["HR2"]), "c", "f", NOW)
+    assert gone["outcome"] == "pool_unavailable"
+    for player in (1, 2):
+        assert await service.queue_state(factory, player) is None
+        await _queue(factory, player, NOW + timedelta(seconds=10))
+    second = await matchmaker.offer(factory, now=NOW + timedelta(seconds=11))
+    assert second is not None and second != first
+    await service.accept(factory, second, 1, "second-accept-1", now=NOW)
+    await service.decline(factory, second, 2, "second-decline-2", now=NOW)
+    waiting = await service.queue_state(factory, 1)
+    assert waiting["since"] == service._stamp(NOW + timedelta(seconds=10))
+    again = await service.enter_queue(factory, 1, "retry-search", now=NOW + timedelta(seconds=20))
+    assert again["queue"] == waiting
+    async with factory() as session:
+        assert await session.scalar(select(func.count()).select_from(DuelQueueEntry).where(
+            DuelQueueEntry.player_id == 1, DuelQueueEntry.status == "waiting")) == 1
+        assert await session.scalar(select(func.count()).select_from(DuelQueueEntry).where(DuelQueueEntry.status == "offered")) == 0
+
+
+async def test_legacy_offered_entries_are_closed_when_starting_a_new_search(factory):
+    async with factory() as session:
+        session.add(DuelQueueEntry(player_id=1, mode="rated", status="offered", enqueued_at=NOW - timedelta(days=1)))
+        session.add(DuelLease(player_id=1, kind="queue", since=NOW))
+        await session.commit()
+    await _queue(factory, 1, NOW)
+    await _queue(factory, 2, NOW)
+    duel_id = await matchmaker.offer(factory, now=NOW)
+    await service.accept(factory, duel_id, 1, "legacy-accept", now=NOW)
+    await service.decline(factory, duel_id, 2, "legacy-decline", now=NOW)
+    assert (await service.queue_state(factory, 1))["since"] == service._stamp(NOW)
+
+
+async def test_orphan_queue_rows_do_not_block_a_valid_pair(factory):
+    async with factory() as session:
+        session.add(DuelQueueEntry(player_id=3, mode="rated", status="waiting", enqueued_at=NOW - timedelta(hours=1)))
+        await session.commit()
+    await _queue(factory, 1, NOW)
+    await _queue(factory, 2, NOW)
+    duel_id = await matchmaker.offer(factory, now=NOW)
+    assert duel_id is not None
+    async with factory() as session:
+        assert set((await session.scalars(select(DuelParticipant.player_id).where(DuelParticipant.duel_id == duel_id))).all()) == {1, 2}

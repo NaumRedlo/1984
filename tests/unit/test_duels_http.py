@@ -95,7 +95,8 @@ async def test_the_queue_is_entered_and_left_over_http(client):
     entered = await client.post("/render/duels/queue", headers=_as(1, "queue-0001"))
     assert (await entered.json())["queue"]["status"] == "waiting"
     busy = await client.post("/render/duels/queue", headers=_as(1, "queue-0002"))
-    assert busy.status == 409
+    assert busy.status == 200
+    assert (await busy.json())["queue"] == (await entered.json())["queue"]
     left = await client.delete("/render/duels/queue", headers=_as(1, "queue-0003"))
     assert (await left.json()) == {"queue": None}
 
@@ -273,3 +274,24 @@ async def test_balance_presence_is_authenticated_and_requires_a_role(client, fac
     assert (await response.json())["people"] == []
     assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(2))).status == 403
     assert (await client.get("/render/admin/duels/maps/7/inspect", headers=_as(1))).status == 404
+
+
+async def test_http_search_presence_matches_without_a_websocket(client, factory):
+    from services.duels import matchmaker
+
+    for player in (1, 2):
+        response = await client.post("/render/duels/queue", headers=_as(player, f"search-{player}-0001"))
+        assert response.status == 200
+    assert client.hub.present(1) and client.hub.present(2)
+    assert not client.hub.owners
+    waiting = await (await client.get("/render/duels", headers=_as(1))).json()
+    assert waiting["queue"]["status"] == "waiting"
+    duel_id = await matchmaker.offer(factory, client.hub.present)
+    assert duel_id is not None
+    for player in (1, 2):
+        snapshot = await (await client.get("/render/duels", headers=_as(player))).json()
+        assert snapshot["queue"] is None
+        assert snapshot["duels"][0]["id"] == duel_id
+    client.hub.seen.clear()
+    await client.get("/render/duels", headers=_as(1))
+    assert client.hub.present(1) and not client.hub.present(2)

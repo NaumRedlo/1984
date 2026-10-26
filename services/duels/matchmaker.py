@@ -50,7 +50,8 @@ def price(first: Seeker, second: Seeker, waited: float, repeat: bool) -> Optiona
     return 2 * abs(p - 0.5) + 0.5 * min(distance, 2.0) + 0.2 * (1.0 if repeat else 0.0) + extra
 
 async def _seekers(session, now: datetime, present: Callable[[int], bool]) -> list[Seeker]:
-    entries = (await session.scalars(select(DuelQueueEntry).where(DuelQueueEntry.status == "waiting", DuelQueueEntry.mode == "rated")
+    entries = (await session.scalars(select(DuelQueueEntry).join(DuelLease, DuelLease.player_id == DuelQueueEntry.player_id)
+                                     .where(DuelQueueEntry.status == "waiting", DuelQueueEntry.mode == "rated", DuelLease.kind == "queue")
                                      .order_by(DuelQueueEntry.enqueued_at, DuelQueueEntry.id))).all()
     found = []
     for entry in entries:
