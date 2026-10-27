@@ -78,16 +78,10 @@ async def propose(session, beatmap_id: int, slot: str, probability: float, margi
     await _log(session, beatmap_id, None, "propose", before, _view(row), level or "below_threshold", now)
     return _view(row)
 
-async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note: str, slot: Optional[str] = None,
-                 now: Optional[datetime] = None, secondary: Any = KEEP) -> dict[str, Any]:
-    now = now or utcnow()
-    row = await _row(session, beatmap_id)
-    if row is None:
-        raise CatalogRefusal("NOT_FOUND")
-    before = _view(row)
+def _decide(row, decision: str, slot: Optional[str]) -> None:
+    if decision in ("APPROVE", "MOVE") and row.state == REJECTED:
+        raise CatalogRefusal("REJECTED_STAYS")
     if decision == "APPROVE":
-        if row.state == REJECTED:
-            raise CatalogRefusal("REJECTED_STAYS")
         wanted = slot or row.slot
         if wanted not in SLOTS and not reserved(wanted or ""):
             raise CatalogRefusal("UNKNOWN_SLOT")
@@ -96,8 +90,6 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
         row.slot = wanted
         row.state = HUMAN_APPROVED
     elif decision == "MOVE":
-        if row.state == REJECTED:
-            raise CatalogRefusal("REJECTED_STAYS")
         if slot not in SLOTS and not reserved(slot or ""):
             raise CatalogRefusal("UNKNOWN_SLOT")
         row.slot = slot
@@ -108,12 +100,25 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
         row.state = QUARANTINED
     else:
         raise CatalogRefusal("UNKNOWN_DECISION")
-    if decision in ("APPROVE", "MOVE") and secondary is not KEEP:
-        if secondary not in (None, "") and (secondary == row.slot or (secondary not in SLOTS and not reserved(secondary))):
-            raise CatalogRefusal("UNKNOWN_SECONDARY")
-        row.secondary_slots = [secondary] if secondary else None
-    elif secondary_of(row) == row.slot:
-        row.secondary_slots = None
+
+def _second(row, decision: str, secondary: Any) -> None:
+    if decision not in ("APPROVE", "MOVE") or secondary is KEEP:
+        if secondary_of(row) == row.slot:
+            row.secondary_slots = None
+        return
+    if secondary not in (None, "") and (secondary == row.slot or (secondary not in SLOTS and not reserved(secondary))):
+        raise CatalogRefusal("UNKNOWN_SECONDARY")
+    row.secondary_slots = [secondary] if secondary else None
+
+async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note: str, slot: Optional[str] = None,
+                 now: Optional[datetime] = None, secondary: Any = KEEP) -> dict[str, Any]:
+    now = now or utcnow()
+    row = await _row(session, beatmap_id)
+    if row is None:
+        raise CatalogRefusal("NOT_FOUND")
+    before = _view(row)
+    _decide(row, decision, slot)
+    _second(row, decision, secondary)
     row.reviewer_id = reviewer_id
     row.reviewed_at = now
     row.note = note

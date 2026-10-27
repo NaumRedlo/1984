@@ -4,7 +4,7 @@ from typing import Any
 
 from services.duels.osu_file import Beatmap, HitObject
 
-FEATURE_VERSION = "features-v1"
+FEATURE_VERSION = "features-v2"
 WINDOWS = (2.0, 10.0, 30.0)
 STREAM_SPREAD = 0.12
 STREAM_LEAST = 3
@@ -90,8 +90,7 @@ def windows(moments: list[float], loads: list[float], length: float, size: float
     while start < moments[-1] + 1e-9:
         end = start + size
         inside = [load for moment, load in zip(moments, loads) if start <= moment < end]
-        span = min(size, max(1e-3, length - (start - moments[0])))
-        values.append(sum(inside) / span)
+        values.append(sum(inside) / size)
         start += step
     peak = max(values) if values else 0.0
     loaded = [value >= LOADED * peak for value in values] if peak > 0 else []

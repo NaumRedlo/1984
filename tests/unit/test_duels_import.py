@@ -548,7 +548,7 @@ async def test_an_old_training_table_gains_the_exclusion_flag_once(tmp_path, mon
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text('ALTER TABLE "duel_training_examples" DROP COLUMN "excluded"'))
         await conn.execute(text("INSERT INTO duel_training_examples (corpus_version, source, year, stage, original_slot, beatmap_id, revision_hash, "
-                                "conflict, fetched_at) VALUES ('own-v1', 'own:Cup', 2024, 'Cup', 'NM1', 7, 'f00d', 0, '2026-10-27 00:00:00')"))
+                                "conflict, fetched_at) VALUES ('own-v1', 'own:Cup', 2024, 'Cup', 'NM1', 7, 'f00d', FALSE, '2026-10-27 00:00:00')"))
     await run_duel_batches_migration(engine)
     await run_duel_batches_migration(engine)
     async with engine.begin() as conn:
