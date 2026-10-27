@@ -152,6 +152,24 @@ async def test_pool_failure_allows_requeue_and_the_next_offer_uses_new_entries(f
         assert await session.scalar(select(func.count()).select_from(DuelQueueEntry).where(DuelQueueEntry.status == "offered")) == 0
 
 
+async def test_a_pair_that_declined_its_star_range_rests_before_meeting_again(factory):
+    from services.duels import generator, series
+
+    for player in (1, 2):
+        await _queue(factory, player, NOW)
+    first = await matchmaker.offer(factory, now=NOW)
+    for player in (1, 2):
+        await service.accept(factory, first, player, f"range-accept-{player}", now=NOW)
+    await series.pool_built(factory, first, generator.Pool("range_offered", 4, offer={"NM1": (4.6, 5.4)}), "c", "f", NOW)
+    await deadlines.sweep(factory, NOW + timedelta(seconds=61))
+    async with factory() as session:
+        assert (await session.get(Duel, first)).outcome_reason == "range_declined"
+    for player in (1, 2):
+        await _queue(factory, player, NOW + timedelta(seconds=70))
+    assert await matchmaker.offer(factory, now=NOW + timedelta(seconds=71)) is None, "the same offer would be declined again"
+    later = await matchmaker.offer(factory, now=NOW + matchmaker.NO_POOL_REST + timedelta(seconds=1))
+    assert later is not None and later != first
+
 async def test_legacy_offered_entries_are_closed_when_starting_a_new_search(factory):
     async with factory() as session:
         session.add(DuelQueueEntry(player_id=1, mode="rated", status="offered", enqueued_at=NOW - timedelta(days=1)))

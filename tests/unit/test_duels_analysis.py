@@ -91,6 +91,12 @@ def test_windows_tell_a_short_burst_from_steady_work():
     assert even["loaded_share"] > 0.9 and loose["loaded_share"] < 0.3
     assert set(even) == {"median", "p90", "p99", "max", "loaded_share", "longest_rest"}
 
+def test_the_last_note_does_not_make_a_false_peak_of_load():
+    found = features.windows([0.0, 1.0, 2.0], [0.0, 1.0, 1.0], 2.0, 2.0)
+    shifted = features.windows([0.0, 1.0, 1.999], [0.0, 1.0, 1.0], 1.999, 2.0)
+    assert found["max"] == pytest.approx(1.0) and shifted["max"] == pytest.approx(1.0)
+    assert features.FEATURE_VERSION == "features-v2"
+
 def test_reading_counts_objects_on_screen_at_once():
     crowded = features.analyse(parse(_map(_stream(30, gap=40))))
     sparse = features.analyse(parse(_map(_stream(30, gap=900))))
