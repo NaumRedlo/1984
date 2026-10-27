@@ -187,11 +187,11 @@ def _cells(grid: dict[str, list[int]]) -> list[tuple[float, str, int, float]]:
 def scarcest(grid: dict[str, list[int]], rng: random.Random) -> tuple[float, str, int, float]:
     return max(_cells(grid), key=lambda cell: (cell[0], rng.random()))
 
-async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps", rng: random.Random = random.Random(), most: int = HUNT_MOST,
+async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps", rng: Optional[random.Random] = None, most: int = HUNT_MOST,
                depth: int = HUNT_DEPTH, amount: int = 50, pause: float = 1.0, report=print) -> dict[str, Any]:
     from services.duels import desk
-    from services.duels.rules import SLOTS
 
+    rng = rng or random.SystemRandom()
     async with factory() as session:
         grid = (await desk.counted(session))["grid"]
     _, slot, band, reference = (scarcest(grid, rng) if mode == "gaps" else rng.choice(_cells(grid)))
