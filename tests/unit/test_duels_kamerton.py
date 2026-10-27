@@ -1,5 +1,3 @@
-import random
-
 import pytest
 
 from services.duels import kamerton
@@ -15,7 +13,17 @@ def _features(**values) -> dict:
         node[leaf] = values.get(path, 1.0)
     return found
 
-def _map(kind: str, noise: random.Random) -> dict:
+class _Noise:
+    """Repeatable jitter for the made-up maps; a plain linear congruential step is enough here."""
+
+    def __init__(self, seed: int):
+        self.state = seed
+
+    def uniform(self, low: float, high: float) -> float:
+        self.state = (self.state * 1103515245 + 12345) % 2 ** 31
+        return low + (high - low) * self.state / 2 ** 31
+
+def _map(kind: str, noise: _Noise) -> dict:
     jitter = lambda: noise.uniform(0.8, 1.2)
     if kind == "aim":
         return _features(**{"spacing_radii.p90": 6.0 * jitter(), "aim_windows.2s.p90": 5.0 * jitter(), "speed_px_ms.p90": 4.0 * jitter(),
@@ -25,7 +33,7 @@ def _map(kind: str, noise: random.Random) -> dict:
                         "spacing_radii.p90": 1.5 * jitter(), "spacing_radii.median": 0.5 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
 
 def _examples(count: int = 24, years=(2021, 2022, 2023)) -> list[kamerton.Example]:
-    noise = random.Random(7)
+    noise = _Noise(7)
     found = []
     for at in range(count):
         year = years[at % len(years)]
@@ -45,7 +53,7 @@ def test_a_slot_is_a_mod_and_skills_and_a_second_slot_softens_the_target():
 def test_the_two_layers_share_a_skill_across_mods_and_tell_aim_from_streams():
     examples = _examples()
     model = kamerton.SkillModModel.fit(examples, steps=150)
-    noise = random.Random(11)
+    noise = _Noise(11)
     aim, stream = _map("aim", noise), _map("stream", noise)
     aimed = model.scores(aim, {"NFDT": aim, "NFHR": aim}, 9.3, 5.2)
     streamed = model.scores(stream, {"NFDT": stream, "NFHR": stream}, 9.3, 5.2)
