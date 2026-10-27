@@ -609,3 +609,19 @@ async def test_kamerton_hunts_up_to_five_new_maps_for_the_emptiest_cell_and_note
         noted = await session.scalar(select(DuelAudit).where(DuelAudit.action == "auto_discover"))
     assert (noted.actor_id, noted.role, noted.after["added"]) == (0, "SYSTEM", importer.HUNT_MOST)
     assert [hunt_mode("mixed", turn) for turn in range(4)] == ["gaps", "gaps", "gaps", "random"] and hunt_mode("random", 0) == "random"
+
+
+def test_the_hunt_goes_where_a_slot_has_few_maps_compared_with_the_others():
+    import random as chance
+
+    from services.duels import desk
+    from services.duels.rules import SLOTS
+
+    grid = {slot: [12] * len(desk.BANDS) for slot in SLOTS}
+    grid["HR2"][3] = 7
+    shortage, slot, band, reference = importer.scarcest(grid, chance.Random(1))
+    assert (slot, band) == ("HR2", 3), "seven maps are few where every other slot has twelve, although seven is not under five"
+    assert reference == pytest.approx(11.5) and shortage > 0
+    empty = {slot: [0] * len(desk.BANDS) for slot in SLOTS}
+    assert importer.scarcest(empty, chance.Random(1))[3] == desk.ENOUGH, "an empty catalogue still aims at five maps"
+

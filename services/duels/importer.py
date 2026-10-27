@@ -170,6 +170,23 @@ HUNT_MOST = 5
 HUNT_DEPTH = 20
 DT_STARS = 1.4
 
+def _cells(grid: dict[str, list[int]]) -> list[tuple[float, str, int, float]]:
+    from services.duels import desk
+    from services.duels.rules import SLOTS
+
+    bands = range(len(desk.BANDS))
+    band_mean = {band: sum(grid[slot][band] for slot in SLOTS) / len(SLOTS) for band in bands}
+    slot_mean = {slot: sum(grid[slot]) / len(desk.BANDS) for slot in SLOTS}
+    found = []
+    for slot in SLOTS:
+        for band in bands:
+            reference = max(float(desk.ENOUGH), band_mean[band], slot_mean[slot])
+            found.append(((reference - grid[slot][band]) / (reference + 1), slot, band, reference))
+    return found
+
+def scarcest(grid: dict[str, list[int]], rng: random.Random) -> tuple[float, str, int, float]:
+    return max(_cells(grid), key=lambda cell: (cell[0], rng.random()))
+
 async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps", rng: random.Random = random.Random(), most: int = HUNT_MOST,
                depth: int = HUNT_DEPTH, amount: int = 50, pause: float = 1.0, report=print) -> dict[str, Any]:
     from services.duels import desk
@@ -177,9 +194,7 @@ async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps",
 
     async with factory() as session:
         grid = (await desk.counted(session))["grid"]
-    cells = [(grid[slot][band], rng.random(), slot, band) for slot in SLOTS for band in range(len(desk.BANDS))]
-    short = sorted(cell for cell in cells if cell[0] < desk.ENOUGH)
-    _, _, slot, band = short[0] if mode == "gaps" and short else rng.choice(cells)
+    _, slot, band, reference = (scarcest(grid, rng) if mode == "gaps" else rng.choice(_cells(grid)))
     least, most_stars = desk.discovery_range(band)
     if slot.startswith("DT"):
         least, most_stars = least / DT_STARS, most_stars / DT_STARS
@@ -201,7 +216,8 @@ async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps",
         report(f"hunt {slot} {least:.2f}-{most_stars:.2f} page {page}: {entry['beatmap_id']} {outcome}")
         if pause:
             await asyncio.sleep(pause)
-    return {"mode": mode, "slot": slot, "band": band, "stars": [round(least, 2), round(most_stars, 2)], "page": page,
+    return {"mode": mode, "slot": slot, "band": band, "had": grid[slot][band], "reference": round(reference, 1),
+            "stars": [round(least, 2), round(most_stars, 2)], "page": page,
             "added": sum(counted.values()), "outcomes": counted, "years": [min(years), max(years)] if years else None}
 
 async def _name_revision(session, revision: DuelMapRevision, folder: str) -> None:
