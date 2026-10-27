@@ -48,21 +48,25 @@ async def catalogue(session) -> list[Candidate]:
         level = catalog.playable(assignment, revision)
         if level is None:
             continue
-        mods = "".join(SLOT_MODS[assignment.slot])
-        analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
-                                                                     DuelMapAnalysis.mods == mods,
-                                                                     DuelMapAnalysis.feature_version == FEATURE_VERSION))
-        if analysis is None or not in_catalogue(analysis.stars):
-            continue
-        peak = None
-        windows = (analysis.features or {}).get("aim_windows") or {}
-        if windows.get("2s") and windows.get("10s"):
-            peak = windows["2s"].get("max", 0.0) / max(windows["10s"].get("p90", 0.0), 0.01)
         from services.duels import balance
         opinion = await balance.weigh(session, int(assignment.beatmap_id))
-        found.append(Candidate(feedback=balance.cost_of(opinion["q_bad"]), beatmap_id=int(assignment.beatmap_id), beatmapset_id=int(revision.beatmapset_id or assignment.beatmap_id),
-                               mapper=revision.mapper or "", slot=assignment.slot, stars=float(analysis.stars), level=level,
-                               confidence=assignment.confidence, revision=revision.hash, peak_ratio=peak))
+        extra = catalog.secondary_of(assignment) if assignment.state == catalog.HUMAN_APPROVED else None
+        for slot, secondary in ((assignment.slot, False), (extra, True)):
+            if slot not in SLOT_MODS:
+                continue
+            analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
+                                                                         DuelMapAnalysis.mods == "".join(SLOT_MODS[slot]),
+                                                                         DuelMapAnalysis.feature_version == FEATURE_VERSION))
+            if analysis is None or not in_catalogue(analysis.stars):
+                continue
+            peak = None
+            windows = (analysis.features or {}).get("aim_windows") or {}
+            if windows.get("2s") and windows.get("10s"):
+                peak = windows["2s"].get("max", 0.0) / max(windows["10s"].get("p90", 0.0), 0.01)
+            found.append(Candidate(feedback=balance.cost_of(opinion["q_bad"]), beatmap_id=int(assignment.beatmap_id),
+                                   beatmapset_id=int(revision.beatmapset_id or assignment.beatmap_id), mapper=revision.mapper or "", slot=slot,
+                                   stars=float(analysis.stars), level=level, confidence=assignment.confidence, revision=revision.hash,
+                                   peak_ratio=peak, secondary=secondary))
     return found
 
 class Coordinator:

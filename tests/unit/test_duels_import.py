@@ -484,19 +484,84 @@ async def test_error_json_is_not_a_successful_empty_search():
     assert len(requested) == 2
 
 
-async def test_stored_maps_are_analysed_again_for_a_new_feature_version_keeping_their_stars(factory, tmp_path):
-    raw = _map(31)
-    digest = mirrors.store(str(tmp_path), raw)
+async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_whole_or_map_by_map(factory, monkeypatch):
+    from db.models.duel import DuelAudit, DuelRole
+    from db.models.duel_catalog import DuelTrainingExample
+    from db.models.player import Player
+    from services.duels import balance
+    from services.duels.errors import DuelError
+
     async with factory() as session:
-        session.add(DuelMapRevision(beatmap_id=31, beatmapset_id=310, hash=digest, status="ok"))
-        session.add(DuelMapAnalysis(revision_hash=digest, mods="NFDT", engine_version="old", feature_version="features-v1",
-                                    model_version="none", stars=6.4, features={}))
-        session.add(DuelMapRevision(beatmap_id=32, beatmapset_id=320, hash="f" * 32, status="ok"))
+        session.add_all([Player(id=1, osu_user_id=101, osu_username="owner", telegram_id=555), Player(id=2, osu_user_id=102, osu_username="reviewer")])
+        await session.flush()
+        session.add(DuelRole(player_id=2, role=balance.BALANCE_REVIEWER))
         await session.commit()
-    seen = []
-    assert await importer.reanalyse(factory, str(tmp_path), report=seen.append) == {"analysed": 1, "missing_file": 1, "unreadable": 0}
+    pool = "NM1 https://osu.ppy.sh/b/11\nNM2 https://osu.ppy.sh/b/12\nhttps://osu.ppy.sh/b/13"
+    await balance.add_tournament(factory, 2, "Russian Cup", 2024, pool, "our pool")
+    await balance.add_tournament(factory, 2, "Other Cup", 2023, "NM1 https://osu.ppy.sh/b/21", "another")
+    with pytest.raises(balance.Forbidden):
+        await balance.batches(factory, 2)
+    found = await balance.batches(factory, 1, owners=(555,))
+    russian = next(batch for batch in found if batch["name"] == "Russian Cup")
+    assert (russian["year"], russian["maps"], russian["labelled"], russian["excluded"]) == (2024, 3, 2, 0)
+    assert russian["author"] == {"player": 2, "name": "reviewer", "osu_id": 102} and russian["added_at"]
+    with pytest.raises(DuelError) as clash:
+        await balance.rename_batch(factory, 1, "Russian Cup", 2024, "Other Cup", 2023, "same as another", owners=(555,))
+    assert clash.value.code == "BATCH_EXISTS"
+    assert await balance.rename_batch(factory, 1, "Russian Cup", 2024, "RC Finals", 2025, "clearer name", owners=(555,)) == {"name": "RC Finals", "year": 2025}
+    renamed = next(batch for batch in await balance.batches(factory, 1, owners=(555,)) if batch["name"] == "RC Finals")
+    assert (renamed["year"], renamed["maps"], renamed["labelled"]) == (2025, 3, 2), "labels travel with the batch"
+    await balance.exclude_batch(factory, 1, "RC Finals", 2025, 12, True, "mislabelled", owners=(555,))
+
+    async def seen(session, digest):
+        return {"objects": 1}, {}
+
+    monkeypatch.setattr(importer, "seen_of", seen)
     async with factory() as session:
-        fresh = {row.mods: row for row in (await session.scalars(select(DuelMapAnalysis).where(
-            DuelMapAnalysis.feature_version == importer.FEATURE_VERSION))).all()}
-    assert set(fresh) == set(importer.ANALYSED) and fresh["NFDT"].stars == 6.4 and fresh["NF"].stars is None
-    assert await importer.reanalyse(factory, str(tmp_path), report=seen.append) == {"analysed": 0, "missing_file": 1, "unreadable": 0}
+        for row in (await session.scalars(select(DuelTrainingExample))).all():
+            row.revision_hash = f"{row.beatmap_id:032x}"
+        await session.commit()
+    learned = await importer.corpus_rows(factory)
+    assert sorted(row[2] for row in learned) == [11, 21], "an excluded map and an unlabelled one stay out of training"
+    await balance.exclude_batch(factory, 1, "RC Finals", 2025, None, False, "back in", owners=(555,))
+    assert sorted(row[2] for row in await importer.corpus_rows(factory)) == [11, 12, 21]
+    assert await balance.delete_batch(factory, 1, "RC Finals", 2025, 11, "not this map", owners=(555,)) == {"maps": 1}
+    assert await balance.delete_batch(factory, 1, "Other Cup", 2023, None, "test batch", owners=(555,)) == {"maps": 1}
+    with pytest.raises(DuelError) as gone:
+        await balance.delete_batch(factory, 1, "Other Cup", 2023, None, "twice", owners=(555,))
+    assert gone.value.code == "BATCH_NOT_FOUND"
+    assert [(batch["name"], batch["maps"]) for batch in await balance.batches(factory, 1, owners=(555,))] == [("RC Finals", 2)]
+    async with factory() as session:
+        actions = [row.action for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
+    assert actions[2:] == ["batch_rename", "batch_exclude", "batch_include", "batch_delete", "batch_delete"]
+
+
+
+async def test_an_old_training_table_gains_the_exclusion_flag_once(tmp_path, monkeypatch):
+    from sqlalchemy import text
+
+    from db.migrations._utils import existing_columns
+    from db.migrations.add_duel_batches import run_duel_batches_migration
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'old.db'}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text('ALTER TABLE "duel_training_examples" DROP COLUMN "excluded"'))
+        await conn.execute(text("INSERT INTO duel_training_examples (corpus_version, source, year, stage, original_slot, beatmap_id, revision_hash, "
+                                "conflict, fetched_at) VALUES ('own-v1', 'own:Cup', 2024, 'Cup', 'NM1', 7, 'f00d', FALSE, '2026-10-27 00:00:00')"))
+    await run_duel_batches_migration(engine)
+    await run_duel_batches_migration(engine)
+    async with engine.begin() as conn:
+        assert "excluded" in await existing_columns(conn, "duel_training_examples")
+    made = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def seen(session, digest):
+        return {"objects": 1}, {}
+
+    monkeypatch.setattr(importer, "seen_of", seen)
+    assert [row[2] for row in await importer.corpus_rows(made)] == [7], "an old row without the flag still trains"
+    async with made() as session:
+        from db.models.duel_catalog import DuelTrainingExample
+        row = await session.scalar(select(DuelTrainingExample))
+        assert row.excluded is None
+    await engine.dispose()

@@ -165,39 +165,6 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
         return "length", entry
     return await ingest(factory, fetch, osu, entry, folder, model, now), entry
 
-async def reanalyse(factory, folder: str, report=print, now: Optional[datetime] = None) -> dict[str, int]:
-    now = now or utcnow()
-    counted = {"analysed": 0, "missing_file": 0, "unreadable": 0}
-    async with factory() as session:
-        revisions = (await session.scalars(select(DuelMapRevision))).all()
-    for revision in revisions:
-        async with factory() as session:
-            wanted = set(ANALYSED) - await _analysed(session, revision.hash)
-        if not wanted:
-            continue
-        path = os.path.join(folder, f"{revision.hash}.osu")
-        if not os.path.exists(path):
-            counted["missing_file"] += 1
-            continue
-        try:
-            beatmap = parse(await asyncio.to_thread(_read, path))
-        except OsuFileError:
-            counted["unreadable"] += 1
-            continue
-        analyses = {mods: await asyncio.to_thread(analyse, beatmap, mods) for mods in wanted}
-        async with factory() as session:
-            for mods, features in analyses.items():
-                earlier = await session.scalar(select(DuelMapAnalysis).where(
-                    DuelMapAnalysis.revision_hash == revision.hash, DuelMapAnalysis.mods == mods, DuelMapAnalysis.stars.is_not(None))
-                    .order_by(DuelMapAnalysis.created_at.desc()).limit(1))
-                session.add(DuelMapAnalysis(revision_hash=revision.hash, mods=mods, engine_version=ENGINE_VERSION, feature_version=FEATURE_VERSION,
-                                            model_version="none", stars=earlier.stars if earlier is not None else None, features=features,
-                                            created_at=now))
-            await session.commit()
-        counted["analysed"] += 1
-        report(f"{revision.beatmap_id} {revision.hash}: {sorted(wanted)}")
-    return counted
-
 async def _name_revision(session, revision: DuelMapRevision, folder: str) -> None:
     path = os.path.join(folder, f"{revision.hash}.osu")
     if not os.path.exists(path):

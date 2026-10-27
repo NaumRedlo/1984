@@ -231,8 +231,12 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         beatmap = request.match_info["beatmap"]
         if not beatmap.isdigit() or said.get("decision") not in ("APPROVE", "MOVE", "REJECT", "QUARANTINE"):
             raise web.HTTPBadRequest(text="decision is APPROVE, MOVE, REJECT or QUARANTINE")
+        secondary = said.get("secondary", catalog.KEEP)
+        if secondary is not catalog.KEEP and secondary is not None and not isinstance(secondary, str):
+            raise web.HTTPBadRequest(text="secondary is a slot or null")
         try:
-            return await balance.review_map(factory_of(), player, int(beatmap), said["decision"], said["reason"], owners, said.get("slot"))
+            return await balance.review_map(factory_of(), player, int(beatmap), said["decision"], said["reason"], owners, said.get("slot"),
+                                            secondary=secondary)
         except catalog.CatalogRefusal as refusal:
             return web.json_response({"error": refusal.code}, status=409)
 

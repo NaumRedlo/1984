@@ -178,3 +178,23 @@ async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(f
     assert after["state"] == states.SELECTING
     assert after["rounds"][0]["winner"] == 1
     assert after["wins"][next(p["side"] for p in after["participants"] if p["player"] == 1)] == 1
+
+
+async def test_a_map_with_a_secondary_slot_is_offered_twice_and_counted_apart(factory):
+    from services.duels import catalog, desk
+    from services.duels.coordinator import catalogue
+    from db.models.duel import DuelRole
+
+    async with factory() as session:
+        held = await session.get(DuelMapAssignment, 1)
+        held.secondary_slots = ["HD2"]
+        session.add(DuelMapAnalysis(revision_hash=held.revision_hash, mods="NFHD", engine_version="test", feature_version=FEATURE_VERSION,
+                                    model_version="none", stars=5.6, features={}))
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    async with factory() as session:
+        found = [c for c in await catalogue(session) if c.beatmap_id == 1]
+    assert sorted((c.slot, c.secondary) for c in found) == [("HD2", True), (found[0].slot if not found[0].secondary else found[1].slot, False)]
+    coverage = await desk.coverage(factory, 1)
+    assert sum(coverage["secondary"]["HD2"]) == 1 and coverage["secondary"]["HD2"][desk.band_of(5.6)] == 1
+    assert catalog.secondary_of(held) == "HD2"

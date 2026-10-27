@@ -210,7 +210,7 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
             assignment = await session.get(DuelMapAssignment, int(review.beatmap_id))
             seen.add(int(review.beatmap_id))
             found.append({"kind": "review", "id": review.id, "reason": review.reason, "since": _stamp(review.requested_at),
-                          "slot": assignment.slot if assignment is not None else None,
+                          "slot": assignment.slot if assignment is not None else None, "secondary": catalog.secondary_of(assignment),
                           "state": assignment.state if assignment is not None else None,
                           "map": await _map(session, int(review.beatmap_id), review.revision_hash, model,
                                            assignment.slot if assignment is not None else None),
@@ -248,6 +248,7 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
                   & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
         )).all()
         grid = {slot: [0] * len(BANDS) for slot in SLOTS}
+        extra = {slot: [0] * len(BANDS) for slot in SLOTS}
         totals = {"playable": 0, "human": 0, "uncertain": 0, "quarantined": 0, "unassigned": 0}
         for assignment, revision in rows:
             if assignment.state == catalog.QUARANTINED:
@@ -268,7 +269,12 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
                 totals["human"] += 1
             elif level == "uncertain":
                 totals["uncertain"] += 1
-        return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "totals": totals}
+            secondary = catalog.secondary_of(assignment) if assignment.state == catalog.HUMAN_APPROVED else None
+            if secondary in extra:
+                held = await _analysis(session, revision.hash, "".join(SLOT_MODS[secondary]))
+                if held is not None and in_catalogue(held.stars):
+                    extra[secondary][band_of(float(held.stars))] += 1
+        return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "secondary": extra, "totals": totals}
 
 async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
     async with factory() as session:
@@ -277,7 +283,7 @@ async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, .
         if assignment is None:
             return None
         model = await balance.working_model(factory)
-        return {"kind": "review", "id": None, "reason": "manual", "slot": assignment.slot,
+        return {"kind": "review", "id": None, "reason": "manual", "slot": assignment.slot, "secondary": catalog.secondary_of(assignment),
                 "state": assignment.state, "map": await _map(session, beatmap_id, assignment.revision_hash, model, assignment.slot),
                 "opinions": await _opinions(session, beatmap_id)}
 
