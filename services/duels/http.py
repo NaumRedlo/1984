@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 
 STATUS = {
     "NOT_FOUND": 404,
+    "BATCH_NOT_FOUND": 404,
+    "BATCH_EXISTS": 409,
     "NOT_PARTICIPANT": 403,
     "NOT_LINKED": 403,
     "INVALID_STATE": 409,
@@ -352,7 +354,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
     async def desk_stuck(request, player, said, owners):
         from services.duels import desk
 
-        return {"duels": await desk.stuck(factory_of(), player, owners)}
+        from services.duels import live
+
+        return {"duels": await desk.stuck(factory_of(), player, owners, present=live.hub.present)}
 
     async def desk_journal(request, player, said, owners):
         from services.duels import desk
@@ -418,6 +422,41 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
 
         discovering["task"] = watched(run(), "discovering catalogue maps")
         return {"started": True}
+
+    def _batch_of(said: dict[str, Any]) -> tuple[str, int, Optional[int]]:
+        name, year, beatmap = said.get("name"), said.get("year"), said.get("beatmap_id")
+        if not isinstance(name, str) or not name.strip() or not isinstance(year, int) or isinstance(year, bool) \
+                or (beatmap is not None and (not isinstance(beatmap, int) or isinstance(beatmap, bool))):
+            raise web.HTTPBadRequest(text="name and year are required")
+        return name, year, beatmap
+
+    async def corpus_batches(request, player, said, owners):
+        from services.duels import balance
+
+        return {"batches": await balance.batches(factory_of(), player, owners)}
+
+    async def corpus_batch_rename(request, player, said, owners):
+        from services.duels import balance
+
+        name, year, _ = _batch_of(said)
+        new_name, new_year = said.get("new_name"), said.get("new_year")
+        if not isinstance(new_name, str) or not isinstance(new_year, int) or isinstance(new_year, bool):
+            raise web.HTTPBadRequest(text="new_name and new_year are required")
+        return await balance.rename_batch(factory_of(), player, name, year, new_name, new_year, said["reason"], owners)
+
+    async def corpus_batch_delete(request, player, said, owners):
+        from services.duels import balance
+
+        name, year, beatmap = _batch_of(said)
+        return await balance.delete_batch(factory_of(), player, name, year, beatmap, said["reason"], owners)
+
+    async def corpus_batch_exclude(request, player, said, owners):
+        from services.duels import balance
+
+        name, year, beatmap = _batch_of(said)
+        if not isinstance(said.get("excluded"), bool):
+            raise web.HTTPBadRequest(text="excluded is required")
+        return await balance.exclude_batch(factory_of(), player, name, year, beatmap, said["excluded"], said["reason"], owners)
 
     async def catalog_add(request, player, said, owners):
         import aiohttp
@@ -521,6 +560,10 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.get("/render/admin/duels/corpus", handler(admin(corpus_table))),
         web.post("/render/admin/duels/corpus/label", handler(admin(corpus_label))),
         web.post("/render/admin/duels/corpus/tournaments", handler(admin(corpus_tournament))),
+        web.get("/render/admin/duels/corpus/batches", handler(admin(corpus_batches))),
+        web.post("/render/admin/duels/corpus/batches/rename", handler(admin(corpus_batch_rename))),
+        web.post("/render/admin/duels/corpus/batches/delete", handler(admin(corpus_batch_delete))),
+        web.post("/render/admin/duels/corpus/batches/exclude", handler(admin(corpus_batch_exclude))),
         web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
         web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
         web.post("/render/admin/duels/models/train", handler(admin(train_model))),

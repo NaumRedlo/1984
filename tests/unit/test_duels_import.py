@@ -199,9 +199,9 @@ async def test_a_broken_file_is_quarantined_not_offered(factory, tmp_path):
         assignment = await session.get(DuelMapAssignment, 6)
     assert revision.status == "quarantined" and assignment.admitted is False
 
-def _described(beatmap_id: int, raw: bytes, status: str = "graveyard", mode="osu", length: int = 120) -> bytes:
+def _described(beatmap_id: int, raw: bytes, status: str = "graveyard", mode="osu", length: int = 120, stars: float = 5.2) -> bytes:
     return json.dumps({"id": beatmap_id, "beatmapset_id": beatmap_id * 10, "mode": mode, "status": status, "total_length": length,
-                       "difficulty_rating": 5.2, "version": "Lonely", "max_combo": 40,
+                       "difficulty_rating": stars, "version": "Lonely", "max_combo": 40,
                        "beatmapset": {"title": "Graveyard Song", "artist": "Artist", "creator": "Meg", "status": status}}).encode()
 
 async def test_one_map_is_described_by_the_mirror_and_checked_before_import(factory, tmp_path):
@@ -227,7 +227,9 @@ async def test_a_reviewer_adds_one_map_and_an_unranked_one_plays_only_with_a_per
     from services.duels import balance, catalog
 
     first, second = _map(21), _map(22)
-    answers = {"api/v2/b/21": _described(21, first), "/osu/21": first, "api/v2/b/22": _described(22, second, status="loved"), "/osu/22": second}
+    easy = _map(24)
+    answers = {"api/v2/b/21": _described(21, first), "/osu/21": first, "api/v2/b/22": _described(22, second, status="loved"), "/osu/22": second,
+               "api/v2/b/24": _described(24, easy, stars=3.0), "/osu/24": easy}
 
     async def fetch(address):
         return next((body for part, body in answers.items() if part in address), None)
@@ -273,6 +275,16 @@ async def test_a_reviewer_adds_one_map_and_an_unranked_one_plays_only_with_a_per
     async with factory() as session:
         audit = [row.action for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
     assert audit[-1] == "map_reject", "a refused addition leaves no trace in the journal"
+    with pytest.raises(catalog.CatalogRefusal) as easy_nm:
+        await balance.add_map(factory, 1, 24, "NM1", "too easy without mods", (), bring)
+    assert easy_nm.value.code == "STARS_RANGE"
+    assert (await balance.add_map(factory, 1, 24, "DT1", "with DT it is 6.5", (), bring))["outcome"] in ("known", "unassigned")
+    async with factory() as session:
+        assert (await session.get(DuelMapAssignment, 24)).slot == "DT1"
+
+def test_the_catalogue_holds_five_to_ten_stars_and_nothing_else():
+    from services.duels.rules import in_catalogue
+    assert [in_catalogue(stars) for stars in (4.99, 5.0, 7.3, 10.0, 10.01, None)] == [False, True, True, True, False, False]
 
 WIKI_PAGE = """# osu! World Cup 2023
 

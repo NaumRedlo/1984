@@ -221,7 +221,7 @@ async def test_the_live_list_my_roles_and_the_balance_desk_are_served(client, fa
     assert (await client.get("/render/admin/duels/catalog/XX1/0", headers=_as(1))).status == 400
     assert await (await client.get("/render/admin/duels/stuck", headers=_as(1))).json() == {"duels": []}
     people = await (await client.get("/render/admin/duels/people", headers=_as(1))).json()
-    assert people == {"people": [{"player": 1, "name": "one", "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]}
+    assert people == {"people": [{"player": 1, "name": "one", "osu_id": 101, "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]}
     assert await (await client.get("/render/admin/duels/models", headers=_as(1))).json() == {"models": []}
     assert await (await client.get("/render/admin/duels/journal", headers=_as(1))).json() == {"entries": []}
 
@@ -301,3 +301,16 @@ async def test_http_search_presence_matches_without_a_websocket(client, factory)
     client.hub.seen.clear()
     await client.get("/render/duels", headers=_as(1))
     assert client.hub.present(1) and not client.hub.present(2)
+
+
+async def test_batches_are_managed_only_by_the_owner_with_a_named_batch(client, factory):
+    from db.models.duel import DuelRole
+
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    assert (await client.get("/render/admin/duels/corpus/batches", headers=_as(1))).status == 403
+    for path in ("rename", "delete", "exclude"):
+        assert (await client.post(f"/render/admin/duels/corpus/batches/{path}", json={"year": 2024}, headers=_as(1))).status == 400, path
+    refused = await client.post("/render/admin/duels/corpus/batches/delete", json={"name": "Cup", "year": 2024}, headers=_as(1))
+    assert refused.status == 403
