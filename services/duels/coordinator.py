@@ -12,7 +12,7 @@ from services.duels.bancho_text import Said
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS, Candidate, Skill
 from services.duels.room_control import RoomControl
-from services.duels.rules import PARAMETERS, SLOTS
+from services.duels.rules import PARAMETERS, SLOTS, in_catalogue
 from utils.logger import get_logger
 from utils.timeutils import utcnow
 
@@ -52,7 +52,7 @@ async def catalogue(session) -> list[Candidate]:
         analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
                                                                      DuelMapAnalysis.mods == mods,
                                                                      DuelMapAnalysis.feature_version == FEATURE_VERSION))
-        if analysis is None or analysis.stars is None:
+        if analysis is None or not in_catalogue(analysis.stars):
             continue
         peak = None
         windows = (analysis.features or {}).get("aim_windows") or {}

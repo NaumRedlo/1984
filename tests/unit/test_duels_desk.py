@@ -7,7 +7,8 @@ from sqlalchemy.pool import NullPool
 
 import db.models
 from db.database import Base
-from db.models.duel import Duel, DuelAudit, DuelBalanceReview, DuelFeedback, DuelParticipant, DuelRole
+from db.models.duel import (Duel, DuelAudit, DuelBalanceReview, DuelDeadline, DuelEvent, DuelFeedback, DuelParticipant, DuelRole, DuelRoom,
+                            DuelRound)
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
 from services.duels import desk, states
@@ -60,7 +61,7 @@ async def test_the_catalogue_is_counted_by_slot_and_star_band(factory):
     assert found["totals"] == {"playable": 3, "human": 1, "uncertain": 1, "quarantined": 1, "unassigned": 1}
     cell = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(6.1))
     assert [(m["beatmap_id"], m["level"]) for m in cell] == [(2, "confident")]
-    assert desk.band_of(3.2) == 0 and desk.band_of(9.0) == len(desk.BANDS) - 1
+    assert desk.band_of(5.2) == 0 and desk.band_of(9.7) == desk.band_of(10.0) == len(desk.BANDS) - 1
 
 async def test_the_queue_lists_reviews_first_then_maps_waiting_for_a_slot(factory):
     class Model:
@@ -108,9 +109,22 @@ async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     stuck = await desk.stuck(factory, 1)
     assert [(d["id"], d["reason"], d["wins"]) for d in stuck] == [("stuck-1", "absence", {"A": 1, "B": 0})]
     assert [p["name"] for p in stuck[0]["players"]] == ["one", "two"]
+    assert (stuck[0]["room"], stuck[0]["round"], stuck[0]["deadline"], stuck[0]["events"]) == (None, None, None, [])
+    async with factory() as session:
+        session.add_all([DuelRoom(duel_id="stuck-1", room_name="DSR: one vs two", match_id=114482093, origin="bot", status="open"),
+                         DuelRound(duel_id="stuck-1", ordinal=2, slot="HR2", state="PLAYING"),
+                         DuelEvent(duel_id="stuck-1", sequence=7, type="state", payload={"from": "PLAYING", "to": "PAUSED", "reason": "absence"},
+                                   state_version=9),
+                         DuelDeadline(duel_id="stuck-1", state_version=9, phase=3, kind="reconnect", expires_at=utcnow())])
+        await session.commit()
+    detail = (await desk.stuck(factory, 1, present=lambda player: player == 1))[0]
+    assert detail["room"] == {"match_id": 114482093, "name": "DSR: one vs two", "status": "open"}
+    assert (detail["round"]["ordinal"], detail["round"]["slot"], detail["round"]["beatmap_id"]) == (2, "HR2", None)
+    assert [(e["type"], e["reason"]) for e in detail["events"]] == [("state", "absence")]
+    assert detail["deadline"]["kind"] == "reconnect" and [p["present"] for p in detail["players"]] == [True, False]
     entries = await desk.journal(factory, 1)
     assert [(e["name"], e["action"]) for e in entries] == [("one", "map_approve")]
-    assert await desk.people(factory, 1) == [{"player": 1, "name": "one", "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]
+    assert await desk.people(factory, 1) == [{"player": 1, "name": "one", "osu_id": 101, "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]
     shown = await desk.live(factory, watchers=lambda duel_id: 4)
     assert [d["id"] for d in shown["running"]] == ["stuck-1"] and shown["running"][0]["watching"] == 4
     assert [(d["id"], d["winner"]) for d in shown["finished"]] == [("done-1", 2)] and shown["finished"][0]["seconds_ago"] < 60
@@ -126,9 +140,9 @@ async def test_a_search_on_the_mirrors_is_kept_in_the_journal_and_needs_a_review
 
 
 def test_discovery_uses_half_star_windows_even_for_the_open_top_column():
-    assert desk.discovery_range(0) == (4.0, 4.5)
-    assert desk.discovery_range(7) == (7.5, 8.0)
-    for bad in (-1, 8, True):
+    assert desk.discovery_range(0) == (5.0, 5.5)
+    assert desk.discovery_range(9) == (9.5, 10.0)
+    for bad in (-1, 10, True):
         with pytest.raises(ValueError):
             desk.discovery_range(bad)
 

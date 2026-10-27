@@ -18,6 +18,8 @@ REPEAT_WITHIN = timedelta(minutes=60)
 MEETINGS_WITHIN = timedelta(hours=24)
 MEETINGS_MOST = 2
 UNKNOWN_PENALTY = 0.5
+NO_POOL = ("range_declined",)
+NO_POOL_REST = timedelta(minutes=10)
 
 @dataclass(frozen=True)
 class Seeker:
@@ -72,6 +74,14 @@ async def _met(session, first: int, second: int, since: datetime) -> tuple[int, 
     )).all()
     return len(rows), max((row[0] for row in rows), default=None)
 
+async def _no_pool(session, first: int, second: int, since: datetime) -> bool:
+    found = await session.scalar(
+        select(Duel.id).join(DuelParticipant, DuelParticipant.duel_id == Duel.id)
+        .where(Duel.mode == "rated", Duel.state == states.CANCELLED, Duel.outcome_reason.in_(NO_POOL), Duel.created_at >= since,
+               DuelParticipant.player_id.in_([first, second]))
+        .group_by(Duel.id).having(func.count(DuelParticipant.id) == 2).limit(1))
+    return found is not None
+
 async def pair(session, now: datetime, present: Callable[[int], bool]) -> Optional[tuple[Seeker, Seeker]]:
     seekers = await _seekers(session, now, present)
     for index, first in enumerate(seekers):
@@ -81,7 +91,7 @@ async def pair(session, now: datetime, present: Callable[[int], bool]) -> Option
             if second.player_id == first.player_id:
                 continue
             count, last = await _met(session, first.player_id, second.player_id, now - MEETINGS_WITHIN)
-            if count >= MEETINGS_MOST:
+            if count >= MEETINGS_MOST or await _no_pool(session, first.player_id, second.player_id, now - NO_POOL_REST):
                 continue
             cost = price(first, second, waited, last is not None and now - last < REPEAT_WITHIN)
             if cost is None:
