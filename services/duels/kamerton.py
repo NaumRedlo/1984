@@ -20,16 +20,16 @@ PARTS: dict[str, tuple[str, dict[str, float]]] = {
     "TB": ("NM", {"mix": 1.0}),
 }
 SIGNATURES: dict[str, tuple[tuple[str, float], ...]] = {
-    "aim": (("spacing_radii.p90", 1.0), ("aim_windows.2s.p90", 1.0), ("speed_px_ms.p90", 1.0), ("streams.share", -1.0)),
-    "stream": (("streams.share", 1.0), ("streams.lengths.16-31", 1.0), ("streams.lengths.32-plus", 1.0)),
-    "alt": (("streams.share", 1.0), ("streams.lengths.6-15", 1.0), ("spacing_radii.median", 1.0), ("interval_ms.median", 0.5)),
-    "speed": (("interval_ms.median", -1.0), ("tap_windows.10s.p90", 1.0), ("tap_windows.30s.loaded_share", 1.0)),
-    "burst": (("streams.lengths.3-5", 1.0), ("streams.lengths.6-15", 1.0), ("streams.lengths.32-plus", -1.0), ("tap_windows.2s.max", 1.0)),
-    "tech": (("rhythm_change.p90", 1.0), ("sliders.share", 1.0), ("sliders.speed.p90", 1.0), ("sliders.repeats", 1.0)),
-    "reading": (("reading.visible.p90", 1.0), ("reading.overlaps", 1.0), ("effective.ar", -1.0)),
-    "gimmick": (("rhythm_change.median", 1.0), ("angle_deg.median", -1.0), ("sliders.speed.p90", 1.0)),
-    "precision": (("effective.cs", 1.0), ("spacing_radii.p90", 1.0), ("aim_windows.2s.max", 1.0)),
-    "mix": (("length_seconds", 1.0), ("aim_windows.30s.loaded_share", 1.0), ("tap_windows.30s.loaded_share", 1.0)),
+    "aim": (("spacing_radii.median", 1.0), ("speed_px_ms.median", 1.0), ("spacing_radii.p90", 1.0), ("angle_deg.median", -1.0)),
+    "stream": (("tap_windows.10s.p90", 1.0), ("tap_windows.2s.p90", 1.0), ("interval_ms.median", -1.0), ("angle_deg.median", 1.0)),
+    "alt": (("sliders.speed.median", 1.0), ("sliders.speed.p90", 1.0), ("aim_windows.2s.median", 1.0), ("speed_px_ms.p90", 1.0)),
+    "speed": (("speed_px_ms.median", -1.0), ("spacing_radii.p90", -1.0), ("reading.visible.p90", 1.0)),
+    "burst": (("aim_windows.2s.p90", -1.0), ("aim_windows.10s.p90", -1.0), ("speed_px_ms.p99", -1.0)),
+    "tech": (("sliders.share", 1.0), ("sliders.speed.p90", 1.0), ("streams.chains", -1.0), ("speed_px_ms.p90", 1.0)),
+    "reading": (("effective.ar", -1.0), ("reading.visible.median", 1.0), ("streams.chains", 1.0), ("sliders.share", -1.0)),
+    "gimmick": (("effective.ar", -1.0), ("effective.od", -1.0), ("aim_windows.2s.median", -1.0)),
+    "precision": (("effective.cs", 1.0), ("length_seconds", -1.0), ("aim_windows.2s.max", -1.0)),
+    "mix": (("length_seconds", 1.0), ("aim_windows.2s.max", 1.0), ("tap_windows.2s.max", 1.0)),
 }
 UNKNOWN_MOD_WEIGHT = 0.3
 SECONDARY_SHARE = 0.25
@@ -249,16 +249,23 @@ def _auc(scores: list[float], positive: list[bool]) -> Optional[float]:
     bad = len(positive) - good
     if not good or not bad:
         return None
-    ordered = sorted(zip(scores, positive))
-    ranks = sum(index for index, (_, hit) in enumerate(ordered, start=1) if hit)
+    ordered = sorted(zip(scores, positive), key=lambda pair: pair[0])
+    ranks, at = 0.0, 0
+    while at < len(ordered):
+        end = at
+        while end + 1 < len(ordered) and ordered[end + 1][0] == ordered[at][0]:
+            end += 1
+        shared = (at + end + 2) / 2
+        ranks += shared * sum(1 for _, hit in ordered[at:end + 1] if hit)
+        at = end + 1
     return (ranks - good * (good + 1) / 2) / (good * bad)
 
 def signature_truth(examples: list[Example]) -> dict[str, Optional[float]]:
     known = [example for example in examples if example.slot in PARTS]
     if not known:
         return {}
-    norm = Normaliser.fit([vector(example.view(PARTS[example.slot][0])) for example in known])
-    profiles = [profile(norm.apply(vector(example.view(PARTS[example.slot][0])))) for example in known]
+    norm = Normaliser.fit([vector(example.plain) for example in known])
+    profiles = [profile(norm.apply(vector(example.plain))) for example in known]
     return {skill: _auc([found[at] for found in profiles], [PARTS[example.slot][1].get(skill, 0.0) >= 0.5 for example in known])
             for at, skill in enumerate(SKILLS)}
 

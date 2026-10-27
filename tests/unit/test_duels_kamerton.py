@@ -21,7 +21,8 @@ def _map(kind: str, noise: random.Random) -> dict:
         return _features(**{"spacing_radii.p90": 6.0 * jitter(), "aim_windows.2s.p90": 5.0 * jitter(), "speed_px_ms.p90": 4.0 * jitter(),
                             "streams.share": 0.05 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
     return _features(**{"streams.share": 0.7 * jitter(), "streams.lengths.16-31": 40.0 * jitter(), "streams.lengths.32-plus": 10.0 * jitter(),
-                        "spacing_radii.p90": 1.5 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
+                        "tap_windows.10s.p90": 9.0 * jitter(), "tap_windows.2s.p90": 9.0 * jitter(), "interval_ms.median": 0.5 * jitter(),
+                        "spacing_radii.p90": 1.5 * jitter(), "spacing_radii.median": 0.5 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
 
 def _examples(count: int = 24, years=(2021, 2022, 2023)) -> list[kamerton.Example]:
     noise = random.Random(7)
@@ -65,3 +66,7 @@ def test_signatures_are_measured_against_labels_and_both_models_are_compared_on_
         assert set(found[scope]) == {"current", "skill_mod", "stacked"}
         assert {"macro_f1", "per_slot", "confident", "top2"} <= set(found[scope]["skill_mod"])
     assert found["working"]["skill_mod"]["count"] == len(examples)
+
+def test_tied_scores_count_as_half_a_win():
+    assert kamerton._auc([0.0, 0.0, 0.0, 0.0], [True, False, True, False]) == pytest.approx(0.5)
+    assert kamerton._auc([0.0, 1.0, 2.0, 3.0], [False, False, True, True]) == pytest.approx(1.0)
