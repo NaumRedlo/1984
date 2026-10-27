@@ -1,5 +1,6 @@
 import asyncio
 import os
+import random
 from datetime import datetime
 from typing import Any, Optional
 
@@ -164,6 +165,44 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
     if not SHORTEST <= entry["length"] <= LONGEST:
         return "length", entry
     return await ingest(factory, fetch, osu, entry, folder, model, now), entry
+
+HUNT_MOST = 5
+HUNT_DEPTH = 20
+DT_STARS = 1.4
+
+async def hunt(factory, fetch, osu, folder: str, model=None, mode: str = "gaps", rng: random.Random = random.Random(), most: int = HUNT_MOST,
+               depth: int = HUNT_DEPTH, amount: int = 50, pause: float = 1.0, report=print) -> dict[str, Any]:
+    from services.duels import desk
+    from services.duels.rules import SLOTS
+
+    async with factory() as session:
+        grid = (await desk.counted(session))["grid"]
+    cells = [(grid[slot][band], rng.random(), slot, band) for slot in SLOTS for band in range(len(desk.BANDS))]
+    short = sorted(cell for cell in cells if cell[0] < desk.ENOUGH)
+    _, _, slot, band = short[0] if mode == "gaps" and short else rng.choice(cells)
+    least, most_stars = desk.discovery_range(band)
+    if slot.startswith("DT"):
+        least, most_stars = least / DT_STARS, most_stars / DT_STARS
+    page = rng.randrange(depth)
+    found = await mirrors.search(fetch, "ranked", page * amount, amount, least, most_stars)
+    entries = [entry for entry in (found[1] if found else []) if suitable(entry)]
+    rng.shuffle(entries)
+    counted: dict[str, int] = {}
+    years: list[int] = []
+    for entry in entries:
+        if sum(counted.values()) >= most:
+            break
+        outcome = await ingest(factory, fetch, osu, entry, folder, model)
+        if outcome == "known":
+            continue
+        counted[outcome] = counted.get(outcome, 0) + 1
+        if str(entry.get("ranked_date") or "")[:4].isdigit():
+            years.append(int(str(entry["ranked_date"])[:4]))
+        report(f"hunt {slot} {least:.2f}-{most_stars:.2f} page {page}: {entry['beatmap_id']} {outcome}")
+        if pause:
+            await asyncio.sleep(pause)
+    return {"mode": mode, "slot": slot, "band": band, "stars": [round(least, 2), round(most_stars, 2)], "page": page,
+            "added": sum(counted.values()), "outcomes": counted, "years": [min(years), max(years)] if years else None}
 
 async def _name_revision(session, revision: DuelMapRevision, folder: str) -> None:
     path = os.path.join(folder, f"{revision.hash}.osu")
