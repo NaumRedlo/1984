@@ -70,3 +70,24 @@ def test_signatures_are_measured_against_labels_and_both_models_are_compared_on_
 def test_tied_scores_count_as_half_a_win():
     assert kamerton._auc([0.0, 0.0, 0.0, 0.0], [True, False, True, False]) == pytest.approx(0.5)
     assert kamerton._auc([0.0, 1.0, 2.0, 3.0], [False, False, True, True]) == pytest.approx(1.0)
+
+
+def test_a_stacked_model_survives_saving_and_explains_with_its_skills():
+    import json
+
+    from services.duels.slot_model import SlotModel
+
+    model = kamerton.StackedModel.fit(_examples(30), steps=60)
+    body = json.loads(json.dumps(model.dump()))
+    loaded = kamerton.load_model(body)
+    assert isinstance(loaded, kamerton.StackedModel)
+    sample = _examples(3)[0]
+    before, after = kamerton.decide(model, sample), kamerton.decide(loaded, sample)
+    assert before.probabilities == pytest.approx(after.probabilities) and before.slot == after.slot
+    assert after.reasons and all(name in loaded.slots.paths for name, _ in after.reasons)
+    assert set(kamerton.SKILL_PATHS) <= set(loaded.slots.paths) and "NFDT:skill.aim" in kamerton.SKILL_PATHS
+    with pytest.raises(ValueError):
+        kamerton.load_model({**body, "features": "features-v1"})
+    plain = SlotModel.fit([[1.0, 2.0], [2.0, 1.0]], ["NM1", "NM2"], paths=("a", "b"))
+    with pytest.raises((KeyError, TypeError, ValueError)):
+        kamerton.load_model({**plain.dump(), "paths": ["a", "b"]})

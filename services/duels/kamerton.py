@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from services.duels import catalog
+from services.duels.features import FEATURE_VERSION
 from services.duels.rules import SLOTS
 from services.duels.slot_model import (HD2_MOST_AR, HR2_LEAST_CS, OTHER, PATHS, SEEN, Normaliser, Prediction, SlotModel, _get, _softmax,
                                        report, seen_vector, vector)
@@ -98,6 +99,7 @@ class Example:
     year: int
     own: bool = False
     secondary: Optional[str] = None
+    decided: bool = False
 
     def view(self, mod: str) -> dict[str, Any]:
         name = VIEW_OF[mod]
@@ -202,6 +204,7 @@ class SkillLayer:
         return self.skills(plain) + self.skills(views.get("NFDT") or plain)
 
 STACK_FOLDS = 3
+SKILL_PATHS = tuple(f"skill.{skill}" for skill in SKILLS) + tuple(f"NFDT:skill.{skill}" for skill in SKILLS)
 
 @dataclass
 class StackedModel:
@@ -221,7 +224,7 @@ class StackedModel:
                 if example.set_id in held:
                     outside[at] = layer.both(example.plain, example.views)
         rows = [seen_vector(example.plain, example.views) + outside[at] for at, example in enumerate(known)]
-        named = tuple(f"skill:{skill}" for skill in SKILLS) + tuple(f"NFDT:skill:{skill}" for skill in SKILLS)
+        named = SKILL_PATHS
         slots = SlotModel.fit(rows, [example.slot for example in known], strength, steps, rate, paths=SEEN + named)
         return cls(SkillLayer.fit(known, strength, steps, rate), slots)
 
@@ -238,7 +241,41 @@ class StackedModel:
         margin = probabilities[best] - (probabilities[second] if second is not None else 0.0)
         outside = model.normaliser.outside(raw)
         slot = model.classes[best] if model.classes[best] in SLOTS and not outside else None
-        return Prediction(slot, probabilities[best], margin, dict(zip(model.classes, probabilities)), outside)
+        reasons = sorted(((model.paths[j], model.weights[best][j] * row[j]) for j in range(len(model.paths))), key=lambda pair: -abs(pair[1]))[:5]
+        return Prediction(slot, probabilities[best], margin, dict(zip(model.classes, probabilities)), outside, reasons)
+
+    def dump(self) -> dict[str, Any]:
+        layer = self.layer
+        return {"kind": "stacked", "version": self.version, "features": FEATURE_VERSION, "slots": self.slots.dump(),
+                "skills": {"names": list(SKILLS), "weights": layer.weights, "bias": layer.bias, "centre": layer.norm.centre,
+                           "spread": layer.norm.spread, "low": layer.norm.low, "high": layer.norm.high}}
+
+    @classmethod
+    def load(cls, body: dict[str, Any]) -> "StackedModel":
+        skills, slots = body["skills"], body["slots"]
+        if body.get("features") != FEATURE_VERSION or tuple(skills.get("names") or ()) != SKILLS or tuple(slots.get("paths") or ()) != SEEN + SKILL_PATHS:
+            raise ValueError("model was built for other features")
+        classes = tuple(slots["classes"])
+        if len(slots["weights"]) != len(classes) or len(slots["bias"]) != len(classes):
+            raise ValueError("model was built for other classes")
+        layer = SkillLayer(Normaliser(skills["centre"], skills["spread"], skills["low"], skills["high"]), skills["weights"], skills["bias"])
+        model = SlotModel(Normaliser(slots["centre"], slots["spread"], slots["low"], slots["high"]), slots["weights"], slots["bias"],
+                          slots.get("version", body.get("version", VERSION)), classes, SEEN + SKILL_PATHS)
+        return cls(layer, model, body.get("version", VERSION + "-stacked"))
+
+def load_model(body: dict[str, Any]):
+    return StackedModel.load(body) if body.get("kind") == "stacked" else SlotModel.load(body)
+
+def judged_on(model, held: list[Example]) -> tuple[list[str], list[str], list[bool]]:
+    truth, guessed, confident = [], [], []
+    for example in held:
+        prediction = decide(model, example)
+        best = max(prediction.probabilities, key=prediction.probabilities.get) if prediction.probabilities else OTHER
+        truth.append(example.slot)
+        guessed.append(best)
+        if best != OTHER and catalog.confidence_level(prediction.probability, prediction.margin) == "confident":
+            confident.append(best == example.slot)
+    return truth, guessed, confident
 
 def decide(model, example: Example) -> Prediction:
     base_ar, hr_cs = example.gates()
@@ -322,3 +359,27 @@ async def corpus_examples(factory) -> list[Example]:
             if plain:
                 found.append(Example(plain, views, label, int(row.beatmapset_id or row.beatmap_id), row.year, row.corpus_version == corpus.OWN_VERSION))
     return found
+
+async def decision_examples(factory) -> list[Example]:
+    from sqlalchemy import select
+
+    from db.models.duel_catalog import DuelMapAssignment, DuelMapRevision
+    from services.duels import importer
+
+    async with factory() as session:
+        rows = (await session.execute(
+            select(DuelMapAssignment, DuelMapRevision)
+            .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
+                  & (DuelMapRevision.hash == DuelMapAssignment.revision_hash))
+            .where(DuelMapAssignment.state == catalog.HUMAN_APPROVED, DuelMapAssignment.slot.is_not(None)))).all()
+        found = []
+        for assignment, revision in rows:
+            if assignment.slot not in PARTS:
+                continue
+            plain, views = await importer.seen_of(session, revision.hash)
+            if plain:
+                extra = getattr(assignment, "secondary_slots", None)
+                found.append(Example(plain, views, assignment.slot, int(revision.beatmapset_id or assignment.beatmap_id), 0, False,
+                                     extra[0] if isinstance(extra, list) and extra else None, True))
+    return found
+

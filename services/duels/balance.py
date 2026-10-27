@@ -319,10 +319,10 @@ async def delete_model(factory, actor: int, version: str, reason: str, owners: t
             _audit(session, actor, role, "delete_model", version, reason.strip(), before={"state": chosen.state}, now=now)
 
 def _fits(body) -> bool:
-    from services.duels.slot_model import SlotModel
+    from services.duels import kamerton
 
     try:
-        SlotModel.load(body)
+        kamerton.load_model(body)
     except (KeyError, TypeError, ValueError):
         return False
     return True
@@ -344,13 +344,13 @@ async def rollback(factory, actor: int, reason: str, owners: tuple[int, ...] = (
             return earlier.version
 
 async def working_model(factory):
-    from services.duels.slot_model import SlotModel
+    from services.duels import kamerton
 
     chosen = await published(factory)
     if chosen is None:
         return None
     try:
-        return SlotModel.load(chosen.body)
+        return kamerton.load_model(chosen.body)
     except (KeyError, TypeError, ValueError):
         logger.warning("published duel slot model %s no longer fits the analyser; maps wait for reviewers", chosen.version)
         return None

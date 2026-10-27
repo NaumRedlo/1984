@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from db.models.duel import DuelAudit, DuelModelVersion
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
-from services.duels import balance
+from services.duels import balance, kamerton
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
 from services.duels.importer import seen_of
@@ -89,26 +89,29 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
     if last is not None and (last.report or {}).get("fingerprint") == printed:
         return None
     truth, guessed, sure, years = [], [], [], {}
-    folds = [(str(year), [(row[0], row[1], row[2]) for row in found if not row[4] and row[3] == year])
-             for year in sorted({row[3] for row in found if not row[4]})]
-    folds.append(("queue", [row for row in decided if held_out(row[2])]))
+    examples = await kamerton.corpus_examples(factory) + await kamerton.decision_examples(factory)
+    folds = [(str(year), [example for example in examples if not example.own and not example.decided and example.year == year])
+             for year in sorted({example.year for example in examples if not example.own and not example.decided})]
+    folds.append(("queue", [example for example in examples if example.decided and held_out(example.set_id)]))
     for name, held in folds:
         if not held:
             continue
-        sets = {set_id for _, _, set_id in held}
-        rest = [row for row in rows if row[2] not in sets]
-        if len({label for _, label, _ in rest}) < 2:
+        sets = {example.set_id for example in held}
+        rest = [example for example in examples if example.set_id not in sets]
+        if len({example.slot for example in rest}) < 2:
             continue
-        model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rest], [label for _, label, _ in rest], 0.01, steps, paths=SEEN)
-        part = importer.guesses(model, held)
+        model = await asyncio.to_thread(kamerton.StackedModel.fit, rest, 0.01, steps)
+        part = kamerton.judged_on(model, held)
         years[name] = importer.judged(*part)
         truth, guessed, sure = truth + part[0], guessed + part[1], sure + part[2]
-    model = await asyncio.to_thread(SlotModel.fit, [row for row, _, _ in rows], [label for _, label, _ in rows], 0.01, steps, paths=SEEN)
+    if len({example.slot for example in examples}) < 2:
+        return None
+    model = await asyncio.to_thread(kamerton.StackedModel.fit, examples, 0.01, steps)
     async with factory() as session:
         number = await _number(session)
     version = f"{NAME}-{number}"
     model.version = version
-    found_report = {"name": NAME, "number": number, "maps": len(rows), "corpus": len(found), "own": sum(1 for row in found if row[4]),
+    found_report = {"name": NAME, "number": number, "kind": "stacked", "maps": len(rows), "corpus": len(found), "own": sum(1 for row in found if row[4]),
                     "queue": len(decided), "verified": sum(1 for row in found if row[5]), "test": importer.judged(truth, guessed, sure),
                     "years": years, "fingerprint": printed}
     await balance.train(factory, version, model.dump(), found_report, _people(found, decided), now)
