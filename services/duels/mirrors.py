@@ -147,7 +147,7 @@ def _entry(beatmapset: dict[str, Any], beatmap: dict[str, Any]) -> Optional[dict
                 "checksum": beatmap.get("checksum"), "stars": float(beatmap.get("difficulty_rating") or 0.0),
                 "status": beatmap.get("status") or beatmapset.get("status"), "mapper": beatmapset.get("creator"),
                 "artist": beatmapset.get("artist"), "title": beatmapset.get("title"), "version": beatmap.get("version"),
-                "length": int(beatmap.get("total_length") or 0), "max_combo": beatmap.get("max_combo"),
+                "length": int(beatmap.get("total_length") or 0), "max_combo": beatmap.get("max_combo"), "ranked_date": beatmapset.get("ranked_date"),
                 "ar": beatmap.get("ar"), "cs": beatmap.get("cs")}
     except (KeyError, TypeError, ValueError):
         return None

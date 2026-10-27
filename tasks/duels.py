@@ -17,6 +17,7 @@ async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
         helpers.append(asyncio.create_task(gateway.run(shutdown_event)))
     helpers.append(asyncio.create_task(_matching(AsyncSessionFactory, shutdown_event, live.hub.present)))
     helpers.append(asyncio.create_task(_training(AsyncSessionFactory, shutdown_event)))
+    helpers.append(asyncio.create_task(_hunting(AsyncSessionFactory, shutdown_event, osu)))
     try:
         await _sweep(AsyncSessionFactory, shutdown_event, _telegram(bot))
     finally:
@@ -100,3 +101,35 @@ async def _training(factory, shutdown_event: asyncio.Event) -> None:
                 logger.info("a shadow duel slot model %s waits for review", made)
         except Exception as exc:
             logger.error("duel model training stumbled: %s", exc, exc_info=True)
+
+def hunt_mode(setting: str, turn: int) -> str:
+    if setting in ("gaps", "random"):
+        return setting
+    return "random" if turn % 4 == 3 else "gaps"
+
+async def _hunting(factory, shutdown_event: asyncio.Event, osu) -> None:
+    import aiohttp
+
+    from config.settings import DUEL_HUNT_HOURS, DUEL_HUNT_MODE, DUEL_OSU_FOLDER
+    from services.duels import balance, importer, mirrors
+
+    if DUEL_HUNT_HOURS <= 0 or osu is None:
+        logger.info("Kamerton does not look for maps by itself: DUEL_HUNT_HOURS is 0 or osu! API is missing")
+        return
+    turn = 0
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=DUEL_HUNT_HOURS * 3600)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            model = await balance.working_model(factory)
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120, sock_read=30)) as session:
+                found = await importer.hunt(factory, mirrors.aiohttp_fetch(session), osu, DUEL_OSU_FOLDER, model, hunt_mode(DUEL_HUNT_MODE, turn),
+                                            report=lambda said: logger.info("Kamerton hunt: %s", said))
+            await balance.note_hunt(factory, found)
+            logger.info("Kamerton looked for %s maps: %s", found["slot"], found)
+        except Exception as exc:
+            logger.error("Kamerton's map hunt stumbled: %s", exc, exc_info=True)
+        turn += 1

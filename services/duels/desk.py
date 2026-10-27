@@ -15,6 +15,7 @@ from services.duels.rules import SLOTS, STARS_MOST, in_catalogue
 from utils.timeutils import utcnow
 
 BANDS = (5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5)
+ENOUGH = 5
 STUCK_AFTER = timedelta(minutes=5)
 WAITING_STATES = frozenset({states.PAUSED, states.RECOVERING, states.VERIFYING, states.ABORTING, states.ROOM_SETUP, states.WAITING_ROOM})
 RECENT = timedelta(hours=6)
@@ -242,39 +243,42 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
 async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[str, Any]:
     async with factory() as session:
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
-        rows = (await session.execute(
-            select(DuelMapAssignment, DuelMapRevision)
-            .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
-                  & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
-        )).all()
-        grid = {slot: [0] * len(BANDS) for slot in SLOTS}
-        extra = {slot: [0] * len(BANDS) for slot in SLOTS}
-        totals = {"playable": 0, "human": 0, "uncertain": 0, "quarantined": 0, "unassigned": 0}
-        for assignment, revision in rows:
-            if assignment.state == catalog.QUARANTINED:
-                totals["quarantined"] += 1
-                continue
-            if assignment.state == catalog.UNASSIGNED:
-                totals["unassigned"] += 1
-                continue
-            level = catalog.playable(assignment, revision)
-            if level is None:
-                continue
-            analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[assignment.slot]))
-            if analysis is None or not in_catalogue(analysis.stars):
-                continue
-            grid[assignment.slot][band_of(float(analysis.stars))] += 1
-            totals["playable"] += 1
-            if level == "human":
-                totals["human"] += 1
-            elif level == "uncertain":
-                totals["uncertain"] += 1
-            secondary = catalog.secondary_of(assignment) if assignment.state == catalog.HUMAN_APPROVED else None
-            if secondary in extra:
-                held = await _analysis(session, revision.hash, "".join(SLOT_MODS[secondary]))
-                if held is not None and in_catalogue(held.stars):
-                    extra[secondary][band_of(float(held.stars))] += 1
-        return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "secondary": extra, "totals": totals}
+        return await counted(session)
+
+async def counted(session) -> dict[str, Any]:
+    rows = (await session.execute(
+        select(DuelMapAssignment, DuelMapRevision)
+        .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
+              & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
+    )).all()
+    grid = {slot: [0] * len(BANDS) for slot in SLOTS}
+    extra = {slot: [0] * len(BANDS) for slot in SLOTS}
+    totals = {"playable": 0, "human": 0, "uncertain": 0, "quarantined": 0, "unassigned": 0}
+    for assignment, revision in rows:
+        if assignment.state == catalog.QUARANTINED:
+            totals["quarantined"] += 1
+            continue
+        if assignment.state == catalog.UNASSIGNED:
+            totals["unassigned"] += 1
+            continue
+        level = catalog.playable(assignment, revision)
+        if level is None:
+            continue
+        analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[assignment.slot]))
+        if analysis is None or not in_catalogue(analysis.stars):
+            continue
+        grid[assignment.slot][band_of(float(analysis.stars))] += 1
+        totals["playable"] += 1
+        if level == "human":
+            totals["human"] += 1
+        elif level == "uncertain":
+            totals["uncertain"] += 1
+        secondary = catalog.secondary_of(assignment) if assignment.state == catalog.HUMAN_APPROVED else None
+        if secondary in extra:
+            held = await _analysis(session, revision.hash, "".join(SLOT_MODS[secondary]))
+            if held is not None and in_catalogue(held.stars):
+                extra[secondary][band_of(float(held.stars))] += 1
+    return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "secondary": extra, "totals": totals}
 
 async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
     async with factory() as session:

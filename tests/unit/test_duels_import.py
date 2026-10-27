@@ -565,3 +565,61 @@ async def test_an_old_training_table_gains_the_exclusion_flag_once(tmp_path, mon
         row = await session.scalar(select(DuelTrainingExample))
         assert row.excluded is None
     await engine.dispose()
+
+
+async def test_kamerton_hunts_up_to_five_new_maps_for_the_emptiest_cell_and_notes_it(factory, tmp_path):
+    from db.models.duel import DuelAudit
+    from services.duels import balance, desk
+    from tasks.duels import hunt_mode
+
+    maps = {beatmap_id: _map(beatmap_id) for beatmap_id in range(300, 309)}
+    sets = [{**_set(beatmap_id * 10, [(beatmap_id, 5.2, "osu", 120, raw)]), "ranked_date": f"20{14 + beatmap_id % 9}-05-01T00:00:00Z"}
+            for beatmap_id, raw in maps.items()]
+    asked = []
+
+    async def fetch(address):
+        asked.append(address)
+        if "search" in address:
+            from urllib.parse import unquote
+            import re as pattern
+            least = float(pattern.search(r"difficulty_rating >= ([0-9.]+)", unquote(address)).group(1))
+            for one in sets:
+                one["beatmaps"][0]["difficulty_rating"] = least + 0.01
+            return json.dumps(sets).encode()
+        for beatmap_id, raw in maps.items():
+            if f"/osu/{beatmap_id}" in address:
+                return raw
+        return None
+
+    seen = []
+    found = await importer.hunt(factory, fetch, Osu(), str(tmp_path), mode="gaps", pause=0, report=seen.append)
+    assert found["added"] == importer.HUNT_MOST and len(seen) == importer.HUNT_MOST
+    assert found["slot"] in desk.SLOTS
+    assert found["years"] and 2014 <= found["years"][0] <= found["years"][1] <= 2022
+    search = next(address for address in asked if "search" in address)
+    assert f"offset={found['page'] * 50}" in search
+    if found["slot"].startswith("DT"):
+        assert found["stars"][1] < desk.discovery_range(found["band"])[1]
+    again = await importer.hunt(factory, fetch, Osu(), str(tmp_path), mode="random", pause=0, report=seen.append)
+    assert again["added"] == len(maps) - importer.HUNT_MOST, "maps already filed are skipped"
+    await balance.note_hunt(factory, found)
+    async with factory() as session:
+        noted = await session.scalar(select(DuelAudit).where(DuelAudit.action == "auto_discover"))
+    assert (noted.actor_id, noted.role, noted.after["added"]) == (0, "SYSTEM", importer.HUNT_MOST)
+    assert [hunt_mode("mixed", turn) for turn in range(4)] == ["gaps", "gaps", "gaps", "random"] and hunt_mode("random", 0) == "random"
+
+
+def test_the_hunt_goes_where_a_slot_has_few_maps_compared_with_the_others():
+    from random import SystemRandom
+
+    from services.duels import desk
+    from services.duels.rules import SLOTS
+
+    grid = {slot: [12] * len(desk.BANDS) for slot in SLOTS}
+    grid["HR2"][3] = 7
+    shortage, slot, band, reference = importer.scarcest(grid, SystemRandom())
+    assert (slot, band) == ("HR2", 3), "seven maps are few where every other slot has twelve, although seven is not under five"
+    assert reference == pytest.approx(11.5) and shortage > 0
+    empty = {slot: [0] * len(desk.BANDS) for slot in SLOTS}
+    assert importer.scarcest(empty, SystemRandom())[3] == desk.ENOUGH, "an empty catalogue still aims at five maps"
+

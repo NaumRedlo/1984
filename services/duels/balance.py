@@ -557,3 +557,10 @@ async def exclude_batch(factory, actor: int, name: str, year: int, beatmap_id: O
             _audit(session, actor, role, "batch_exclude" if excluded else "batch_include", _batch_target(name, year, beatmap_id),
                    reason.strip(), after=after, now=now)
             return after
+
+SYSTEM = "SYSTEM"
+
+async def note_hunt(factory, found: dict[str, Any], now: Optional[datetime] = None) -> None:
+    async with factory() as session:
+        async with session.begin():
+            _audit(session, 0, SYSTEM, "auto_discover", f"{found['slot']}:{found['band']}", found["mode"], after=found, now=now)

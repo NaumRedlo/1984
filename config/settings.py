@@ -17,6 +17,8 @@ BANCHO_HOST = os.getenv("BANCHO_HOST", "irc.ppy.sh")
 BANCHO_PORT = int(os.getenv("BANCHO_PORT", "6667"))
 DUEL_CREATED_ROOM_LIMIT = int(os.getenv("DUEL_CREATED_ROOM_LIMIT", "4"))
 DUEL_OSU_FOLDER = os.getenv("DUEL_OSU_FOLDER", "data/duels/osu")
+DUEL_HUNT_HOURS = float(os.getenv("DUEL_HUNT_HOURS", "6"))
+DUEL_HUNT_MODE = os.getenv("DUEL_HUNT_MODE", "mixed")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
