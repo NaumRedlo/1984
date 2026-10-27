@@ -78,6 +78,34 @@ async def propose(session, beatmap_id: int, slot: str, probability: float, margi
     await _log(session, beatmap_id, None, "propose", before, _view(row), level or "below_threshold", now)
     return _view(row)
 
+async def reconsider(session, beatmap_id: int, slot: Optional[str], probability: float, margin: float, version: str,
+                     why: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
+    """A published model's fresh word on a map no person has decided.
+
+    Automatic slots belong to the published model: a slot it admits is set or moved, and a map it refuses loses its
+    automatic slot, so rolling back a bad model also takes back what that model let in. Human decisions are never
+    touched, and pools already drawn keep their own copy of every slot."""
+    now = now or utcnow()
+    row = await _row(session, beatmap_id)
+    if row is None or row.state not in (UNASSIGNED, AUTO_ASSIGNED):
+        return None
+    before = _view(row)
+    level = confidence_level(probability, margin) if why is None and slot in SLOTS else None
+    if level:
+        outcome = "moved" if row.slot not in (None, slot) else ("kept" if row.state == AUTO_ASSIGNED else "proposed")
+        row.slot, row.state = slot, AUTO_ASSIGNED
+    elif row.slot is not None:
+        outcome = "revoked"
+        row.slot, row.state = None, UNASSIGNED
+    else:
+        outcome = why or "below_threshold"
+        row.state = UNASSIGNED
+    row.confidence, row.margin, row.assignment_version, row.updated_at = probability, margin, version, now
+    await session.flush()
+    await _log(session, beatmap_id, None, {"moved": "move", "revoked": "revoke"}.get(outcome, "propose"), before, _view(row),
+               level or why or "below_threshold", now)
+    return outcome
+
 def _decide(row, decision: str, slot: Optional[str]) -> None:
     if decision in ("APPROVE", "MOVE") and row.state == REJECTED:
         raise CatalogRefusal("REJECTED_STAYS")

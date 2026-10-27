@@ -311,11 +311,20 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         await balance.note_training(factory_of(), player, said["reason"], owners)
         running = discovering.get("training")
         if running is not None and not running.done():
-            return {"started": False}
+            return {"started": False, "job": training.running_job()}
         if await training.unchanged(factory_of()):
             return web.json_response({"error": "NOTHING_NEW"}, status=409)
-        discovering["training"] = watched(training.train(factory_of()), "training Kamerton")
-        return {"started": True}
+        job = training.open_job()
+        discovering["training"] = watched(training.run_job(factory_of(), job), "training Kamerton")
+        return {"started": True, "job": job}
+
+    async def training_job(request, player, said, owners):
+        from services.duels import desk
+
+        found = await desk.training_job(factory_of(), player, request.match_info["job"], owners)
+        if found is None:
+            return web.json_response({"error": "UNKNOWN_JOB"}, status=404)
+        return found
 
     async def desk_queue(request, player, said, owners):
         from services.duels import balance, desk
@@ -571,6 +580,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         web.post("/render/admin/duels/models/{version}/publish", handler(admin(publish_model))),
         web.post("/render/admin/duels/models/rollback", handler(admin(rollback_model))),
         web.post("/render/admin/duels/models/train", handler(admin(train_model))),
+        web.get("/render/admin/duels/models/training/{job}", handler(admin(training_job))),
         web.post("/render/admin/duels/models/{version}/delete", handler(admin(delete_model))),
         web.post("/render/admin/duels/catalog/discover", handler(admin(catalog_discover))),
         web.post("/render/admin/duels/catalog/maps", handler(admin(catalog_add))),

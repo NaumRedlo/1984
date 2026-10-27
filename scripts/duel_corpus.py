@@ -15,8 +15,12 @@ from services.duels import balance, importer, kamerton, mirrors, training
 
 def _brief(found: dict) -> str:
     slots = {name: round(values["f1"], 2) for name, values in found["per_slot"].items() if values["support"]}
-    return (f"{found['count']} maps, macro F1 {found['macro_f1']:.2f}, confident {found['confident']['count']} "
-            f"with precision {found['confident']['precision']:.2f}, F1 by slot {json.dumps(slots)}")
+    admitted = found["admitted"]
+    return (f"{found['count']} maps, macro F1 {found['macro_f1']:.2f} (all classes {found['macro_f1_all']:.2f}), "
+            f"admitted {admitted['count']} ({admitted['share']:.0%}) with precision {admitted['precision']:.2f}, "
+            f"confident {found['confident']['count']} with precision {found['confident']['precision']:.2f}, "
+            f"refused {admitted['refused']['count']} (outside {admitted['refused']['outside']}, not working {admitted['refused']['not_working']}, "
+            f"below threshold {admitted['refused']['below_threshold']}), F1 by slot {json.dumps(slots)}")
 
 async def load() -> None:
     timeout = aiohttp.ClientTimeout(total=120, sock_read=30)

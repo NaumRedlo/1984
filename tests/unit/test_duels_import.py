@@ -12,7 +12,7 @@ from sqlalchemy.pool import NullPool
 import db.models
 from db.database import Base
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
-from services.duels import importer, mirrors, training
+from services.duels import importer, kamerton, mirrors, training
 
 HEAD = """osu file format v14
 
@@ -343,16 +343,17 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
     assert assignments == [] and len(analyses) == 6 * len(importer.ANALYSED)
     again = await importer.load_corpus(factory, fetch, str(tmp_path), years=(2021,), pause=0, report=lambda text: None)
     assert again == {"filed": 6}
-    rows = await importer.corpus_rows(factory)
-    assert sorted(row[1] for row in rows) == ["FL1", "HD2", "NM1", "NM2", "NM5", "TB"]
-    from services.duels.slot_model import vector
-    hidden = next(row for row in rows if row[1] == "HD2")
+    rows = await kamerton.corpus_examples(factory)
+    assert sorted(row.slot for row in rows) == ["HD2", "NM1", "NM2", "NM5", "TB"], "FL1 has no skills in Kamerton yet, so it is not learned or counted"
+    from services.duels.slot_model import seen_vector, vector
+    hidden = next(row for row in rows if row.slot == "HD2")
     async with factory() as session:
         example = next(e for e in (await session.scalars(select(db.models.duel_catalog.DuelTrainingExample))).all() if e.original_slot == "HD2")
         plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == example.revision_hash, DuelMapAnalysis.mods == "NF"))
-    assert hidden[0][:len(vector(plain.features))] == vector(plain.features) and len(hidden[0]) > len(vector(plain.features))
+    seen = seen_vector(hidden.plain, hidden.views)
+    assert seen[:len(vector(plain.features))] == vector(plain.features) and len(seen) > len(vector(plain.features))
     version, found = await training.train(factory, steps=20)
-    assert version == "kamerton-1" and found["maps"] == 6 and found["test"]["count"] == 0 and found["years"] == {}
+    assert version == "kamerton-1" and found["maps"] == 5 and found["test"]["count"] == 0 and found["years"] == {}
     async with factory() as session:
         assert (await session.get(DuelModelVersion, version)).state == "shadow"
     entry = {"beatmap_id": 1, "beatmapset_id": 10, "checksum": hashlib.md5(files[1]).hexdigest(), "stars": 5.0, "status": "ranked",
@@ -364,6 +365,36 @@ async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_
         stars = await session.scalar(select(DuelMapAnalysis.stars).where(DuelMapAnalysis.revision_hash == revision.hash,
                                                                          DuelMapAnalysis.mods == "NFDT"))
     assert assignment.admitted and revision.ranked_status == "ranked" and stars == 6.5
+
+async def test_stored_maps_are_analysed_again_for_a_new_feature_version_keeping_their_stars_and_naming_failures(factory, tmp_path, monkeypatch):
+    raw = _map(31)
+    digest = mirrors.store(str(tmp_path), raw)
+    broken = mirrors.store(str(tmp_path), b"not an osu file")
+    async with factory() as session:
+        session.add(DuelMapRevision(beatmap_id=31, beatmapset_id=310, hash=digest, status="ok"))
+        session.add(DuelMapRevision(beatmap_id=310, beatmapset_id=310, hash=digest, status="ok"))
+        session.add(DuelMapAnalysis(revision_hash=digest, mods="NFDT", engine_version="old", feature_version="features-v1",
+                                    model_version="none", stars=6.4, features={}))
+        session.add(DuelMapRevision(beatmap_id=32, beatmapset_id=320, hash="f" * 32, status="ok"))
+        session.add(DuelMapRevision(beatmap_id=33, beatmapset_id=330, hash=broken, status="ok"))
+        await session.commit()
+    seen = []
+    assert await importer.reanalyse(factory, str(tmp_path), report=seen.append) == {
+        "analysed": 1, "current": 0, "missing_file": 1, "unreadable": 1, "unsupported": 0, "failed": 0}
+    assert any(line.startswith("32 ") and "missing_file" in line for line in seen) and any(line.startswith("33 ") and "unreadable" in line for line in seen)
+    async with factory() as session:
+        fresh = {row.mods: row for row in (await session.scalars(select(DuelMapAnalysis).where(
+            DuelMapAnalysis.feature_version == importer.FEATURE_VERSION))).all()}
+    assert set(fresh) == set(importer.ANALYSED) and fresh["NFDT"].stars == 6.4 and fresh["NF"].stars is None
+    again = await importer.reanalyse(factory, str(tmp_path), report=seen.append)
+    assert (again["analysed"], again["current"]) == (0, 1), "a second run carries on where the first stopped"
+
+    import scripts.duel_corpus as script
+
+    monkeypatch.setattr(script, "AsyncSessionFactory", factory)
+    monkeypatch.setattr(script, "DUEL_OSU_FOLDER", str(tmp_path))
+    await script.reanalyse()
+
 
 async def test_a_published_model_sorts_waiting_catalogue_maps(factory, tmp_path):
     from services.duels.slot_model import Prediction
@@ -387,7 +418,7 @@ async def test_a_published_model_sorts_waiting_catalogue_maps(factory, tmp_path)
         def predict(self, features, base_ar, hr_cs, views=None):
             assert base_ar == 9 and hr_cs == pytest.approx(5.2)
             sure = features["objects"] == 40
-            return Prediction("DT1" if sure else None, 0.9 if sure else 0.4, 0.5 if sure else 0.05, {}, False)
+            return Prediction("DT1", 0.9 if sure else 0.4, 0.5 if sure else 0.05, {}, False)
 
     assert await importer.reassess(factory, Model()) == {"proposed DT1": 1, "below_threshold": 1}
     async with factory() as session:
@@ -433,24 +464,24 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, corpus.EXCLUDED, "спорная карта")
     with pytest.raises(DuelError):
         await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM1", 1, "XX9", "нет такого")
-    rows = await importer.corpus_rows(factory)
-    assert sorted((row[1], row[5]) for row in rows) == [("FL1", False), ("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
+    rows = await kamerton.corpus_examples(factory)
+    assert sorted((row.slot, row.verified) for row in rows) == [("HD2", False), ("NM3", True), ("NM4", True), ("TB", False)]
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "OTHER", "подтвердил как было")
-    rows = await importer.corpus_rows(factory)
-    assert ("NM5", True) in [(row[1], row[5]) for row in rows]
+    rows = await kamerton.corpus_examples(factory)
+    assert ("NM5", True) in [(row.slot, row.verified) for row in rows]
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", None, "OTHER", "")
     assert [c["label"] for c in await balance.corpus_table(factory, 1) if c["slot"] == "NM5"] == ["NM5"]
     await balance.label_corpus(factory, 1, corpus.CORPUS_VERSION, 2021, "grand finals", "NM5", 3, "NM5", "пятый NM пока не в дуэлях")
     cells = await balance.corpus_table(factory, 1)
     assert [m["label"] for c in cells if c["slot"] == "NM5" for m in c["maps"] if m["beatmap_id"] == 3] == ["NM5"]
-    rows = await importer.corpus_rows(factory)
-    assert sorted((row[1], row[5]) for row in rows) == [("FL1", False), ("HD2", False), ("NM3", True), ("NM5", True), ("TB", False)]
+    rows = await kamerton.corpus_examples(factory)
+    assert sorted((row.slot, row.verified) for row in rows) == [("HD2", False), ("NM3", True), ("NM5", True), ("TB", False)]
     added = await balance.add_tournament(factory, 1, "Russian Cup", 2024,
                                          "NM1 https://osu.ppy.sh/beatmapsets/80#osu/8\nDT1 https://osu.ppy.sh/b/9\nFM1 https://osu.ppy.sh/b/10\nтекст", "мой турнир")
     assert added == {"added": 3, "read": 3}
     assert await importer.load_missing(factory, fetch, str(tmp_path), pause=0, report=lambda text: None) == {"filed": 3}
-    rows = await importer.corpus_rows(factory)
-    own = sorted((row[1], row[4], row[5]) for row in rows if row[4])
+    rows = await kamerton.corpus_examples(factory)
+    own = sorted((row.slot, row.own, row.verified) for row in rows if row.own)
     assert own == [("DT1", True, True), ("FM1", True, True), ("NM1", True, True)]
     version, found = await training.train(factory, steps=10)
     assert version == "kamerton-1" and found["own"] == 3 and found["verified"] == 5
@@ -521,10 +552,10 @@ async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_who
         for row in (await session.scalars(select(DuelTrainingExample))).all():
             row.revision_hash = f"{row.beatmap_id:032x}"
         await session.commit()
-    learned = await importer.corpus_rows(factory)
-    assert sorted(row[2] for row in learned) == [11, 21], "an excluded map and an unlabelled one stay out of training"
+    learned = await kamerton.examples(factory)
+    assert sorted(row.set_id for row in learned) == [11, 21], "an excluded map and an unlabelled one stay out of training"
     await balance.exclude_batch(factory, 1, "RC Finals", 2025, None, False, "back in", owners=(555,))
-    assert sorted(row[2] for row in await importer.corpus_rows(factory)) == [11, 12, 21]
+    assert sorted(row.set_id for row in await kamerton.examples(factory)) == [11, 12, 21]
     assert await balance.delete_batch(factory, 1, "RC Finals", 2025, 11, "not this map", owners=(555,)) == {"maps": 1}
     assert await balance.delete_batch(factory, 1, "Other Cup", 2023, None, "test batch", owners=(555,)) == {"maps": 1}
     with pytest.raises(DuelError) as gone:
@@ -559,7 +590,7 @@ async def test_an_old_training_table_gains_the_exclusion_flag_once(tmp_path, mon
         return {"objects": 1}, {}
 
     monkeypatch.setattr(importer, "seen_of", seen)
-    assert [row[2] for row in await importer.corpus_rows(made)] == [7], "an old row without the flag still trains"
+    assert [row.set_id for row in await kamerton.corpus_examples(made)] == [7], "an old row without the flag still trains"
     async with made() as session:
         from db.models.duel_catalog import DuelTrainingExample
         row = await session.scalar(select(DuelTrainingExample))

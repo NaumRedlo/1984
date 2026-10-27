@@ -89,15 +89,11 @@ def _explain(model, features: dict[str, Any], base_ar: float, hr_cs: float, view
         prediction = model.predict(features, base_ar, hr_cs, views)
     except Exception:
         return None
-    from services.duels.slot_model import PATHS, seen_vector
-
     ranked = sorted(((slot, value) for slot, value in prediction.probabilities.items() if slot != "OTHER"), key=lambda pair: -pair[1])[:4]
-    normaliser = getattr(model, "normaliser", None)
-    paths = getattr(model, "paths", PATHS)
-    levels = dict(zip(paths, normaliser.apply(seen_vector(features, views, paths)))) if normaliser is not None else {}
     return {"slot": prediction.slot, "probability": prediction.probability, "margin": prediction.margin,
             "top": [{"slot": slot, "probability": value} for slot, value in ranked],
-            "reasons": [{"feature": name, "weight": weight, "level": levels.get(name, 0.0)} for name, weight in prediction.reasons],
+            "reasons": [{"feature": name, "weight": weight, **({"level": prediction.levels[name]} if name in prediction.levels else {})}
+                        for name, weight in prediction.reasons],
             "outside": prediction.outside, "version": model.version}
 
 SETTINGS = {"CircleSize": "cs", "ApproachRate": "ar", "OverallDifficulty": "od", "HPDrainRate": "hp"}
@@ -389,6 +385,14 @@ async def models(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dict
         rows = (await session.scalars(select(DuelModelVersion).order_by(DuelModelVersion.created_at.desc()).limit(20))).all()
         return [{"version": row.version, "state": row.state, "labels": row.labels, "report": row.report, "created_at": _stamp(row.created_at),
                  "published_at": _stamp(row.published_at), "published_by": row.published_by} for row in rows]
+
+async def training_job(factory, actor: int, name: str, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
+    from services.duels import training
+
+    async with factory() as session:
+        await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
+    found = training.jobs.get(name)
+    return dict(found) if found is not None else None
 
 async def live(factory, now: Optional[datetime] = None, watchers: Optional[Callable[[str], int]] = None) -> dict[str, Any]:
     now = now or utcnow()
