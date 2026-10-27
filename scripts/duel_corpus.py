@@ -11,7 +11,7 @@ import aiohttp
 import db.models
 from config.settings import ADMIN_IDS, DUEL_OSU_FOLDER
 from db.database import AsyncSessionFactory
-from services.duels import balance, importer, mirrors, training
+from services.duels import balance, importer, kamerton, mirrors, training
 
 def _brief(found: dict) -> str:
     slots = {name: round(values["f1"], 2) for name, values in found["per_slot"].items() if values["support"]}
@@ -24,6 +24,17 @@ async def load() -> None:
         fetch = mirrors.aiohttp_fetch(session)
         print(await importer.load_corpus(AsyncSessionFactory, fetch, DUEL_OSU_FOLDER))
         print(await importer.load_missing(AsyncSessionFactory, fetch, DUEL_OSU_FOLDER))
+
+async def reanalyse() -> None:
+    print(await importer.reanalyse(AsyncSessionFactory, DUEL_OSU_FOLDER))
+
+async def compare() -> None:
+    examples = await kamerton.corpus_examples(AsyncSessionFactory)
+    found = kamerton.compare(examples)
+    for scope in ("working", "catalogue"):
+        for name, scored in found[scope].items():
+            print(scope, name, _brief(scored), f"top-2 {scored['top2']:.2f}, confident share {scored['confident']['share']:.2f}")
+    print("skill signatures, AUC:", json.dumps({skill: round(value, 2) if value is not None else None for skill, value in found["signatures"].items()}))
 
 async def train() -> None:
     made = await training.train(AsyncSessionFactory)
@@ -52,6 +63,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Teach the duel slot model on OWC 2021-2025 pools")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("load", help="read OWC pools from the osu! wiki sources and fetch their .osu files from mirrors")
+    commands.add_parser("reanalyse", help="analyse every stored .osu file again for the current feature version, keeping known stars")
+    commands.add_parser("compare", help="score the current model and the skill x mod model on the same held-out years")
     commands.add_parser("train", help="train the next Kamerton on every labelled map and score it by holding out one year at a time")
     chosen = commands.add_parser("publish", help="make a shadow model the one that assigns slots")
     chosen.add_argument("version")
@@ -61,6 +74,10 @@ if __name__ == "__main__":
     said = parser.parse_args()
     if said.command == "load":
         asyncio.run(load())
+    elif said.command == "reanalyse":
+        asyncio.run(reanalyse())
+    elif said.command == "compare":
+        asyncio.run(compare())
     elif said.command == "train":
         asyncio.run(train())
     elif said.command == "publish":
