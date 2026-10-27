@@ -1,5 +1,3 @@
-import random
-
 import pytest
 
 from services.duels import kamerton
@@ -15,16 +13,27 @@ def _features(**values) -> dict:
         node[leaf] = values.get(path, 1.0)
     return found
 
-def _map(kind: str, noise: random.Random) -> dict:
+class _Noise:
+    """Repeatable jitter for the made-up maps; a plain linear congruential step is enough here."""
+
+    def __init__(self, seed: int):
+        self.state = seed
+
+    def uniform(self, low: float, high: float) -> float:
+        self.state = (self.state * 1103515245 + 12345) % 2 ** 31
+        return low + (high - low) * self.state / 2 ** 31
+
+def _map(kind: str, noise: _Noise) -> dict:
     jitter = lambda: noise.uniform(0.8, 1.2)
     if kind == "aim":
         return _features(**{"spacing_radii.p90": 6.0 * jitter(), "aim_windows.2s.p90": 5.0 * jitter(), "speed_px_ms.p90": 4.0 * jitter(),
                             "streams.share": 0.05 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
     return _features(**{"streams.share": 0.7 * jitter(), "streams.lengths.16-31": 40.0 * jitter(), "streams.lengths.32-plus": 10.0 * jitter(),
-                        "spacing_radii.p90": 1.5 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
+                        "tap_windows.10s.p90": 9.0 * jitter(), "tap_windows.2s.p90": 9.0 * jitter(), "interval_ms.median": 0.5 * jitter(),
+                        "spacing_radii.p90": 1.5 * jitter(), "spacing_radii.median": 0.5 * jitter(), "effective.ar": 9.3, "effective.cs": 4.0})
 
 def _examples(count: int = 24, years=(2021, 2022, 2023)) -> list[kamerton.Example]:
-    noise = random.Random(7)
+    noise = _Noise(7)
     found = []
     for at in range(count):
         year = years[at % len(years)]
@@ -44,7 +53,7 @@ def test_a_slot_is_a_mod_and_skills_and_a_second_slot_softens_the_target():
 def test_the_two_layers_share_a_skill_across_mods_and_tell_aim_from_streams():
     examples = _examples()
     model = kamerton.SkillModModel.fit(examples, steps=150)
-    noise = random.Random(11)
+    noise = _Noise(11)
     aim, stream = _map("aim", noise), _map("stream", noise)
     aimed = model.scores(aim, {"NFDT": aim, "NFHR": aim}, 9.3, 5.2)
     streamed = model.scores(stream, {"NFDT": stream, "NFHR": stream}, 9.3, 5.2)
@@ -65,3 +74,28 @@ def test_signatures_are_measured_against_labels_and_both_models_are_compared_on_
         assert set(found[scope]) == {"current", "skill_mod", "stacked"}
         assert {"macro_f1", "per_slot", "confident", "top2"} <= set(found[scope]["skill_mod"])
     assert found["working"]["skill_mod"]["count"] == len(examples)
+
+def test_tied_scores_count_as_half_a_win():
+    assert kamerton._auc([0.0, 0.0, 0.0, 0.0], [True, False, True, False]) == pytest.approx(0.5)
+    assert kamerton._auc([0.0, 1.0, 2.0, 3.0], [False, False, True, True]) == pytest.approx(1.0)
+
+
+def test_a_stacked_model_survives_saving_and_explains_with_its_skills():
+    import json
+
+    from services.duels.slot_model import SlotModel
+
+    model = kamerton.StackedModel.fit(_examples(30), steps=60)
+    body = json.loads(json.dumps(model.dump()))
+    loaded = kamerton.load_model(body)
+    assert isinstance(loaded, kamerton.StackedModel)
+    sample = _examples(3)[0]
+    before, after = kamerton.decide(model, sample), kamerton.decide(loaded, sample)
+    assert before.probabilities == pytest.approx(after.probabilities) and before.slot == after.slot
+    assert after.reasons and all(name in loaded.slots.paths for name, _ in after.reasons)
+    assert set(kamerton.SKILL_PATHS) <= set(loaded.slots.paths) and "NFDT:skill.aim" in kamerton.SKILL_PATHS
+    with pytest.raises(ValueError):
+        kamerton.load_model({**body, "features": "features-v1"})
+    plain = SlotModel.fit([[1.0, 2.0], [2.0, 1.0]], ["NM1", "NM2"], paths=("a", "b"))
+    with pytest.raises((KeyError, TypeError, ValueError)):
+        kamerton.load_model({**plain.dump(), "paths": ["a", "b"]})
