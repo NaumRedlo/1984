@@ -314,3 +314,35 @@ async def test_batches_are_managed_only_by_the_owner_with_a_named_batch(client, 
         assert (await client.post(f"/render/admin/duels/corpus/batches/{path}", json={"year": 2024}, headers=_as(1))).status == 400, path
     refused = await client.post("/render/admin/duels/corpus/batches/delete", json={"name": "Cup", "year": 2024}, headers=_as(1))
     assert refused.status == 403
+
+
+async def test_a_training_run_is_followed_by_its_job_until_it_ends(client, factory, monkeypatch):
+    from db.models.duel import DuelRole
+    from services.duels import training
+    from tests.unit.test_duels_balance import _labelled
+
+    real = training.train
+    monkeypatch.setattr(training, "train", lambda factory, steps=400, now=None: real(factory, 20, now))
+    started = await client.post("/render/admin/duels/models/train", json={"reason": "first"}, headers=_as(1))
+    assert started.status == 403
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    await _labelled(factory, 20)
+
+    async def finished(job):
+        for _ in range(200):
+            found = await (await client.get(f"/render/admin/duels/models/training/{job}", headers=_as(1))).json()
+            if found["state"] != "running":
+                return found
+            await asyncio.sleep(0.05)
+        raise AssertionError("the training never ended")
+
+    said = await (await client.post("/render/admin/duels/models/train", json={"reason": "first"}, headers=_as(1))).json()
+    assert said["started"] and said["job"]
+    done = await finished(said["job"])
+    assert (done["state"], done["version"], done["error"]) == ("done", "kamerton-1", None)
+    again = await client.post("/render/admin/duels/models/train", json={"reason": "again"}, headers=_as(1))
+    assert again.status == 409 and (await again.json())["error"] == "NOTHING_NEW"
+    assert (await client.get("/render/admin/duels/models/training/nobody-knows", headers=_as(1))).status == 404
+    assert (await client.get(f"/render/admin/duels/models/training/{said['job']}", headers=_as(2))).status == 403

@@ -99,3 +99,74 @@ def test_a_stacked_model_survives_saving_and_explains_with_its_skills():
     plain = SlotModel.fit([[1.0, 2.0], [2.0, 1.0]], ["NM1", "NM2"], paths=("a", "b"))
     with pytest.raises((KeyError, TypeError, ValueError)):
         kamerton.load_model({**plain.dump(), "paths": ["a", "b"]})
+
+
+def test_a_secondary_slot_is_a_second_right_answer_for_the_slot_layer_and_changes_the_fingerprint():
+    from dataclasses import replace
+
+    plain = _examples(30)
+    both = [replace(example, secondary="HR1") if example.slot == "NM1" else example for example in plain]
+    alone, taught = kamerton.StackedModel.fit(plain, steps=120), kamerton.StackedModel.fit(both, steps=120)
+    assert "HR1" not in alone.slots.classes and "HR1" in taught.slots.classes
+    aim = _map("aim", _Noise(5))
+    odds = kamerton.decide(taught, kamerton.Example(aim, {"NFDT": aim, "NFHR": aim}, "", 0, 0)).probabilities
+    assert odds["HR1"] > 0.1, "the shared aim skill under HR is now a target of its own"
+    assert kamerton.fingerprint(plain) != kamerton.fingerprint(both), "a new secondary slot is new data to learn from"
+
+
+def test_a_refused_map_is_not_counted_as_admitted_and_reserved_classes_are_scored():
+    from services.duels.slot_model import Prediction
+
+    class Fixed:
+        def __init__(self, *answers):
+            self.answers = list(answers)
+
+        def predict(self, features, base_ar, hr_cs, views=None):
+            return self.answers.pop(0)
+
+    held = [kamerton.Example({}, {}, slot, at, 2024, secondary="HR1" if slot == "NM1" else None) for at, slot in enumerate(("NM1", "NM1", "NM2", "FM4"))]
+    model = Fixed(Prediction(None, 0.95, 0.9, {"NM1": 0.95, "NM2": 0.05}, True),
+                  Prediction("NM1", 0.9, 0.8, {"NM1": 0.9, "NM2": 0.1}, False),
+                  Prediction("NM2", 0.55, 0.1, {"NM2": 0.55, "NM1": 0.45}, False),
+                  Prediction(None, 0.7, 0.4, {"FM4": 0.7, "NM2": 0.3}, False))
+    judged = kamerton.judged_on(model, held)
+    assert [one.refusal for one in judged] == ["outside", None, "below_threshold", "not_working"]
+    found = kamerton.summary(judged)
+    assert found["confident"] == {"count": 1, "precision": 1.0, "share": 0.25}, "the map outside the trained range is not a confident answer"
+    assert found["admitted"]["checked"] == 4 and found["admitted"]["count"] == 1 and found["admitted"]["refused"] == {
+        "count": 3, "share": 0.75, "outside": 1, "not_working": 1, "below_threshold": 1}
+    assert found["per_slot"]["NM1"]["recall"] == 1.0, "the catalogue figures still see what the model thought"
+    assert found["per_slot"]["FM4"]["f1"] == 1.0 and found["macro_f1_all"] > found["macro_f1"] - 1e-9
+
+
+def test_reasons_carry_the_level_of_the_very_row_the_prediction_used():
+    from services.duels import desk
+
+    model = kamerton.StackedModel.fit(_examples(30), steps=60)
+    aim = _map("aim", _Noise(3))
+    prediction = kamerton.decide(model, kamerton.Example(aim, {"NFDT": aim, "NFHR": aim}, "", 0, 0))
+    assert set(prediction.levels) == {name for name, _ in prediction.reasons}
+    weights = model.slots.weights[model.slots.classes.index(max(prediction.probabilities, key=prediction.probabilities.get))]
+    assert all(weight == pytest.approx(weights[model.slots.paths.index(name)] * prediction.levels[name]) for name, weight in prediction.reasons)
+    stream = _map("stream", _Noise(3))
+    explained = desk._explain(model, stream, 9.3, 5.2, {"NFDT": stream, "NFHR": stream})
+    assert any(abs(reason["level"]) > 0.5 for reason in explained["reasons"]), "a stream map stands out, and the desk is told so"
+
+
+def test_a_model_that_cannot_answer_is_refused_before_it_is_used():
+    import json
+    import math
+
+    body = json.loads(json.dumps(kamerton.StackedModel.fit(_examples(24), steps=30).dump()))
+    assert isinstance(kamerton.checked(body), kamerton.StackedModel)
+    broken = [
+        {**body, "skills": {**body["skills"], "weights": []}},
+        {**body, "skills": {**body["skills"], "weights": [row[:-1] for row in body["skills"]["weights"]]}},
+        {**body, "slots": {**body["slots"], "weights": [row[:3] for row in body["slots"]["weights"]]}},
+        {**body, "slots": {**body["slots"], "bias": [math.nan] * len(body["slots"]["bias"])}},
+        {**body, "slots": {**body["slots"], "spread": [0.0] * len(body["slots"]["spread"])}},
+        {**body, "skills": {**body["skills"], "centre": body["skills"]["centre"][:-1]}},
+    ]
+    for wrong in broken:
+        with pytest.raises(kamerton.BROKEN):
+            kamerton.checked(wrong)

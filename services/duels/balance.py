@@ -338,8 +338,8 @@ def _fits(body) -> bool:
     from services.duels import kamerton
 
     try:
-        kamerton.load_model(body)
-    except (KeyError, TypeError, ValueError):
+        kamerton.checked(body)
+    except kamerton.BROKEN:
         return False
     return True
 
@@ -366,8 +366,8 @@ async def working_model(factory):
     if chosen is None:
         return None
     try:
-        return kamerton.load_model(chosen.body)
-    except (KeyError, TypeError, ValueError):
+        return kamerton.checked(chosen.body)
+    except kamerton.BROKEN:
         logger.warning("published duel slot model %s no longer fits the analyser; maps wait for reviewers", chosen.version)
         return None
 

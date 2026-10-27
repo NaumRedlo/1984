@@ -11,7 +11,6 @@ from services.duels import catalog, corpus, mirrors
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
-from services.duels.slot_model import OTHER, SlotModel, _softmax, report as scored, seen_vector
 from utils.timeutils import utcnow
 
 MOD_BITS = {"NF": 1, "HD": 8, "HR": 16, "DT": 64}
@@ -165,6 +164,57 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
     if not SHORTEST <= entry["length"] <= LONGEST:
         return "length", entry
     return await ingest(factory, fetch, osu, entry, folder, model, now), entry
+
+REANALYSE_FAILURES = (OsuFileError, ValueError, ArithmeticError, IndexError, KeyError, TypeError)
+
+async def reanalyse(factory, folder: str, report=print, now: Optional[datetime] = None) -> dict[str, int]:
+    """Analyse every stored .osu file again for the current feature version.
+
+    Each map is committed on its own and maps already analysed for this version are skipped, so a stopped run carries on
+    where it stopped. Stars known from an earlier analysis of the same map and mods are kept, and every map that could
+    not be analysed is reported with the reason."""
+    now = now or utcnow()
+    counted = {"analysed": 0, "current": 0, "missing_file": 0, "unreadable": 0, "unsupported": 0, "failed": 0}
+    async with factory() as session:
+        revisions = (await session.execute(select(DuelMapRevision.beatmap_id, DuelMapRevision.hash).order_by(DuelMapRevision.beatmap_id))).all()
+    done: set[str] = set()
+    for beatmap_id, digest in revisions:
+        if digest in done:
+            continue
+        done.add(digest)
+        async with factory() as session:
+            wanted = sorted(set(ANALYSED) - await _analysed(session, digest))
+        if not wanted:
+            counted["current"] += 1
+            continue
+        outcome, detail = await _reanalysed(factory, folder, digest, wanted, now)
+        counted[outcome] += 1
+        report(f"{beatmap_id} {digest}: {outcome} {detail}")
+    return counted
+
+async def _reanalysed(factory, folder: str, digest: str, wanted: list[str], now: datetime) -> tuple[str, str]:
+    path = os.path.join(folder, f"{digest}.osu")
+    if not os.path.exists(path):
+        return "missing_file", path
+    try:
+        beatmap = await asyncio.to_thread(parse, await asyncio.to_thread(_read, path))
+    except (OSError, OsuFileError) as error:
+        return "unreadable", str(error)
+    if beatmap.mode != 0 or len(beatmap.objects) < 2:
+        return "unsupported", f"mode {beatmap.mode}, {len(beatmap.objects)} objects"
+    try:
+        analyses = {mods: await asyncio.to_thread(analyse, beatmap, mods) for mods in wanted}
+    except REANALYSE_FAILURES as error:
+        return "failed", f"{type(error).__name__}: {error}"
+    async with factory() as session:
+        for mods, features in analyses.items():
+            earlier = await session.scalar(select(DuelMapAnalysis.stars).where(
+                DuelMapAnalysis.revision_hash == digest, DuelMapAnalysis.mods == mods, DuelMapAnalysis.stars.is_not(None))
+                .order_by(DuelMapAnalysis.created_at.desc()).limit(1))
+            session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version=ENGINE_VERSION, feature_version=FEATURE_VERSION,
+                                        model_version="none", stars=earlier, features=features, created_at=now))
+        await session.commit()
+    return "analysed", ", ".join(wanted)
 
 HUNT_MOST = 5
 HUNT_DEPTH = 20
@@ -345,74 +395,28 @@ async def corpus_labels(session) -> dict[tuple, str]:
     return {(row.corpus_version, row.year, row.stage, row.original_slot, int(row.beatmap_id) if row.beatmap_id is not None else None): row.label
             for row in rows}
 
-async def corpus_rows(factory) -> list[tuple[list[float], str, int, int, bool, bool]]:
+async def reassess(factory, model, now: Optional[datetime] = None) -> dict[str, int]:
+    """Let the published model look again at every admitted map no person has decided; catalog.reconsider holds the rules.
 
-    async with factory() as session:
-        labels = await corpus_labels(session)
-        examples = (await session.scalars(select(DuelTrainingExample).where(
-            DuelTrainingExample.corpus_version.in_(corpus.LEARNED), DuelTrainingExample.conflict.is_(False),
-            DuelTrainingExample.excluded.isnot(True), DuelTrainingExample.revision_hash.is_not(None)))).all()
-        found = []
-        for example in examples:
-            label, verified = resolved(example, labels)
-            if label is None:
-                continue
-            label = corpus.learned(label)
-            plain, views = await seen_of(session, example.revision_hash)
-            if not plain:
-                continue
-            found.append((seen_vector(plain, views), label, int(example.beatmapset_id or example.beatmap_id), example.year,
-                          example.corpus_version == corpus.OWN_VERSION, verified))
-    return found
+    A map without a current analysis keeps what it had: `reanalyse` brings it up to the current features first."""
+    from services.duels import kamerton
 
-def guesses(model: SlotModel, rows) -> tuple[list[str], list[str], list[bool]]:
-    truth, guessed, confident = [], [], []
-    for row, label, *_ in rows:
-        normalised = model.normaliser.apply(row)
-        probabilities = _softmax([b + sum(w * x for w, x in zip(ws, normalised)) for ws, b in zip(model.weights, model.bias)])
-        ranked = sorted(range(len(probabilities)), key=lambda k: -probabilities[k])
-        best = model.classes[ranked[0]]
-        second = next((k for k in ranked[1:] if model.classes[k] != OTHER), None)
-        margin = probabilities[ranked[0]] - (probabilities[second] if second is not None else 0.0)
-        truth.append(label)
-        guessed.append(best)
-        if best != OTHER and catalog.confidence_level(probabilities[ranked[0]], margin) == "confident":
-            confident.append(best == label)
-    return truth, guessed, confident
-
-def judged(truth: list[str], guessed: list[str], confident: list[bool]) -> dict[str, Any]:
-    found = scored(truth, guessed)
-    found["confident"] = {"count": len(confident), "precision": sum(confident) / len(confident) if confident else 0.0}
-    return found
-
-async def reassess(factory, model: SlotModel, now: Optional[datetime] = None) -> dict[str, int]:
     now = now or utcnow()
     counted: dict[str, int] = {}
     async with factory() as session:
         waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state.in_([catalog.UNASSIGNED, catalog.AUTO_ASSIGNED]),
                                                                          DuelMapAssignment.admitted.is_(True)))).all()
         for assignment in waiting:
-            if assignment.state == catalog.AUTO_ASSIGNED and catalog.confidence_level(assignment.confidence, assignment.margin) == "confident":
-                continue
-            plain = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == assignment.revision_hash,
-                                                                      DuelMapAnalysis.mods == "NF",
-                                                                      DuelMapAnalysis.feature_version == FEATURE_VERSION))
-            rock = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == assignment.revision_hash,
-                                                                     DuelMapAnalysis.mods == "NFHR",
-                                                                     DuelMapAnalysis.feature_version == FEATURE_VERSION))
-            if plain is None or rock is None:
+            plain, views = await seen_of(session, assignment.revision_hash)
+            if not plain or "NFHR" not in views:
                 counted["no_analysis"] = counted.get("no_analysis", 0) + 1
                 continue
-            _, views = await seen_of(session, assignment.revision_hash)
-            prediction = model.predict(plain.features, plain.features["effective"]["ar"], rock.features["effective"]["cs"], views)
-            outcome = "below_threshold"
-            if prediction.slot is not None:
-                try:
-                    proposed = await catalog.propose(session, int(assignment.beatmap_id), prediction.slot, prediction.probability,
-                                                     prediction.margin, model.version, now, unsure_again=True)
-                    outcome = f"proposed {proposed['slot']}" if proposed["slot"] else "below_threshold"
-                except catalog.CatalogRefusal as refusal:
-                    outcome = refusal.code.lower()
-            counted[outcome] = counted.get(outcome, 0) + 1
+            prediction = model.predict(plain, plain["effective"]["ar"], views["NFHR"]["effective"]["cs"], views)
+            outcome = await catalog.reconsider(session, int(assignment.beatmap_id), prediction.slot, prediction.probability, prediction.margin,
+                                               model.version, kamerton.refusal(prediction), now)
+            if outcome is None:
+                continue
+            said = f"{outcome} {prediction.slot}" if outcome in ("proposed", "moved", "kept") else outcome
+            counted[said] = counted.get(said, 0) + 1
         await session.commit()
     return counted

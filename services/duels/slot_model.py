@@ -111,6 +111,36 @@ class Prediction:
     probabilities: dict[str, float]
     outside: bool
     reasons: list[tuple[str, float]] = field(default_factory=list)
+    levels: dict[str, float] = field(default_factory=dict)
+
+def _numbers(values: Any, width: int, what: str) -> list[float]:
+    if not isinstance(values, list) or len(values) != width \
+            or not all(isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) for value in values):
+        raise ValueError(f"{what} does not fit the model")
+    return [float(value) for value in values]
+
+def _matrix(rows: Any, height: int, width: int, what: str) -> list[list[float]]:
+    if not isinstance(rows, list) or len(rows) != height:
+        raise ValueError(f"{what} does not fit the model")
+    return [_numbers(row, width, what) for row in rows]
+
+def checked_normaliser(body: dict[str, Any], width: int) -> Normaliser:
+    found = Normaliser(*(_numbers(body.get(name), width, name) for name in ("centre", "spread", "low", "high")))
+    if not all(value > 0 for value in found.spread):
+        raise ValueError("spread does not fit the model")
+    return found
+
+def targets_of(labels: list[str], classes: tuple[str, ...], also: Optional[list[Optional[str]]], share: float) -> list[list[float]]:
+    found = []
+    for at, label in enumerate(labels):
+        second = also[at] if also is not None else None
+        line = [0.0] * len(classes)
+        if second in classes and second != label and share > 0:
+            line[classes.index(label)], line[classes.index(second)] = 1.0 - share, share
+        else:
+            line[classes.index(label)] = 1.0
+        found.append(line)
+    return found
 
 @dataclass
 class SlotModel:
@@ -123,13 +153,15 @@ class SlotModel:
 
     @classmethod
     def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5,
-            paths: tuple[str, ...] = PATHS) -> "SlotModel":
-        classes = SLOTS + tuple(sorted({label for label in labels if reserved(label)}))
-        kept = [(row, label) for row, label in zip(rows, labels) if label in classes]
-        rows, labels = [row for row, _ in kept], [label for _, label in kept]
+            paths: tuple[str, ...] = PATHS, also: Optional[list[Optional[str]]] = None, share: float = 0.0) -> "SlotModel":
+        """`also` names a second acceptable slot per row; it takes `share` of that row's target and the first slot the rest."""
+        seconds = also or [None] * len(labels)
+        classes = SLOTS + tuple(sorted({label for label in list(labels) + list(seconds) if label and reserved(label)}))
+        kept = [(row, label, second) for row, label, second in zip(rows, labels, seconds) if label in classes]
+        rows, labels, seconds = [row for row, _, _ in kept], [label for _, label, _ in kept], [second for _, _, second in kept]
         normaliser = Normaliser.fit(rows)
         data = [normaliser.apply(row) for row in rows]
-        targets = [classes.index(label) for label in labels]
+        targets = targets_of(labels, classes, seconds, share)
         width = len(paths)
         weights = [[0.0] * width for _ in classes]
         bias = [0.0] * len(classes)
@@ -140,7 +172,7 @@ class SlotModel:
             for row, target in zip(data, targets):
                 probabilities = _softmax([b + sum(w * x for w, x in zip(ws, row)) for ws, b in zip(weights, bias)])
                 for k, probability in enumerate(probabilities):
-                    error = probability - (1.0 if k == target else 0.0)
+                    error = probability - target[k]
                     grad_b[k] += error
                     line = grad_w[k]
                     for j, x in enumerate(row):
@@ -167,7 +199,7 @@ class SlotModel:
         reasons = sorted(((self.paths[j], self.weights[best][j] * row[j]) for j in range(len(self.paths))), key=lambda pair: -abs(pair[1]))[:5]
         outside = self.normaliser.outside(raw)
         slot = classes[best] if classes[best] in SLOTS and not outside else None
-        return Prediction(slot, probabilities[best], margin, dict(zip(classes, probabilities)), outside, reasons)
+        return Prediction(slot, probabilities[best], margin, dict(zip(classes, probabilities)), outside, reasons, levels_of(self.paths, row, reasons))
 
     def dump(self) -> dict[str, Any]:
         return {"version": self.version, "features": FEATURE_VERSION, "paths": list(self.paths), "classes": list(self.classes), "weights": self.weights, "bias": self.bias,
@@ -175,17 +207,22 @@ class SlotModel:
                 "high": self.normaliser.high}
 
     @classmethod
-    def load(cls, body: dict[str, Any]) -> "SlotModel":
+    def load(cls, body: dict[str, Any], allowed: tuple[tuple[str, ...], ...] = (PATHS, SEEN)) -> "SlotModel":
         classes = tuple(body.get("classes") or ())
         paths = tuple(body.get("paths") or ())
-        if paths not in (PATHS, SEEN) or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
+        if paths not in allowed or body.get("features", FEATURE_VERSION) != FEATURE_VERSION:
             raise ValueError("model was built for other features")
         extra = classes[len(SLOTS):-1] if classes[-1:] == (OTHER,) else classes[len(SLOTS):]
         if classes[:len(SLOTS)] != SLOTS or not all(reserved(name) for name in extra) \
                 or len(body.get("weights") or ()) != len(classes) or len(body.get("bias") or ()) != len(classes):
             raise ValueError("model was built for other classes")
-        return cls(Normaliser(body["centre"], body["spread"], body["low"], body["high"]), body["weights"], body["bias"],
-                   body.get("version", MODEL_VERSION), classes, paths)
+        return cls(checked_normaliser(body, len(paths)), _matrix(body["weights"], len(classes), len(paths), "weights"),
+                   _numbers(body["bias"], len(classes), "bias"), body.get("version", MODEL_VERSION), classes, paths)
+
+def levels_of(paths: tuple[str, ...], row: list[float], reasons: list[tuple[str, float]]) -> dict[str, float]:
+    """How far each reason's input sits from a typical map, read from the very row the prediction used."""
+    at = {path: j for j, path in enumerate(paths)}
+    return {name: row[at[name]] for name, _ in reasons if name in at}
 
 def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
     seen = set(truth) | set(guessed)
@@ -201,9 +238,11 @@ def report(truth: list[str], guessed: list[Optional[str]]) -> dict[str, Any]:
         per_slot[name] = {"precision": precision, "recall": recall, "f1": f1, "support": real}
     present = [name for name in SLOTS if per_slot[name]["support"]]
     macro = sum(per_slot[name]["f1"] for name in present) / len(present) if present else 0.0
+    every = [name for name in names if per_slot[name]["support"]]
     confusion = {t: {g or "NONE": sum(1 for a, b in zip(truth, guessed) if a == t and (b or "NONE") == (g or "NONE"))
                      for g in names + ["NONE"]} for t in names}
-    return {"per_slot": per_slot, "macro_f1": macro, "confusion": confusion, "count": len(truth)}
+    return {"per_slot": per_slot, "macro_f1": macro, "macro_f1_all": sum(per_slot[name]["f1"] for name in every) / len(every) if every else 0.0,
+            "confusion": confusion, "count": len(truth)}
 
 def grouped_split(keys: list[tuple[int, int]], test_years: set[int]) -> tuple[list[int], list[int]]:
     held_sets = {set_id for set_id, year in keys if year in test_years}
