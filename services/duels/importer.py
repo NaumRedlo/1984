@@ -112,14 +112,14 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
                                         predictions=prediction.probabilities if prediction and mods == "NF" else None,
                                         created_at=now))
         await catalog.admit(session, entry["beatmap_id"], digest, True, None, now)
-        outcome = "unassigned"
+        outcome = "no_slot" if model is not None else "unassigned"
         if prediction is not None and prediction.slot is not None:
             try:
                 proposed = await catalog.propose(session, entry["beatmap_id"], prediction.slot, prediction.probability,
                                                  prediction.margin, model.version, now)
-                outcome = f"proposed {proposed['slot']}" if proposed["slot"] else "unassigned"
+                outcome = f"proposed {proposed['slot']}" if proposed["slot"] else "below_threshold"
             except catalog.CatalogRefusal as refusal:
-                outcome = refusal.code.lower()
+                outcome = "reserve_slot" if refusal.code == "UNKNOWN_SLOT" else refusal.code.lower()
         await session.commit()
     return outcome
 
@@ -131,16 +131,35 @@ async def _restar(session, digest: str, mods: str, stars: Optional[float]) -> No
     if row is not None and row.stars is None:
         row.stars = stars
 
+def search_range(least: float, most: float, slot: Optional[str] = None) -> tuple[float, float]:
+    # Mirror stars are NM. Exact modded stars are fetched when the map is analysed.
+    if slot and slot.startswith("DT"):
+        return least / DT_STARS, most / DT_STARS
+    if slot and slot.startswith("HR"):
+        return least / 1.3, most
+    return least, most
+
+
 async def discover(factory, fetch, osu, folder: str, least: float, most: float, pages: int, amount: int = 50,
-                   model=None, pause: float = 1.0, report=print) -> dict[str, int]:
+                   model=None, pause: float = 1.0, report=print, *, slot=None, page_from=0, new_limit=None, advance=None) -> dict[str, int]:
     counted: dict[str, int] = {}
     seen: set[int] = set()
-    for page in range(pages):
-        found = await mirrors.search(fetch, "ranked", page * amount, amount, least, most)
+    low, high = search_range(least, most, slot)
+    imported = 0
+    for page in range(page_from, page_from + pages):
+        if advance is not None:
+            advance(page)
+        found = await mirrors.search(fetch, "ranked", page * amount, amount, low, high)
         if found is None:
+            counted["mirrors_unavailable"] = counted.get("mirrors_unavailable", 0) + 1
             report("every mirror refused the search")
             break
         name, entries, total = found
+        report(f"mirror {name}, page {page}, NM {low:.2f}-{high:.2f}, candidates {len(entries)}, model {model.version if model else 'none'}")
+        if not total:
+            if advance is not None:
+                advance(0)
+            break
         for entry in entries:
             if entry["beatmap_id"] in seen or not suitable(entry):
                 continue
@@ -149,7 +168,12 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
             counted[outcome] = counted.get(outcome, 0) + 1
             report(f"{entry['beatmap_id']} {entry['artist']} - {entry['title']} [{entry['version']}] {entry['stars']:.2f}: {outcome}")
             if outcome != "known":
+                imported += 1
+                if new_limit is not None and imported >= new_limit:
+                    return counted
                 await asyncio.sleep(pause)
+        if advance is not None:
+            advance(0 if total < amount else page + 1)
         if total < amount:
             break
     return counted

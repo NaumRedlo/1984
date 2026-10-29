@@ -11,10 +11,11 @@ from db.models.player import Player
 from services.duels import balance, catalog, importer, states
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS
-from services.duels.rules import SLOTS, STARS_MOST, in_catalogue
+from services.duels.rules import SLOTS, RESERVE_SLOTS, STARS_MOST, in_catalogue, reserved
 from utils.timeutils import utcnow
 
 BANDS = (5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5)
+CATALOG_SLOTS = tuple(sorted((*SLOTS, *RESERVE_SLOTS), key=lambda slot: (("NM", "HD", "HR", "DT", "FM", "EZ", "FL", "TB").index(slot[:2]), slot)))
 ENOUGH = 5
 STUCK_AFTER = timedelta(minutes=5)
 WAITING_STATES = frozenset({states.PAUSED, states.RECOVERING, states.VERIFYING, states.ABORTING, states.ROOM_SETUP, states.WAITING_ROOM})
@@ -241,14 +242,28 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
         return await counted(session)
 
+def catalogue_level(assignment, revision):
+    if reserved(assignment.slot or ""):
+        if assignment.state == catalog.HUMAN_APPROVED and assignment.admitted and revision is not None and revision.status == "ok":
+            return "human"
+        return None
+    return catalog.playable(assignment, revision)
+
+
+def catalogue_mods(slot):
+    return "".join(SLOT_MODS[slot]) if slot in SLOT_MODS else importer.GROUP_MODS[slot[:2]]
+
+
 async def counted(session) -> dict[str, Any]:
     rows = (await session.execute(
         select(DuelMapAssignment, DuelMapRevision)
         .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
               & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
     )).all()
-    grid = {slot: [0] * len(BANDS) for slot in SLOTS}
-    extra = {slot: [0] * len(BANDS) for slot in SLOTS}
+    slots = list(CATALOG_SLOTS)
+    slots.extend(sorted({assignment.slot for assignment, _ in rows if reserved(assignment.slot or "")} - set(slots)))
+    grid = {slot: [0] * len(BANDS) for slot in slots}
+    extra = {slot: [0] * len(BANDS) for slot in slots}
     totals = {"playable": 0, "human": 0, "uncertain": 0, "quarantined": 0, "unassigned": 0}
     for assignment, revision in rows:
         if assignment.state == catalog.QUARANTINED:
@@ -257,10 +272,10 @@ async def counted(session) -> dict[str, Any]:
         if assignment.state == catalog.UNASSIGNED:
             totals["unassigned"] += 1
             continue
-        level = catalog.playable(assignment, revision)
+        level = catalogue_level(assignment, revision)
         if level is None:
             continue
-        analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[assignment.slot]))
+        analysis = await _analysis(session, revision.hash, catalogue_mods(assignment.slot))
         if analysis is None or not in_catalogue(analysis.stars):
             continue
         grid[assignment.slot][band_of(float(analysis.stars))] += 1
@@ -271,10 +286,10 @@ async def counted(session) -> dict[str, Any]:
             totals["uncertain"] += 1
         secondary = catalog.secondary_of(assignment) if assignment.state == catalog.HUMAN_APPROVED else None
         if secondary in extra:
-            held = await _analysis(session, revision.hash, "".join(SLOT_MODS[secondary]))
+            held = await _analysis(session, revision.hash, catalogue_mods(secondary))
             if held is not None and in_catalogue(held.stars):
                 extra[secondary][band_of(float(held.stars))] += 1
-    return {"bands": list(BANDS), "slots": list(SLOTS), "grid": grid, "secondary": extra, "totals": totals}
+    return {"bands": list(BANDS), "slots": slots, "grid": grid, "secondary": extra, "totals": totals}
 
 async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, ...] = ()) -> Optional[dict[str, Any]]:
     async with factory() as session:
@@ -296,17 +311,18 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
                   & (DuelMapRevision.hash == DuelMapAssignment.revision_hash))
             .where(DuelMapAssignment.slot == slot)
         )).all()
+        names = await _names(session, [assignment.reviewer_id for assignment, _ in rows if assignment.reviewer_id is not None])
         found = []
         for assignment, revision in rows:
-            level = catalog.playable(assignment, revision)
+            level = catalogue_level(assignment, revision)
             if level is None:
                 continue
-            analysis = await _analysis(session, revision.hash, "".join(SLOT_MODS[slot]))
+            analysis = await _analysis(session, revision.hash, catalogue_mods(slot))
             if analysis is None or not in_catalogue(analysis.stars) or band_of(float(analysis.stars)) != band:
                 continue
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
                           "stars": float(analysis.stars), "level": level, "mapper": revision.mapper, "title": revision.title,
-                          "version": revision.version})
+                          "version": revision.version, "reviewer": names.get(assignment.reviewer_id)})
         return sorted(found, key=lambda item: item["stars"])
 
 async def _stuck_detail(session, duel: Duel) -> dict[str, Any]:
@@ -409,7 +425,7 @@ async def live(factory, now: Optional[datetime] = None, watchers: Optional[Calla
 
         async def entry(duel: Duel, current: bool) -> dict[str, Any]:
             found = {"id": duel.id, "mode": duel.mode, "state": duel.state, "wins": {"A": duel.wins_a, "B": duel.wins_b},
-                     "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id)}
+                     "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id), "osu_id": person.osu_user_id}
                                  for person in sorted(by_duel.get(duel.id, []), key=lambda person: person.side or "")]}
             if current:
                 found["watching"] = watchers(duel.id) if watchers is not None else 0

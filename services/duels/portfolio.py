@@ -7,10 +7,10 @@ from sqlalchemy import select
 
 from db.models.duel import DuelSkillObservation
 from services.duels.generator import Skill
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, STARS_LEAST
 
 PROFILE_VERSION = "portfolio-v1"
-PRIOR = Skill(2.5, 1.5)
+PRIOR = Skill(STARS_LEAST + 0.5, 1.5)
 UNKNOWN_U = 1.2
 FEW_MAPS = 3
 FEW_MAPS_U = 0.8

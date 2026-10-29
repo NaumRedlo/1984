@@ -268,6 +268,11 @@ async def test_balance_presence_is_authenticated_and_requires_a_role(client, fac
     response = await client.post(path, json={"section": "label", "beatmap": 123}, headers=_as(1))
     assert response.status == 200
     assert (await response.json())["people"][0]["beatmap"] == 123
+    response = await client.post(path, json={"section": "catalog", "slot": "FM4", "band": 9}, headers=_as(1))
+    assert response.status == 200
+    person = (await response.json())["people"][0]
+    assert (person["section"], person["slot"], person["band"]) == ("catalog", "FM4", 9)
+    assert (await client.get("/render/admin/duels/catalog/FM4/0", headers=_as(1))).status == 200
     for body in ({"section": []}, {"section": "queue", "beatmap": True}):
         assert (await client.post(path, json=body, headers=_as(1))).status == 400
     response = await client.post(path, json={"section": None}, headers=_as(1))
@@ -346,3 +351,54 @@ async def test_a_training_run_is_followed_by_its_job_until_it_ends(client, facto
     assert again.status == 409 and (await again.json())["error"] == "NOTHING_NEW"
     assert (await client.get("/render/admin/duels/models/training/nobody-knows", headers=_as(1))).status == 404
     assert (await client.get(f"/render/admin/duels/models/training/{said['job']}", headers=_as(2))).status == 403
+
+
+async def test_discovery_requires_a_model_forwards_slot_and_resumes_search(factory, monkeypatch):
+    from unittest.mock import AsyncMock
+    from db.models.duel import DuelRole
+    from services.duels import balance, importer, desk
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    monkeypatch.setattr(balance, "working_model", AsyncMock(return_value=None))
+    finished, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def discover(*args, **kwargs):
+        calls.append((args, kwargs))
+        await release.wait()
+        kwargs["advance"](3)
+        return {"known": 12, "below_threshold": 3, "proposed DT2": 2}
+    monkeypatch.setattr(importer, "discover", discover)
+    original = balance.discovery_result
+    async def reported(*args, **kwargs):
+        await original(*args, **kwargs)
+        finished.set()
+    monkeypatch.setattr(balance, "discovery_result", reported)
+    app = web.Application()
+    osu = object()
+    app.add_routes(duel_http.routes(_guard, _who, lambda: factory, lambda: osu))
+    async with TestClient(TestServer(app)) as client:
+        path = "/render/admin/duels/catalog/discover"
+        body = {"slot": "DT2", "band": 1}
+        response = await client.post(path, json=body, headers=_as(1))
+        assert response.status == 409 and (await response.json())["error"] == "MODEL_UNAVAILABLE"
+        assert not calls
+        assert (await client.post(path, json=body, headers=_as(2))).status == 403
+        model = SimpleNamespace(version="published")
+        monkeypatch.setattr(balance, "working_model", AsyncMock(return_value=model))
+        response = await client.post(path, json=body, headers=_as(1))
+        assert (await response.json()) == {"started": True}
+        again = await client.post(path, json=body, headers=_as(1))
+        assert (await again.json()) == {"started": False}
+        release.set()
+        await asyncio.wait_for(finished.wait(), 2)
+        assert calls[0][0][4:7] == (5.5, 6.0, 4)
+        assert calls[0][1]["slot"] == "DT2" and calls[0][1]["model"] is model
+        assert calls[0][1]["page_from"] == 0
+        finished.clear()
+        response = await client.post(path, json=body, headers=_as(1))
+        assert (await response.json()) == {"started": True}
+        await asyncio.wait_for(finished.wait(), 2)
+        assert calls[-1][1]["page_from"] == 3
+        result = next(row for row in await desk.journal(factory, 1) if row["action"] == "discover_result")
+        assert result["after"]["outcomes"]["below_threshold"] == 3

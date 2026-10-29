@@ -32,8 +32,8 @@ def test_a_pair_is_priced_by_rating_skill_and_repeats():
     assert matchmaker.price(_seeker(1, 1500, 5.0), _seeker(2, 1500, 5.9), 10, False) is None
     assert matchmaker.price(_seeker(1, 1500, 5.9), _seeker(2, 1500, 5.0), 500, False) is not None
     one_known = matchmaker.price(_seeker(1, 1500, 2.8), _seeker(2, 1500, None), 0, False)
-    assert one_known == pytest.approx(0.5 * 0.3 + matchmaker.UNKNOWN_PENALTY)
-    assert matchmaker.price(_seeker(1, 1500, 4.0), _seeker(2, 1500, None), 0, False) is None
+    assert one_known == pytest.approx(matchmaker.UNKNOWN_PENALTY)
+    assert matchmaker.price(_seeker(1, 1500, 6.0), _seeker(2, 1500, None), 0, False) == pytest.approx(matchmaker.UNKNOWN_PENALTY)
 
 @pytest_asyncio.fixture
 async def factory(tmp_path):
@@ -74,10 +74,10 @@ async def test_both_confirm_and_the_duel_starts_building_its_pool(factory):
     await _queue(factory, 1, NOW)
     await _queue(factory, 2, NOW)
     duel_id = await matchmaker.offer(factory, now=NOW)
-    first = await service.accept(factory, duel_id, 1, "yes-1", now=NOW)
+    first = await service.accept(factory, duel_id, 1, "yes-1", expected_version=1, now=NOW)
     assert first["state"] == states.MATCH_OFFERED and first["actions"] == []
     assert (await service.read(factory, duel_id, 2))["actions"] == ["accept", "decline"]
-    both = await service.accept(factory, duel_id, 2, "yes-2", now=NOW)
+    both = await service.accept(factory, duel_id, 2, "yes-2", expected_version=1, now=NOW)
     assert both["state"] == states.ACCEPTED
     async with factory() as session:
         assert (await session.scalar(select(DuelCommand.kind))) == "generate_pool"

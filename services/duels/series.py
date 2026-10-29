@@ -90,7 +90,7 @@ async def view(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, Any]:
     found["pool"] = None if not shown else {
         "manifest": pool.manifest_hash,
         "entries": [{"slot": e.slot, "beatmap_id": e.beatmap_id, "mods": e.mods, "banned_by": e.banned_by, "used": e.used,
-                     "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state, **about.get(e.slot, {})} for e in entries],
+                     "stars": (e.metrics_snapshot or {}).get("stars"), "review": e.review_state, "source": (e.metrics_snapshot or {}).get("source", "catalogue"), **about.get(e.slot, {})} for e in entries],
     }
     from services.duels import rating
     found["rating"] = await rating.projection(session, duel, viewer_id) if duel.state == states.COMPLETED else None
@@ -190,13 +190,14 @@ async def _new_attempt(step: Step, duel: Duel, made: DuelRound) -> DuelAttempt:
     await step.session.flush()
     if duel.state != states.ROUND_SETUP:
         await step.move(duel, states.ROUND_SETUP)
+    step.deadline(duel, "round_setup", 60)
     step.command(duel, "setup_round", {"duel": duel.id, "round": made.id, "attempt": attempt.id, "slot": made.slot})
     return attempt
 
 async def _act(factory, duel_id: str, actor_id: int, operation_id: str, kind: str, expected_version: Optional[int],
                body: Callable[[Step, Duel, DuelParticipant, list[DuelParticipant]], Awaitable[None]], now: Optional[datetime]):
     async def run(step: Step) -> dict[str, Any]:
-        duel, me, people = await _locked(step, duel_id, expected_version)
+        duel, me, people = await _locked(step, duel_id, expected_version, ("ready",) if kind == "ready" else ())
         await body(step, duel, me, people)
         await step.session.flush()
         return await view(step.session, duel, actor_id)
@@ -220,9 +221,10 @@ async def pool_ack(factory, duel_id: str, actor_id: int, manifest: str, operatio
         waiting = await step.session.scalar(select(func.count()).select_from(DuelPoolDelivery).where(
             DuelPoolDelivery.pool_id == pool.id, DuelPoolDelivery.acknowledged_at.is_(None)))
         if not waiting:
-            await step.emit(duel, "preparation", {"seconds": PARAMETERS["preparation_seconds"]})
-            step.deadline(duel, "preparation", PARAMETERS["preparation_seconds"])
-    return await _act(factory, duel_id, actor_id, operation_id, "pool_ack", expected_version, body, now)
+            await step.move(duel, states.DRAFTING)
+            step.deadline(duel, "draft", PARAMETERS["draft_action_seconds"])
+    # Both players acknowledge the same manifest independently; the first ack changes the duel version.
+    return await _act(factory, duel_id, actor_id, operation_id, "pool_ack", None, body, now)
 
 async def draft(factory, duel_id: str, actor_id: int, slot: str, operation_id: str, expected_version: Optional[int] = None,
                 now: Optional[datetime] = None) -> dict[str, Any]:
@@ -281,6 +283,7 @@ async def ready(factory, duel_id: str, actor_id: int, operation_id: str, tb_mods
             attempt = await _attempt(step.session, current.id)
             attempt.commanded_at = step.now
             await step.move(duel, states.STARTING)
+            step.deadline(duel, "round_start", 30)
             step.command(duel, "start_round", {"duel": duel.id, "round": current.id})
     return await _act(factory, duel_id, actor_id, operation_id, "ready", expected_version, body, now)
 
@@ -355,7 +358,7 @@ async def pool_built(factory, duel_id: str, pool: Pool, catalog_version: str, an
                 candidate = choice.candidate
                 step.session.add(DuelPoolEntry(pool_id=made.id, slot=candidate.slot, beatmap_id=candidate.beatmap_id,
                                                revision_hash=candidate.revision, mods=list(SLOT_MODS[candidate.slot]),
-                                               metrics_snapshot={"stars": candidate.stars, "cost": choice.cost, "parts": choice.parts},
+                                               metrics_snapshot={"stars": candidate.stars, "cost": choice.cost, "parts": choice.parts, "source": candidate.source, "model": candidate.model_version},
                                                confidence=candidate.confidence, review_state=candidate.level))
             await step.move(duel, states.WAITING_ROOM)
             step.command(duel, "open_room", {"duel": duel.id})
@@ -550,6 +553,8 @@ async def on_deadline(step: Step, duel: Duel, kind: str) -> None:
             DuelPoolDelivery.pool_id == pool.id, DuelPoolDelivery.acknowledged_at.is_(None)))
         if waiting:
             await _technical(step, duel, people, None, "pool_not_delivered")
+    elif (kind == "round_setup" and duel.state == states.ROUND_SETUP) or (kind == "round_start" and duel.state == states.STARTING):
+        await _technical(step, duel, people, None, "room_unresponsive")
     elif kind == "ready" and duel.state == states.WAITING_READY:
         idle = [person for person in people if person.connection_state != "ready"]
         await _technical(step, duel, people, idle[0] if len(idle) == 1 else None, "not_ready")

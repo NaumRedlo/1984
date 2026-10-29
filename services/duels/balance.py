@@ -203,6 +203,13 @@ async def note_discovery(factory, actor: int, least: float, most: float, reason:
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             _audit(session, actor, role, "discover", f"{least:.1f}-{most:.1f}", reason.strip(), now=now)
 
+async def discovery_result(factory, actor, slot, band, version, outcomes, owners=()):
+    async with factory() as session:
+        async with session.begin():
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
+            _audit(session, actor, role, "discover_result", f"{slot}:{band}", "", after={"slot": slot, "band": band, "model": version, "outcomes": outcomes})
+
+
 async def note_training(factory, actor: int, reason: str, owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> None:
     async with factory() as session:
         async with session.begin():

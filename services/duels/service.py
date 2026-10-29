@@ -110,6 +110,7 @@ async def snapshot(session, duel: Duel, viewer_id: Optional[int]) -> dict[str, A
     )).all()
     return {
         "id": duel.id,
+        "viewer": viewer_id,
         "mode": duel.mode,
         "state": duel.state,
         "version": duel.state_version,
@@ -162,7 +163,7 @@ async def _run(factory, operation_id: str, actor_id: int, kind: str, body: Body,
                 raise DuelError("ALREADY_BUSY")
     raise DuelError("VERSION_CONFLICT")
 
-async def _locked(step: Step, duel_id: str, expected_version: Optional[int]) -> tuple[Duel, DuelParticipant, list[DuelParticipant]]:
+async def _locked(step: Step, duel_id: str, expected_version: Optional[int], commuting: tuple[str, ...] = ()) -> tuple[Duel, DuelParticipant, list[DuelParticipant]]:
     duel = await step.session.scalar(select(Duel).where(Duel.id == duel_id).with_for_update())
     if duel is None:
         raise DuelError("NOT_FOUND")
@@ -171,7 +172,11 @@ async def _locked(step: Step, duel_id: str, expected_version: Optional[int]) -> 
     if me is None:
         raise DuelError("NOT_PARTICIPANT")
     if expected_version is not None and expected_version != duel.state_version:
-        raise DuelError("VERSION_CONFLICT", await snapshot(step.session, duel, step.actor_id))
+        changes = (await step.session.scalars(select(DuelEvent).where(
+            DuelEvent.duel_id == duel.id, DuelEvent.state_version > expected_version))).all() if commuting else []
+        if (expected_version > duel.state_version or not changes
+                or any(event.type not in commuting for event in changes)):
+            raise DuelError("VERSION_CONFLICT", await snapshot(step.session, duel, step.actor_id))
     return duel, me, people
 
 async def invite(factory, actor_id: int, opponent_id: int, operation_id: str, now: Optional[datetime] = None) -> dict[str, Any]:
@@ -214,7 +219,7 @@ async def invite(factory, actor_id: int, opponent_id: int, operation_id: str, no
 async def accept(factory, duel_id: str, actor_id: int, operation_id: str, expected_version: Optional[int] = None,
                  now: Optional[datetime] = None) -> dict[str, Any]:
     async def body(step: Step) -> dict[str, Any]:
-        duel, me, people = await _locked(step, duel_id, expected_version)
+        duel, me, people = await _locked(step, duel_id, expected_version, ("pair_accepted",))
         if duel.state == states.MATCH_OFFERED and me.accepted_at is None:
             me.accepted_at = step.now
             if any(person.accepted_at is None for person in people):

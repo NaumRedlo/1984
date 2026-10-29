@@ -64,8 +64,8 @@ async def _drafting(factory, clock):
     shown = await _view(factory, duel_id, 1)
     assert len(shown["pool"]["entries"]) == 9 and "pool_ack" in shown["actions"]
     for player in (1, 2):
-        await series.pool_ack(factory, duel_id, player, pool.manifest_hash, clock.op(), now=clock.tick())
-    await deadlines.sweep(factory, clock.tick(121))
+        result = await series.pool_ack(factory, duel_id, player, pool.manifest_hash, clock.op(), expected_version=shown["version"], now=clock.tick())
+        assert result["state"] == (states.PREPARING if player == 1 else states.DRAFTING)
     assert (await _view(factory, duel_id, 1))["state"] == states.DRAFTING
     return duel_id
 
@@ -94,8 +94,9 @@ async def _play(factory, clock, duel_id, winner_side, tb_mods=None):
         free = [e["slot"] for e in duel["pool"]["entries"] if e["slot"] != "TB" and not e["banned_by"] and not e["used"]]
         await series.draft(factory, duel_id, _player(duel, side), free[0], clock.op(), now=clock.tick())
     await series.round_configured(factory, duel_id, clock.tick())
+    version = (await _view(factory, duel_id, 1))["version"]
     for player in (1, 2):
-        await series.ready(factory, duel_id, player, clock.op(), tb_mods=tb_mods, now=clock.tick())
+        await series.ready(factory, duel_id, player, clock.op(), tb_mods=tb_mods, expected_version=version, now=clock.tick())
     await series.round_started(factory, duel_id, 777, clock.tick())
     await series.round_finished(factory, duel_id, clock.tick(200))
     winner = _player(duel, winner_side)
@@ -289,3 +290,34 @@ async def test_no_pool_cancels_and_a_far_pool_offers_a_range(factory):
     assert offered["state"] == states.RANGE_OFFERED
     assert await deadlines.sweep(factory, clock.tick(61)) == 1
     assert (await _view(factory, second["id"], 1))["outcome"] == "range_declined"
+
+@pytest.mark.parametrize("phase,wait,outcome", [("setup", 61, "room_unresponsive"), ("ready", 91, "not_ready"), ("start", 31, "room_unresponsive")])
+async def test_an_unresponsive_first_round_cancels_and_releases_both_players(factory, phase, wait, outcome):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    duel = await _ban_all(factory, clock, duel_id)
+    slot = next(e["slot"] for e in duel["pool"]["entries"] if e["slot"] != "TB" and not e["banned_by"])
+    await series.draft(factory, duel_id, _player(duel, "B"), slot, clock.op(), expected_version=duel["version"], now=clock.tick())
+    if phase != "setup":
+        await series.round_configured(factory, duel_id, clock.tick())
+    if phase == "start":
+        version = (await _view(factory, duel_id, 1))["version"]
+        for player in (1, 2):
+            await series.ready(factory, duel_id, player, clock.op(), expected_version=version, now=clock.tick())
+    await deadlines.sweep(factory, clock.tick(wait))
+    result = await _view(factory, duel_id, 1)
+    assert (result["state"], result["outcome"]) == (states.CANCELLED, outcome)
+    for player in (1, 2):
+        assert (await service.enter_queue(factory, player, clock.op(), now=clock.tick()))["queue"] is not None
+
+
+async def test_ready_from_a_previous_phase_is_not_accepted(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    duel = await _ban_all(factory, clock, duel_id)
+    slot = next(e["slot"] for e in duel["pool"]["entries"] if e["slot"] != "TB" and not e["banned_by"])
+    await series.draft(factory, duel_id, _player(duel, "B"), slot, clock.op(), now=clock.tick())
+    await series.round_configured(factory, duel_id, clock.tick())
+    with pytest.raises(DuelError) as caught:
+        await series.ready(factory, duel_id, 1, clock.op(), expected_version=duel["version"], now=clock.tick())
+    assert caught.value.code == "VERSION_CONFLICT"

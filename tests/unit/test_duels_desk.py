@@ -2,6 +2,7 @@ from datetime import timedelta
 import pytest
 
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -241,3 +242,57 @@ async def test_balance_revision_changes_with_data_but_not_presence(factory):
         await session.execute(delete(DuelMapAssignment).where(DuelMapAssignment.beatmap_id == 4))
         await session.commit()
     assert await presence.revision(factory) != second
+
+
+async def test_reserve_catalogue_slots_keep_duel_eligibility_unchanged(factory):
+    from services.duels import catalog
+    async with factory() as session:
+        assignment = await session.get(DuelMapAssignment, 1)
+        assignment.slot = "DT4"
+        digest = assignment.revision_hash
+        await session.commit()
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 1, DuelMapRevision.hash == digest))
+        assert catalog.playable(assignment, revision) is None
+    coverage = await desk.coverage(factory, 1)
+    assert set(("FM4", "HD4", "HR4", "EZ2", "FL2")).issubset(coverage["slots"])
+    assert coverage["grid"]["DT4"][desk.band_of(5.2)] == 1
+    assert coverage["totals"]["human"] == 1
+    maps = await desk.coverage_cell(factory, 1, "DT4", desk.band_of(5.2))
+    assert [item["beatmap_id"] for item in maps] == [1]
+    async with factory() as session:
+        assignment = await session.get(DuelMapAssignment, 1)
+        assignment.state = "QUARANTINED"
+        await session.commit()
+    assert not await desk.coverage_cell(factory, 1, "DT4", desk.band_of(5.2))
+
+
+async def test_catalogue_presence_retains_cell_and_clears_it_on_navigation(factory):
+    from services.duels import presence
+    live = await presence.touch(factory, 1, "catalog", slot="FM4", band=9)
+    assert (live[0]["section"], live[0]["slot"], live[0]["band"]) == ("catalog", "FM4", 9)
+    live = await presence.touch(factory, 1, "queue", beatmap=1)
+    assert live[0]["slot"] is None and live[0]["band"] is None and live[0]["beatmap"] == 1
+    for section, slot, band in [("queue", "FM4", 1), ("catalog", "BAD", 0), ("catalog", "FM4", True), ("catalog", "FM4", 10), ("catalog", None, 0)]:
+        with pytest.raises(ValueError):
+            await presence.touch(factory, 1, section, slot=slot, band=band)
+
+
+async def test_catalogue_returns_current_reviewer_name_without_inventing_legacy_authors(factory):
+    async with factory() as session:
+        assignment = await session.get(DuelMapAssignment, 1)
+        assignment.reviewer_id = 2
+        player = await session.get(Player, 2)
+        player.osu_username = "UpdatedName"
+        await session.commit()
+    cell = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(5.2))
+    assert cell[0]["reviewer"] == "UpdatedName"
+    auto = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(6.1))
+    assert auto[0]["reviewer"] is None
+
+async def test_discovery_result_is_visible_in_the_balance_journal(factory):
+    from services.duels import balance
+    await balance.discovery_result(factory, 1, "DT2", 1, "model-test", {"known": 10, "below_threshold": 3, "proposed DT2": 2})
+    entries = await desk.journal(factory, 1)
+    result = next(entry for entry in entries if entry["action"] == "discover_result")
+    assert result["after"]["outcomes"]["below_threshold"] == 3
+    assert result["after"]["slot"] == "DT2"

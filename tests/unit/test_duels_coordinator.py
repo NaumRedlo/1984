@@ -1,4 +1,7 @@
 from datetime import timedelta
+from dataclasses import replace
+
+import pytest
 
 import pytest_asyncio
 from sqlalchemy import select
@@ -96,6 +99,18 @@ async def factory(tmp_path):
     yield made
     await engine.dispose()
 
+@pytest.fixture(autouse=True)
+def unseen_candidates(monkeypatch):
+    from services.duels import discovery
+    from services.duels.coordinator import catalogue
+
+    async def found(factory, osu, aims, seed):
+        async with factory() as session:
+            known = await catalogue(session)
+        return [replace(candidate, beatmap_id=candidate.beatmap_id + 1000,
+                        beatmapset_id=candidate.beatmapset_id + 1000, source="model") for candidate in known]
+    monkeypatch.setattr(discovery, "candidates", found)
+
 async def _fives(factory, people):
     skills = {slot: Skill(5.5, 0.5) for slot in SLOTS}
     return skills, skills
@@ -137,9 +152,9 @@ async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(f
     assert shown["room"]["match_id"] == 500 and shown["room"]["password"] and outsider["room"] is None
     for player in (1, 2):
         await series.pool_ack(factory, duel["id"], player, shown["pool"]["manifest"], f"ack-{player}-e2e")
-    await deadlines.sweep(factory, utcnow() + timedelta(seconds=121))
     assert await _state(factory, duel["id"]) == states.DRAFTING
 
+    assert sum(e["source"] == "model" for e in shown["pool"]["entries"]) in (4, 5)
     side = {p["side"]: p["player"] for p in shown["participants"]}
     free = [s for s in SLOTS if s != "TB"]
     for turn, who in enumerate(series.BANS):
@@ -151,8 +166,9 @@ async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(f
     assert await _state(factory, duel["id"]) == states.WAITING_READY
     assert bancho.mods == list(SLOT_MODS[picked])
 
+    version = (await service.read(factory, duel["id"], 1))["version"]
     for player in (1, 2):
-        await series.ready(factory, duel["id"], player, f"ready-{player}-e2e")
+        await series.ready(factory, duel["id"], player, f"ready-{player}-e2e", expected_version=version)
     assert await outbox.sweep(factory) == 1
     assert await _state(factory, duel["id"]) == states.PLAYING
 

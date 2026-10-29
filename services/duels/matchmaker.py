@@ -44,7 +44,7 @@ def price(first: Seeker, second: Seeker, waited: float, repeat: bool) -> Optiona
     if len(known) == 2:
         distance, extra = abs(known[0] - known[1]), 0.0
     elif len(known) == 1:
-        distance, extra = abs(known[0] - portfolio.PRIOR.theta), UNKNOWN_PENALTY
+        distance, extra = 0.0, UNKNOWN_PENALTY
     else:
         distance, extra = 0.0, 0.0
     if distance > spread:

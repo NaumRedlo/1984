@@ -7,7 +7,7 @@ from typing import Optional
 
 from services.duels.rules import SLOTS
 
-GENERATOR_VERSION = "pool-v1"
+GENERATOR_VERSION = "pool-v2"
 CORRIDOR = 0.4
 WIDE_CORRIDOR = 0.7
 RECENT_DAYS = 7
@@ -46,6 +46,8 @@ class Candidate:
     revealed_days: tuple[Optional[float], Optional[float]] = (None, None)
     feedback: float = 0.0
     secondary: bool = False
+    source: str = "catalogue"
+    model_version: Optional[str] = None
 
 @dataclass
 class Choice:
@@ -148,6 +150,7 @@ class _Partial:
     sets: dict[int, int]
     mappers: dict[str, int]
     uncertain: int
+    generated: int = 0
 
     def extra(self) -> float:
         over_mapper = sum(max(0, count - SAME_MAPPER_MOST) for count in self.mappers.values())
@@ -157,15 +160,19 @@ class _Partial:
     def score(self) -> float:
         return self.total / max(1, len(self.chosen)) + self.extra()
 
-def _search(options: dict[str, list[Choice]], level: int) -> list[_Partial]:
+def _search(options: dict[str, list[Choice]], level: int, generated_count: Optional[int] = None) -> list[_Partial]:
     order = sorted(options, key=lambda slot: (len(options[slot]), SLOTS.index(slot)))
     beam = [_Partial([], 0.0, frozenset(), {}, {}, 0)]
-    for slot in order:
+    for index, slot in enumerate(order):
         grown = []
         for partial in beam:
             for choice in options[slot]:
                 candidate = choice.candidate
                 if candidate.beatmap_id in partial.maps:
+                    continue
+                generated = partial.generated + (candidate.source == "model")
+                remaining = len(order) - index - 1
+                if generated_count is not None and not generated <= generated_count <= generated + remaining:
                     continue
                 sets = dict(partial.sets)
                 sets[candidate.beatmapset_id] = sets.get(candidate.beatmapset_id, 0) + 1
@@ -177,9 +184,14 @@ def _search(options: dict[str, list[Choice]], level: int) -> list[_Partial]:
                 if level < 2 and (sets[candidate.beatmapset_id] > 1 or mappers[candidate.mapper.lower()] > SAME_MAPPER_MOST):
                     continue
                 grown.append(_Partial(partial.chosen + [choice], partial.total + choice.cost, partial.maps | {candidate.beatmap_id},
-                                      sets, mappers, uncertain))
+                                      sets, mappers, uncertain, generated))
         grown.sort(key=lambda partial: (partial.score(), [c.candidate.beatmap_id for c in partial.chosen]))
-        beam = grown[:BEAM]
+        if generated_count is None:
+            beam = grown[:BEAM]
+        else:
+            beam = []
+            for count in range(generated_count + 1):
+                beam.extend([partial for partial in grown if partial.generated == count][:BEAM])
         if not beam:
             return []
     return beam
@@ -195,7 +207,7 @@ def _pick(finished: list[_Partial], seed: str, level: int) -> _Partial:
             return partial
     return finalists[-1]
 
-def generate(candidates: list[Candidate], a: dict[str, Skill], b: dict[str, Skill], seed: str) -> Pool:
+def generate(candidates: list[Candidate], a: dict[str, Skill], b: dict[str, Skill], seed: str, generated_count: Optional[int] = None) -> Pool:
     aims = targets(a, b)
     by_slot = {slot: [c for c in candidates if c.slot == slot and _usable(c)] for slot in SLOTS}
     missing = [slot for slot in SLOTS if not by_slot[slot]]
@@ -216,8 +228,10 @@ def generate(candidates: list[Candidate], a: dict[str, Skill], b: dict[str, Skil
                 found = parts(candidate, a, b, baseline)
                 scored.append(Choice(candidate, cost(found), found))
             scored.sort(key=lambda choice: (choice.cost, choice.candidate.beatmap_id))
-            options[slot] = scored[:PER_SLOT]
-        finished = _search(options, level)
+            options[slot] = scored[:PER_SLOT] if generated_count is None else (
+                [c for c in scored if c.candidate.source == "catalogue"][:PER_SLOT // 2]
+                + [c for c in scored if c.candidate.source == "model"][:PER_SLOT // 2])
+        finished = _search(options, level, generated_count)
         if not finished:
             continue
         chosen = _pick(finished, seed, level)

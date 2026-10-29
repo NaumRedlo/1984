@@ -36,7 +36,7 @@ HANDLERS: dict[str, Handler] = {
     "invitation": _expire_invitation,
     "pair_confirm": _expire_pair,
     **{kind: _series for kind in ("draft", "preparation", "pool_ack", "ready", "reconnect", "absence", "room_join", "evidence",
-                                  "range_offer", "bonus", "room_linger")},
+                                  "range_offer", "bonus", "room_linger", "round_setup", "round_start")},
 }
 
 async def due(factory, now: Optional[datetime] = None, limit: int = 50) -> list[int]:

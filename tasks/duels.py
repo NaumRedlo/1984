@@ -125,6 +125,9 @@ async def _hunting(factory, shutdown_event: asyncio.Event, osu) -> None:
             pass
         try:
             model = await balance.working_model(factory)
+            if model is None:
+                logger.warning("Kamerton hunt skipped: no published model compatible with the analyser")
+                continue
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120, sock_read=30)) as session:
                 found = await importer.hunt(factory, mirrors.aiohttp_fetch(session), osu, DUEL_OSU_FOLDER, model, hunt_mode(DUEL_HUNT_MODE, turn),
                                             report=lambda said: logger.info("Kamerton hunt: %s", said))

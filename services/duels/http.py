@@ -6,7 +6,7 @@ from aiohttp import web
 
 from services.duels import live, notify, series, service, states
 from services.duels.errors import DuelError
-from services.duels.rules import SLOTS
+from services.duels.rules import SLOTS, reserved
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +62,7 @@ def _version(said: dict[str, Any]) -> Optional[int]:
 
 def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] = lambda: None) -> list[web.RouteDef]:
     discovering: dict[str, asyncio.Task] = {}
+    discovery_pages: dict[tuple[str, int], int] = {}
 
     def watched(work, what: str) -> asyncio.Task:
         task = asyncio.create_task(work)
@@ -170,7 +171,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             won = await session.scalar(select(func.count()).select_from(mine).where(mine.c.winner_id == player)) or 0
             lost = await session.scalar(select(func.count()).select_from(mine).where(mine.c.winner_id != player)) or 0
         skills, marks = portfolio.profile(seen, utcnow())
-        return {"rating": await rating.standing(factory_of(), player), "portfolio": portfolio.view(skills, marks),
+        return {"player": player, "rating": await rating.standing(factory_of(), player), "portfolio": portfolio.view(skills, marks),
                 "observations": len(seen), "won": int(won), "lost": int(lost)}
 
     async def history(request, player, said):
@@ -340,7 +341,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import desk
 
         slot, band = request.match_info["slot"], request.match_info["band"]
-        if slot not in SLOTS or not band.isdigit() or int(band) >= len(desk.BANDS):
+        if (slot not in SLOTS and not reserved(slot)) or not band.isdigit() or int(band) >= len(desk.BANDS):
             raise web.HTTPBadRequest(text="slot and band are required")
         return {"maps": await desk.coverage_cell(factory_of(), player, slot, int(band), owners)}
 
@@ -359,7 +360,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import presence
 
         try:
-            people = await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners)
+            people = await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners, slot=said.get("slot"), band=said.get("band"))
             return {"people": people, "revision": await presence.revision(factory_of())}
         except ValueError:
             raise web.HTTPBadRequest(text="valid section and beatmap are required")
@@ -418,6 +419,9 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         band = said.get("band")
         if not isinstance(band, int) or isinstance(band, bool) or not 0 <= band < len(desk.BANDS):
             raise web.HTTPBadRequest(text="band is required")
+        slot = said.get("slot", "NM1")
+        if not isinstance(slot, str) or (slot not in SLOTS and not reserved(slot)):
+            raise web.HTTPBadRequest(text="slot is required")
         least, most = desk.discovery_range(band)
         await balance.note_discovery(factory_of(), player, least, most, said["reason"], owners)
         running = discovering.get("task")
@@ -425,13 +429,26 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
             return {"started": False}
         if osu_of() is None:
             return web.json_response({"error": "SERVICE_RECOVERING"}, status=503)
+        model = await balance.working_model(factory_of())
+        if model is None:
+            return web.json_response({"error": "MODEL_UNAVAILABLE"}, status=409)
+        running = discovering.get("task")
+        if running is not None and not running.done():
+            return {"started": False}
+        key = (slot, band)
+        page = discovery_pages.get(key, 0)
 
         async def run():
-            model = await balance.working_model(factory_of())
             timeout = aiohttp.ClientTimeout(total=120, sock_read=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                await importer.discover(factory_of(), mirrors.aiohttp_fetch(session), osu_of(), DUEL_OSU_FOLDER, least, most, 2,
-                                        model=model, report=lambda text: logger.info("Catalogue discovery: %s", text))
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    outcomes = await importer.discover(factory_of(), mirrors.aiohttp_fetch(session), osu_of(), DUEL_OSU_FOLDER, least, most, 4,
+                        model=model, slot=slot, page_from=page, new_limit=24, advance=lambda next_page: discovery_pages.__setitem__(key, next_page),
+                        report=lambda text: logger.info("Catalogue discovery: %s", text))
+            except Exception:
+                logger.exception("Catalogue discovery failed")
+                outcomes = {"failed": 1}
+            await balance.discovery_result(factory_of(), player, slot, band, model.version, outcomes, owners)
 
         discovering["task"] = watched(run(), "discovering catalogue maps")
         return {"started": True}

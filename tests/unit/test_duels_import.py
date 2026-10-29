@@ -654,3 +654,57 @@ def test_the_hunt_goes_where_a_slot_has_few_maps_compared_with_the_others():
     empty = {slot: [0] * len(desk.BANDS) for slot in SLOTS}
     assert importer.scarcest(empty, SystemRandom())[3] == desk.ENOUGH, "an empty catalogue still aims at five maps"
 
+
+
+@pytest.mark.parametrize("slot,expected", [("NM3", (7.5, 8.0)), ("HD2", (7.5, 8.0)), ("DT2", (7.5 / 1.4, 8.0 / 1.4)), ("HR2", (7.5 / 1.3, 8.0))])
+def test_search_range_accounts_for_mods(slot, expected):
+    assert importer.search_range(7.5, 8.0, slot) == pytest.approx(expected)
+
+async def test_search_resumes_the_same_page_when_the_import_budget_is_reached(monkeypatch):
+    from types import SimpleNamespace
+    asked, cursor, seen = [], [], set()
+    entries = [{"beatmap_id": i, "status": "ranked", "length": 120, "artist": "A", "title": "T", "version": "D", "stars": 4.1} for i in range(1, 5)]
+    async def search(fetch, status, offset, amount, low, high):
+        asked.append((offset, low, high))
+        return "test", entries if offset == 0 else [], 50 if offset == 0 else 0
+    async def ingest(*args):
+        number = args[3]["beatmap_id"]
+        if number in seen:
+            return "known"
+        seen.add(number)
+        return "proposed DT2"
+    monkeypatch.setattr(mirrors, "search", search)
+    monkeypatch.setattr(importer, "ingest", ingest)
+    options = dict(model=SimpleNamespace(version="test"), slot="DT2", pause=0, report=lambda _: None, new_limit=2, advance=cursor.append)
+    first = await importer.discover(None, None, None, "", 5.5, 6.0, 4, **options)
+    assert first == {"proposed DT2": 2} and cursor[-1] == 0
+    second = await importer.discover(None, None, None, "", 5.5, 6.0, 4, page_from=cursor[-1], **options)
+    assert second == {"known": 2, "proposed DT2": 2} and seen == {1, 2, 3, 4}
+    third = await importer.discover(None, None, None, "", 5.5, 6.0, 4, page_from=cursor[-1], **options)
+    assert third == {"known": 4} and cursor[-1] == 0
+    assert asked[-1][0] == 50
+    assert asked[0][1:] == pytest.approx((5.5 / 1.4, 6.0 / 1.4))
+
+async def test_failed_search_reports_mirror_outage_and_keeps_cursor(monkeypatch):
+    async def search(*args):
+        return None
+    monkeypatch.setattr(mirrors, "search", search)
+    cursor = []
+    assert await importer.discover(None, None, None, "", 5.0, 5.5, 4, page_from=8, advance=cursor.append, report=lambda _: None) == {"mirrors_unavailable": 1}
+    assert cursor[-1] == 8
+
+@pytest.mark.parametrize("slot,probability,margin,expected", [("NM1", .4, .1, "below_threshold"), (None, .2, .01, "no_slot"), ("FM4", .95, .8, "reserve_slot")])
+async def test_import_reports_why_a_map_has_no_slot(factory, tmp_path, slot, probability, margin, expected):
+    from services.duels.slot_model import Prediction
+    class Model:
+        version = "test"
+        def predict(self, *args):
+            return Prediction(slot, probability, margin, {}, False)
+    raw = _map(51)
+    async def fetch(address):
+        return raw if "/osu/51" in address else None
+    entry = {"beatmap_id": 51, "beatmapset_id": 50, "checksum": hashlib.md5(raw).hexdigest(), "stars": 5.0, "status": "ranked", "length": 100}
+    assert await importer.ingest(factory, fetch, Osu(), entry, str(tmp_path), Model()) == expected
+    async with factory() as session:
+        assignment = await session.get(DuelMapAssignment, 51)
+        assert assignment.slot is None

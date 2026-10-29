@@ -7,8 +7,8 @@ from sqlalchemy import select
 from db.models.duel import Duel, DuelAttempt, DuelBonus, DuelCommand, DuelDeadline, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
-from services.duels import catalog, generator, outbox, rooms, series, states, verifier
-from services.duels.bancho_text import Said
+from services.duels import catalog, discovery, generator, outbox, rooms, series, states, verifier
+from services.duels.bancho_text import Said, irc_name
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS, Candidate, Skill
 from services.duels.room_control import RoomControl
@@ -18,7 +18,7 @@ from utils.timeutils import utcnow
 
 logger = get_logger("duels.coordinator")
 
-CATALOG_VERSION = "catalog-v1"
+CATALOG_VERSION = "mixed-v2"
 CLOCK_SLACK = 10
 
 class NotYet(Exception):
@@ -127,7 +127,10 @@ class Coordinator:
         if duel is None or duel.state not in (states.ACCEPTED, states.GENERATING_POOL):
             return
         first, second = await self.profiles(self.factory, people)
-        pool = generator.generate(candidates, first, second, duel.seed)
+        unseen = await discovery.candidates(self.factory, self.osu, generator.targets(first, second), duel.seed)
+        # Nine slots cannot split evenly: alternate four and five unseen maps by seed.
+        count = 4 + (int.from_bytes(duel.seed.encode(), "big") % 2)
+        pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count)
         await series.pool_built(self.factory, duel_id, pool, CATALOG_VERSION, FEATURE_VERSION)
 
     async def open_room(self, command: dict[str, Any]) -> None:
@@ -178,9 +181,9 @@ class Coordinator:
                 select(DuelParticipant, Player).join(Player, Player.id == DuelParticipant.player_id)
                 .where(DuelParticipant.duel_id == room.duel_id)
             )).all()
-        by_name = {player.osu_username.lower(): participant for participant, player in people}
+        by_name = {irc_name(player.osu_username): participant for participant, player in people}
         seated = self.seated.setdefault(match_id, set())
-        who = by_name.get(str(event.data.get("user", "")).lower())
+        who = by_name.get(irc_name(str(event.data.get("user", ""))))
         if event.kind == "joined" and who is not None:
             seated.add(who.player_id)
             if duel.state == states.WAITING_PLAYERS and len(seated) == len(people) and all(self.present(p.player_id) for p, _ in people):
@@ -216,7 +219,17 @@ class Coordinator:
         room = await self._room(duel_id)
         if room is None:
             raise NotYet("no_room")
+        async with self.factory() as session:
+            duel = await session.get(Duel, duel_id)
+            if duel is None or duel.state != states.ROUND_SETUP:
+                return
+            attempt = await session.scalar(select(DuelAttempt).where(DuelAttempt.round_id == command["payload"]["round"])
+                                            .order_by(DuelAttempt.attempt_no.desc()))
+            if attempt is None or attempt.id != command["payload"]["attempt"]:
+                return
         current, entry, people = await self._round(duel_id)
+        if current.id != command["payload"]["round"]:
+            return
         control = self._control(room.match_id)
         free = current.slot == "TB"
         mods = list(SLOT_MODS[current.slot])
@@ -228,7 +241,13 @@ class Coordinator:
         await series.round_configured(self.factory, duel_id)
 
     async def start_round(self, command: dict[str, Any]) -> None:
-        room = await self._room(command["payload"]["duel"])
+        duel_id = command["payload"]["duel"]
+        async with self.factory() as session:
+            duel = await session.get(Duel, duel_id)
+            current = await session.scalar(select(DuelRound).where(DuelRound.duel_id == duel_id).order_by(DuelRound.ordinal.desc()))
+            if duel is None or duel.state != states.STARTING or current is None or current.id != command["payload"]["round"]:
+                return
+        room = await self._room(duel_id)
         if room is None:
             raise NotYet("no_room")
         await self._control(room.match_id).start()

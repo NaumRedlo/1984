@@ -8,17 +8,23 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from db.models.duel_catalog import DuelDeskPresence
 from db.models.player import Player
 from services.duels import balance
+from services.duels.rules import SLOTS, reserved
 from utils.timeutils import utcnow
 
 TTL = timedelta(seconds=45)
 SECTIONS = {"queue", "label", "owc", "catalog", "model", "duels", "journal", "people", "live"}
 
 
-async def touch(factory, actor, section, beatmap=None, owners=(), now=None):
+async def touch(factory, actor, section, beatmap=None, owners=(), now=None, *, slot=None, band=None):
     if section is not None and (not isinstance(section, str) or section not in SECTIONS):
         raise ValueError("section")
     if beatmap is not None and (type(beatmap) is not int or beatmap <= 0):
         raise ValueError("beatmap")
+    if slot is not None or band is not None:
+        if section != "catalog" or not isinstance(slot, str) or (slot not in SLOTS and not reserved(slot)) or type(band) is not int or not 0 <= band < 10:
+            raise ValueError("slot and band")
+    # Store the selected catalogue route in the existing short section column.
+    context = f"{section}:{slot}:{band}" if slot is not None else section
     now = now or utcnow()
     async with factory() as session:
         async with session.begin():
@@ -30,7 +36,7 @@ async def touch(factory, actor, section, beatmap=None, owners=(), now=None):
                 await session.execute(delete(DuelDeskPresence).where(DuelDeskPresence.player_id == actor))
             else:
                 insert = sqlite_insert if session.bind.dialect.name == "sqlite" else pg_insert
-                values = dict(player_id=actor, section=section, beatmap_id=beatmap, updated_at=now)
+                values = dict(player_id=actor, section=context, beatmap_id=beatmap, updated_at=now)
                 await session.execute(insert(DuelDeskPresence).values(**values).on_conflict_do_update(
                     index_elements=[DuelDeskPresence.player_id], set_=values))
             rows = (await session.execute(select(DuelDeskPresence, Player).join(Player, Player.id == DuelDeskPresence.player_id))).all()
@@ -38,8 +44,10 @@ async def touch(factory, actor, section, beatmap=None, owners=(), now=None):
             for active, player in rows:
                 if not await balance.roles_of(session, player.id, owners):
                     continue
+                route = active.section.split(":")
                 result.append({"player": player.id, "name": player.osu_username or str(player.id),
-                               "section": active.section, "beatmap": active.beatmap_id, "mine": player.id == actor,
+                               "section": route[0], "slot": route[1] if len(route) == 3 else None,
+                               "band": int(route[2]) if len(route) == 3 else None, "beatmap": active.beatmap_id, "mine": player.id == actor,
                                "updated_at": active.updated_at.isoformat() + "Z"})
             return sorted(result, key=lambda row: (not row["mine"], row["name"].lower()))
 
