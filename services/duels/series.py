@@ -318,6 +318,7 @@ async def give_up(factory, duel_id: str, actor_id: int, operation_id: str, expec
         if duel.state == states.PLAYING:
             await step.move(duel, states.ABORTING, "surrender")
             step.command(duel, "abort_round", {"duel": duel.id})
+            step.deadline(duel, "aborting", PARAMETERS["recovery_seconds"])
         await _technical(step, duel, people, me, "surrender")
     return await _act(factory, duel_id, actor_id, operation_id, "give_up", expected_version, body, now)
 
@@ -409,7 +410,19 @@ async def round_started(factory, duel_id: str, match_id: int, now: Optional[date
         attempt.match_id = match_id
         attempt.start_at = step.now
         await step.move(duel, states.PLAYING)
+        step.deadline(duel, "playing", await _playing_seconds(step.session, duel.id, current.slot))
     return await _system(factory, duel_id, (states.STARTING,), body, now)
+
+async def _playing_seconds(session, duel_id: str, slot: str) -> float:
+    _, entries = await _pool(session, duel_id)
+    entry = next((e for e in entries if e.slot == slot), None)
+    length = None
+    if entry is not None:
+        analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == entry.revision_hash,
+                                                                      DuelMapAnalysis.mods == "".join(SLOT_MODS.get(slot, ())))
+                                        .order_by(DuelMapAnalysis.id.desc()).limit(1))
+        length = ((analysis.features or {}) if analysis is not None else {}).get("length_seconds")
+    return float(length or PARAMETERS["recovery_seconds"]) + PARAMETERS["recovery_seconds"]
 
 async def round_finished(factory, duel_id: str, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     async def body(step, duel, people):
@@ -488,6 +501,7 @@ async def player_lost(factory, duel_id: str, player_id: int, now: Optional[datet
         if duel.state == states.PLAYING:
             await step.move(duel, states.ABORTING, "disconnect")
             step.command(duel, "abort_round", {"duel": duel.id})
+            step.deadline(duel, "aborting", PARAMETERS["recovery_seconds"])
             return
         duel.paused_from = duel.state
         duel.pause_reason = "disconnect"
@@ -563,6 +577,15 @@ async def on_deadline(step: Step, duel: Duel, kind: str) -> None:
     elif kind == "room_join" and duel.state == states.WAITING_PLAYERS:
         await _technical(step, duel, people, None, "room_join_timeout")
         step.command(duel, "close_room", {"duel": duel.id})
+    elif kind == "playing" and duel.state == states.PLAYING:
+        current = (await _rounds(step.session, duel.id))[-1]
+        attempt = await _attempt(step.session, current.id)
+        attempt.end_at = step.now
+        await step.move(duel, states.VERIFYING, "finish_unheard")
+        step.deadline(duel, "evidence", PARAMETERS["evidence_wait_seconds"])
+        step.command(duel, "verify_round", {"duel": duel.id, "attempt": attempt.id})
+    elif kind == "aborting" and duel.state == states.ABORTING:
+        await _technical(step, duel, people, None, "room_lost")
     elif kind == "evidence" and duel.state == states.VERIFYING:
         await _technical(step, duel, people, None, "evidence_missing")
     elif kind == "bonus" and duel.state == states.COMPLETED:

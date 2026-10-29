@@ -45,7 +45,7 @@ async def factory(tmp_path):
 def _pool():
     maps = []
     for number, slot in enumerate(SLOTS, start=1):
-        for extra in range(3):
+        for extra in range(5):
             beatmap = number * 10 + extra
             maps.append(Candidate(beatmap, beatmap, f"m{beatmap}", slot, 5.0 + 0.05 * extra, "confident", 0.9, f"{beatmap:032x}"))
     profile = {slot: Skill(5.0, 0.4) for slot in SLOTS if slot != "TB"}
@@ -321,3 +321,70 @@ async def test_ready_from_a_previous_phase_is_not_accepted(factory):
     with pytest.raises(DuelError) as caught:
         await series.ready(factory, duel_id, 1, clock.op(), expected_version=duel["version"], now=clock.tick())
     assert caught.value.code == "VERSION_CONFLICT"
+
+async def _into_play(factory, clock, duel_id):
+    duel = await _view(factory, duel_id, 1)
+    _, side = series.turn_side(len(duel["draft"]))
+    free = [e["slot"] for e in duel["pool"]["entries"] if e["slot"] != "TB" and not e["banned_by"] and not e["used"]]
+    await series.draft(factory, duel_id, _player(duel, side), free[0], clock.op(), now=clock.tick())
+    await series.round_configured(factory, duel_id, clock.tick())
+    version = (await _view(factory, duel_id, 1))["version"]
+    for player in (1, 2):
+        await series.ready(factory, duel_id, player, clock.op(), expected_version=version, now=clock.tick())
+    await series.round_started(factory, duel_id, 777, clock.tick())
+    return await _view(factory, duel_id, 1)
+
+async def test_giving_up_during_a_map_aborts_it_and_hands_the_series_over(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _play(factory, clock, duel_id, "A")
+    duel = await _into_play(factory, clock, duel_id)
+    assert duel["state"] == states.PLAYING
+    done = await series.give_up(factory, duel_id, _player(duel, "A"), clock.op(), now=clock.tick())
+    assert (done["state"], done["outcome"], done["winner"]) == (states.COMPLETED, "surrender", _player(duel, "B"))
+    async with factory() as session:
+        assert "abort_round" in (await session.scalars(select(DuelCommand.kind))).all()
+
+async def test_a_third_drop_during_a_map_ends_the_series(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _play(factory, clock, duel_id, "A")
+    await _into_play(factory, clock, duel_id)
+    for _ in range(2):
+        assert (await series.player_lost(factory, duel_id, 2, clock.tick()))["state"] == states.ABORTING
+        await series.aborted(factory, duel_id, clock.tick())
+        await series.player_back(factory, duel_id, 2, clock.tick())
+        await series.round_configured(factory, duel_id, clock.tick())
+        version = (await _view(factory, duel_id, 1))["version"]
+        for player in (1, 2):
+            await series.ready(factory, duel_id, player, clock.op(), expected_version=version, now=clock.tick())
+        await series.round_started(factory, duel_id, 777, clock.tick())
+    final = await series.player_lost(factory, duel_id, 2, clock.tick())
+    assert (final["state"], final["outcome"], final["winner"]) == (states.COMPLETED, "disconnect", 1)
+
+async def test_an_unheard_finish_is_verified_and_a_lost_map_cancels_without_rating(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _into_play(factory, clock, duel_id)
+    assert await deadlines.sweep(factory, clock.tick(1199)) == 0
+    assert await deadlines.sweep(factory, clock.tick(2)) == 1
+    assert (await _view(factory, duel_id, 1))["state"] == states.VERIFYING
+    async with factory() as session:
+        assert (await session.scalars(select(DuelCommand.kind))).all().count("verify_round") == 1
+    assert await deadlines.sweep(factory, clock.tick(601)) == 1
+    lost = await _view(factory, duel_id, 1)
+    assert (lost["state"], lost["outcome"], lost["winner"]) == (states.CANCELLED, "evidence_missing", None)
+
+async def test_an_abort_the_room_never_confirms_cancels_after_the_recovery_window(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _into_play(factory, clock, duel_id)
+    assert (await series.player_lost(factory, duel_id, 2, clock.tick()))["state"] == states.ABORTING
+    assert await deadlines.sweep(factory, clock.tick(599)) == 0
+    assert await deadlines.sweep(factory, clock.tick(2)) == 1
+    lost = await _view(factory, duel_id, 1)
+    assert (lost["state"], lost["outcome"], lost["winner"]) == (states.CANCELLED, "room_lost", None)
