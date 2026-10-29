@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import select
 
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision, DuelTrainingExample
-from services.duels import balance, catalog, generator, importer, mirrors
+from services.duels import balance, catalog, generator, importer, mirrors, tags
 from services.duels.features import FEATURE_VERSION, analyse
 from services.duels.generator import Candidate, SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
@@ -79,7 +79,7 @@ async def inspect(factory, fetch, osu, folder, entry, model) -> Optional[Candida
     digest = await asyncio.to_thread(mirrors.store, folder, raw)
     revision = DuelMapRevision(beatmap_id=entry["beatmap_id"], beatmapset_id=entry["beatmapset_id"], hash=digest,
                                status="ok", ranked_status=entry["status"], source="duel-discovery", mapper=beatmap.creator,
-                               title=beatmap.title[:200], artist=beatmap.artist[:200], version=beatmap.version[:200],
+                               title=beatmap.title[:200], artist=beatmap.artist[:200], version=beatmap.version[:200], tags=tags.read(entry.get("tags")),
                                object_count=len(beatmap.objects), max_combo=entry.get("max_combo"),
                                format_version=beatmap.format_version, downloaded_at=utcnow())
     analyses = {}
@@ -124,8 +124,8 @@ async def candidates(factory, osu, aims: dict[str, float], seed: str) -> list[Ca
         inspected = 0
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10, sock_read=5)) as session:
             fetch = mirrors.aiohttp_fetch(session)
-            for least, most in ranges:
-                response = await mirrors.search(fetch, "ranked", rng.randrange(4) * 50, 50, least, most)
+            for (least, most), text in [(band, query) for band in ranges for query in (rng.choice(tags.QUERIES), "")]:
+                response = await mirrors.search(fetch, "ranked", 0 if text else rng.randrange(4) * 50, 50, least, most, text=text)
                 entries = list(response[1]) if response else []
                 rng.shuffle(entries)
                 for entry in entries:

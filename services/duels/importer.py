@@ -7,7 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from db.models.duel_catalog import DuelCorpusLabel, DuelMapAnalysis, DuelMapAssignment, DuelMapRevision, DuelTrainingExample
-from services.duels import catalog, corpus, mirrors
+from services.duels import catalog, corpus, mirrors, tags
 from services.duels.features import FEATURE_VERSION, analyse, apply_mods
 from services.duels.generator import SLOT_MODS
 from services.duels.osu_file import OsuFileError, parse
@@ -23,7 +23,8 @@ def bits(mods: str) -> int:
     return sum(MOD_BITS[mods[i:i + 2]] for i in range(0, len(mods), 2) if mods[i:i + 2] in MOD_BITS)
 
 def suitable(entry: dict[str, Any]) -> bool:
-    return entry.get("status") == "ranked" and SHORTEST <= int(entry.get("length") or 0) <= LONGEST
+    return (entry.get("status") == "ranked" and SHORTEST <= int(entry.get("length") or 0) <= LONGEST
+            and not tags.trimmed(entry.get("title"), entry.get("version")))
 
 WIKI = "https://raw.githubusercontent.com/ppy/osu-wiki/master/wiki/Tournaments/OWC/{year}/en.md"
 YEARS = (2021, 2022, 2023, 2024, 2025)
@@ -98,6 +99,7 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
         made.title = (entry.get("title") or "")[:200] or made.title
         made.artist = (entry.get("artist") or "")[:200] or made.artist
         made.version = (entry.get("version") or "")[:200] or made.version
+        made.tags = tags.read(entry["tags"]) if entry.get("tags") else made.tags
         made.ranked_status = entry.get("status")
         made.beatmapset_id = made.beatmapset_id or entry["beatmapset_id"]
         made.mapper = made.mapper or entry.get("mapper")
@@ -144,7 +146,29 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
     counted: dict[str, int] = {}
     seen: set[int] = set()
     low, high = search_range(least, most, slot)
-    imported = 0
+    imported = [0]
+
+    async def take(entries) -> bool:
+        for entry in entries:
+            if entry["beatmap_id"] in seen or not suitable(entry):
+                continue
+            seen.add(entry["beatmap_id"])
+            outcome = await ingest(factory, fetch, osu, entry, folder, model)
+            counted[outcome] = counted.get(outcome, 0) + 1
+            report(f"{entry['beatmap_id']} {entry['artist']} - {entry['title']} [{entry['version']}] {entry['stars']:.2f}: {outcome}")
+            if outcome != "known":
+                imported[0] += 1
+                if new_limit is not None and imported[0] >= new_limit:
+                    return True
+                await asyncio.sleep(pause)
+        return False
+
+    for text in tags.QUERIES:
+        found = await mirrors.search(fetch, "ranked", 0, amount, low, high, text=text)
+        if found:
+            report(f"mirror {found[0]}, tags {text}, NM {low:.2f}-{high:.2f}, candidates {len(found[1])}")
+            if await take(found[1]):
+                return counted
     for page in range(page_from, page_from + pages):
         if advance is not None:
             advance(page)
@@ -159,18 +183,8 @@ async def discover(factory, fetch, osu, folder: str, least: float, most: float, 
             if advance is not None:
                 advance(0)
             break
-        for entry in entries:
-            if entry["beatmap_id"] in seen or not suitable(entry):
-                continue
-            seen.add(entry["beatmap_id"])
-            outcome = await ingest(factory, fetch, osu, entry, folder, model)
-            counted[outcome] = counted.get(outcome, 0) + 1
-            report(f"{entry['beatmap_id']} {entry['artist']} - {entry['title']} [{entry['version']}] {entry['stars']:.2f}: {outcome}")
-            if outcome != "known":
-                imported += 1
-                if new_limit is not None and imported >= new_limit:
-                    return counted
-                await asyncio.sleep(pause)
+        if await take(entries):
+            return counted
         if advance is not None:
             advance(0 if total < amount else page + 1)
         if total < amount:
@@ -186,6 +200,8 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
         return "not_standard", entry
     if not SHORTEST <= entry["length"] <= LONGEST:
         return "length", entry
+    if tags.trimmed(entry.get("title"), entry.get("version")):
+        return "trimmed", entry
     return await ingest(factory, fetch, osu, entry, folder, model, now), entry
 
 REANALYSE_FAILURES = (OsuFileError, ValueError, ArithmeticError, IndexError, KeyError, TypeError)

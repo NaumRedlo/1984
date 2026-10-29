@@ -148,7 +148,7 @@ def _entry(beatmapset: dict[str, Any], beatmap: dict[str, Any]) -> Optional[dict
                 "status": beatmap.get("status") or beatmapset.get("status"), "mapper": beatmapset.get("creator"),
                 "artist": beatmapset.get("artist"), "title": beatmapset.get("title"), "version": beatmap.get("version"),
                 "length": int(beatmap.get("total_length") or 0), "max_combo": beatmap.get("max_combo"), "ranked_date": beatmapset.get("ranked_date"),
-                "ar": beatmap.get("ar"), "cs": beatmap.get("cs")}
+                "ar": beatmap.get("ar"), "cs": beatmap.get("cs"), "tags": str(beatmapset.get("tags") or "")}
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -172,11 +172,11 @@ def read_search(body: bytes, least: float, most: float) -> list[dict[str, Any]]:
     return found
 
 async def search(fetch: Fetch, status: str, offset: int, amount: int, least: float, most: float,
-                 clock: Callable[[], float] = time.monotonic) -> Optional[tuple[str, list[dict[str, Any]], int]]:
+                 clock: Callable[[], float] = time.monotonic, text: str = "") -> Optional[tuple[str, list[dict[str, Any]], int]]:
     empty = None
-    query = quote(f"[beatmaps.difficulty_rating >= {least:g} AND beatmaps.difficulty_rating < {most:g}]", safe="")
+    query = quote(f"{text} [beatmaps.difficulty_rating >= {least:g} AND beatmaps.difficulty_rating < {most:g}]".strip(), safe="")
     for name, address in SEARCHES:
-        if not _awake(name, clock):
+        if not _awake(name, clock) or (text and "{query}" not in address):
             continue
         try:
             body = await fetch(address.format(status=STATUSES[status], offset=offset, amount=amount, query=query))

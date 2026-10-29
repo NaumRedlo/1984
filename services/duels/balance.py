@@ -171,7 +171,7 @@ async def _within_stars(session, held, slot: Optional[str]) -> bool:
     wanted = {"".join(SLOT_MODS[slot])} if slot in SLOT_MODS else {mods for mods, _ in rows}
     return any(in_catalogue(stars) for mods, stars in rows if mods in wanted)
 
-NOT_ADDED = {"not_found": "MAP_NOT_FOUND", "not_standard": "NOT_STANDARD", "length": "MAP_LENGTH", "no_file": "NO_FILE",
+NOT_ADDED = {"not_found": "MAP_NOT_FOUND", "not_standard": "NOT_STANDARD", "length": "MAP_LENGTH", "trimmed": "TRIMMED", "no_file": "NO_FILE",
              "parse_failed": "PARSE_FAILED", "recovering": "SERVICE_RECOVERING"}
 
 async def add_map(factory, actor: int, beatmap_id: int, slot: Optional[str], reason: str, owners: tuple[int, ...], bring,

@@ -665,7 +665,9 @@ async def test_search_resumes_the_same_page_when_the_import_budget_is_reached(mo
     from types import SimpleNamespace
     asked, cursor, seen = [], [], set()
     entries = [{"beatmap_id": i, "status": "ranked", "length": 120, "artist": "A", "title": "T", "version": "D", "stars": 4.1} for i in range(1, 5)]
-    async def search(fetch, status, offset, amount, low, high):
+    async def search(fetch, status, offset, amount, low, high, text=""):
+        if text:
+            return None
         asked.append((offset, low, high))
         return "test", entries if offset == 0 else [], 50 if offset == 0 else 0
     async def ingest(*args):
@@ -687,7 +689,7 @@ async def test_search_resumes_the_same_page_when_the_import_budget_is_reached(mo
     assert asked[0][1:] == pytest.approx((5.5 / 1.4, 6.0 / 1.4))
 
 async def test_failed_search_reports_mirror_outage_and_keeps_cursor(monkeypatch):
-    async def search(*args):
+    async def search(*args, **kwargs):
         return None
     monkeypatch.setattr(mirrors, "search", search)
     cursor = []
@@ -709,3 +711,55 @@ async def test_import_reports_why_a_map_has_no_slot(factory, tmp_path, slot, pro
     async with factory() as session:
         assignment = await session.get(DuelMapAssignment, 51)
         assert assignment.slot is None
+
+
+async def test_tournament_tags_are_searched_first_and_trimmed_versions_are_skipped(monkeypatch):
+    from types import SimpleNamespace
+    from services.duels import tags
+
+    asked, taken = [], []
+    tagged = [{"beatmap_id": 1, "status": "ranked", "length": 120, "artist": "A", "title": "Rebuilding", "version": "Extra", "stars": 6.1,
+               "tags": "owc2024 qf nm2 quarterfinals"},
+              {"beatmap_id": 2, "status": "ranked", "length": 120, "artist": "A", "title": "Song (Cut Ver.)", "version": "Extra", "stars": 6.1,
+               "tags": "owc2024"}]
+    plain = [{"beatmap_id": 3, "status": "ranked", "length": 120, "artist": "A", "title": "Song (TV Size)", "version": "Extra", "stars": 6.1},
+             {"beatmap_id": 4, "status": "ranked", "length": 120, "artist": "A", "title": "Other", "version": "Extra", "stars": 6.1}]
+    async def search(fetch, status, offset, amount, low, high, text=""):
+        asked.append(text)
+        if text:
+            return ("osu.direct", tagged, 2) if text == "owc2024" else None
+        return "test", plain, 2
+    async def ingest(*args):
+        taken.append(args[3]["beatmap_id"])
+        return "proposed NM2"
+    monkeypatch.setattr(mirrors, "search", search)
+    monkeypatch.setattr(importer, "ingest", ingest)
+    await importer.discover(None, None, None, "", 6.0, 6.5, 1, model=SimpleNamespace(version="test"), pause=0, report=lambda _: None)
+    assert asked == [*tags.QUERIES, ""] and taken == [1, 4]
+
+
+async def test_a_map_keeps_its_tournament_tags_and_a_trimmed_version_is_not_added(factory, tmp_path, monkeypatch):
+    raw = _map(52)
+    async def fetch(address):
+        return raw if "/osu/52" in address else None
+    entry = {"beatmap_id": 52, "beatmapset_id": 50, "checksum": hashlib.md5(raw).hexdigest(), "stars": 5.0, "status": "ranked", "length": 100,
+             "tags": "owc2024 sf hd1 semifinals"}
+    await importer.ingest(factory, fetch, Osu(), entry, str(tmp_path))
+    async with factory() as session:
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 52))
+    assert (revision.tags["tournaments"], revision.tags["stages"], revision.tags["slots"]) == (["owc2024"], ["sf"], ["HD1"])
+    assert revision.tags["raw"] == "owc2024 sf hd1 semifinals"
+
+    async def described(fetch, beatmap_id):
+        return {**entry, "beatmap_id": beatmap_id, "standard": True, "title": "Song (Cut Ver.)"}
+    monkeypatch.setattr(mirrors, "describe", described)
+    assert (await importer.ingest_one(factory, fetch, Osu(), 53, str(tmp_path)))[0] == "trimmed"
+
+
+async def test_a_tag_search_asks_only_mirrors_that_read_the_query():
+    asked = []
+    async def fetch(address):
+        asked.append(address)
+        return b'{"beatmapsets": []}'
+    await mirrors.search(fetch, "ranked", 0, 50, 6.0, 7.0, clock=lambda: 10**9, text="owc2024")
+    assert asked and all("osu.direct" in address and "owc2024" in address for address in asked)

@@ -21,6 +21,7 @@ class DuelMapRevision(Base):
     title = Column(String(200), nullable=True)
     artist = Column(String(200), nullable=True)
     version = Column(String(200), nullable=True)
+    tags = Column(JSON, nullable=True)
     downloaded_at = Column(DateTime, nullable=False, default=utcnow)
 
     __table_args__ = (

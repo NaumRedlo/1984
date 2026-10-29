@@ -51,6 +51,7 @@ from db.migrations.add_local_score_checks import run_local_score_checks_migratio
 from db.migrations.add_duel_phases import run_duel_phases_migration
 from db.migrations.add_duel_batches import run_duel_batches_migration
 from db.migrations.add_duel_review_tiers import run_duel_review_tiers_migration
+from db.migrations.add_duel_map_tags import run_duel_map_tags_migration
 
 async def run_all_migrations(engine) -> None:
     if engine.dialect.name == "sqlite":
@@ -63,6 +64,7 @@ async def run_all_migrations(engine) -> None:
     await run_duel_phases_migration(engine)
     await run_duel_batches_migration(engine)
     await run_duel_review_tiers_migration(engine)
+    await run_duel_map_tags_migration(engine)
     await run_drop_old_chat_data_migration(engine)
 
 async def _sqlite_history(engine) -> None:
