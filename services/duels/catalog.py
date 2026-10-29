@@ -218,13 +218,13 @@ async def admit(session, beatmap_id: int, digest: str, ok: bool, reason: Optiona
         await quarantine(session, beatmap_id, reason or "parse_failed", now)
     await session.flush()
 
-def playable(row: DuelMapAssignment, revision_row: Optional[DuelMapRevision]) -> Optional[str]:
+def playable(row: DuelMapAssignment, revision_row: Optional[DuelMapRevision], trusted: Optional[frozenset[str]] = None) -> Optional[str]:
     if row.slot not in SLOTS or not row.admitted or revision_row is None or revision_row.status != "ok":
         return None
     if revision_row.ranked_status != "ranked" and row.state != HUMAN_APPROVED:
         return None
     if row.state == HUMAN_APPROVED:
         return "human"
-    if row.state == AUTO_ASSIGNED:
+    if row.state == AUTO_ASSIGNED and (trusted is None or row.slot in trusted):
         return confidence_level(row.confidence, row.margin)
     return None

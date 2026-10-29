@@ -378,6 +378,12 @@ async def working_model(factory):
         logger.warning("published duel slot model %s no longer fits the analyser; maps wait for reviewers", chosen.version)
         return None
 
+async def trusted_slots(factory) -> frozenset[str]:
+    from services.duels import kamerton
+
+    chosen = await published(factory)
+    return kamerton.trusted(chosen.report if chosen is not None else None)
+
 async def published(factory) -> Optional[DuelModelVersion]:
     async with factory() as session:
         return await session.scalar(select(DuelModelVersion).where(DuelModelVersion.state == "published"))

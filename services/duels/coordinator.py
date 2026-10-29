@@ -36,7 +36,7 @@ async def measured_profiles(factory, people: list[DuelParticipant]) -> tuple[dic
                 found.append(skills)
     return found[0], found[1]
 
-async def catalogue(session) -> list[Candidate]:
+async def catalogue(session, trusted: Optional[frozenset[str]] = None) -> list[Candidate]:
     rows = (await session.execute(
         select(DuelMapAssignment, DuelMapRevision)
         .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
@@ -45,7 +45,7 @@ async def catalogue(session) -> list[Candidate]:
     )).all()
     found = []
     for assignment, revision in rows:
-        level = catalog.playable(assignment, revision)
+        level = catalog.playable(assignment, revision, trusted)
         if level is None:
             continue
         from services.duels import balance
@@ -121,15 +121,19 @@ class Coordinator:
     async def generate_pool(self, command: dict[str, Any]) -> None:
         duel_id = command["payload"]["duel"]
         people = [participant for participant, _ in await self._people(duel_id)]
+        from services.duels import balance
+
+        trusted = await balance.trusted_slots(self.factory)
         async with self.factory() as session:
             duel = await session.get(Duel, duel_id)
-            candidates = await catalogue(session)
+            candidates = await catalogue(session, trusted)
         if duel is None or duel.state not in (states.ACCEPTED, states.GENERATING_POOL):
             return
         first, second = await self.profiles(self.factory, people)
-        unseen = await discovery.candidates(self.factory, self.osu, generator.targets(first, second), duel.seed)
-        count = 4 + (int.from_bytes(duel.seed.encode(), "big") % 2)
-        pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count)
+        unseen = [found for found in await discovery.candidates(self.factory, self.osu, generator.targets(first, second), duel.seed)
+                  if found.slot in trusted]
+        count = min(4 + (int.from_bytes(duel.seed.encode(), "big") % 2), len({found.slot for found in unseen}))
+        pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count or None)
         await series.pool_built(self.factory, duel_id, pool, CATALOG_VERSION, FEATURE_VERSION)
 
     async def open_room(self, command: dict[str, Any]) -> None:

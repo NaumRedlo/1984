@@ -16,6 +16,7 @@ BEAM = 50
 FINALISTS = 20
 TEMPERATURE = 0.25
 UNCERTAIN_MOST = 2
+LEAST_CANDIDATES = 5
 SAME_MAPPER_MOST = 2
 MAPPER_EXTRA = 0.1
 SET_EXTRA = 0.2
@@ -133,6 +134,10 @@ def _eligible(candidate: Candidate, target: float, width: float, level: int) -> 
         return False
     return level >= 1 or not _recent(candidate)
 
+def _thin(by_slot: dict[str, list[Candidate]], aims: dict[str, float], width: float) -> list[str]:
+    return [slot for slot in SLOTS
+            if len({c.beatmap_id for c in by_slot[slot] if _eligible(c, aims[slot], width, 1)}) < LEAST_CANDIDATES]
+
 def _seed_float(seed: str, level: int) -> float:
     digest = hashlib.sha256(f"{seed}:{GENERATOR_VERSION}:{level}".encode()).digest()
     return int.from_bytes(digest[:8], "big") / 2 ** 64
@@ -215,6 +220,8 @@ def generate(candidates: list[Candidate], a: dict[str, Skill], b: dict[str, Skil
         return Pool("unavailable", deficits=missing, targets=aims)
     for level in range(4):
         width = WIDE_CORRIDOR if level >= 3 else CORRIDOR
+        if _thin(by_slot, aims, width):
+            continue
         fits = {slot: [c for c in by_slot[slot] if _eligible(c, aims[slot], width, level)] for slot in SLOTS}
         empty = [slot for slot in SLOTS if not fits[slot]]
         if empty:
@@ -241,7 +248,7 @@ def generate(candidates: list[Candidate], a: dict[str, Skill], b: dict[str, Skil
     far = [slot for slot in SLOTS if not any(abs(c.stars - aims[slot]) <= WIDE_CORRIDOR + 1e-9 for c in by_slot[slot])]
     if not far:
         crowded = [slot for slot in SLOTS if all(c.level == "uncertain" for c in by_slot[slot])]
-        return Pool("unavailable", 3, targets=aims, deficits=crowded or list(SLOTS))
+        return Pool("unavailable", 3, targets=aims, deficits=_thin(by_slot, aims, WIDE_CORRIDOR) or crowded or list(SLOTS))
     offer = {}
     for slot in SLOTS:
         nearest = min((c.stars for c in by_slot[slot]), key=lambda stars: abs(stars - aims[slot]))

@@ -35,6 +35,8 @@ SIGNATURES: dict[str, tuple[tuple[str, float], ...]] = {
 }
 UNKNOWN_MOD_WEIGHT = 0.3
 SECONDARY_SHARE = 0.25
+TRUSTED_PRECISION = 0.90
+TRUSTED_LEAST = 10
 VERSION = "kamerton-skills-v1"
 
 def _sigmoid(value: float) -> float:
@@ -332,7 +334,9 @@ def summary(judgements: list[Judgement]) -> dict[str, Any]:
     sure = [one for one in admitted if one.level == "confident"]
     unsure = [one for one in admitted if one.level == "uncertain"]
     refused = [one for one in judgements if one.slot is None]
-    found["confident"] = {"count": len(sure), "precision": _share(_right(sure), len(sure)), "share": _share(len(sure), len(judgements))}
+    found["confident"] = {"count": len(sure), "precision": _share(_right(sure), len(sure)), "share": _share(len(sure), len(judgements)),
+                          "slots": {slot: {"count": sum(1 for one in sure if one.slot == slot), "right": _right([one for one in sure if one.slot == slot])}
+                                    for slot in sorted({one.slot for one in sure})}}
     found["admitted"] = {
         "checked": len(judgements), "count": len(admitted), "share": _share(len(admitted), len(judgements)),
         "precision": _share(_right(admitted), len(admitted)),
@@ -343,6 +347,12 @@ def summary(judgements: list[Judgement]) -> dict[str, Any]:
     }
     found["top2"] = _share(sum(1 for one in judgements if one.truth in one.top2), len(judgements))
     return found
+
+def trusted(report: Optional[dict[str, Any]]) -> frozenset[str]:
+    measured = (((report or {}).get("test") or {}).get("confident") or {}).get("slots") or {}
+    return frozenset(slot for slot, found in measured.items()
+                     if slot in SLOTS and found.get("count", 0) >= TRUSTED_LEAST
+                     and found.get("right", 0) >= TRUSTED_PRECISION * found["count"])
 
 def decide(model, example: Example) -> Prediction:
     base_ar, hr_cs = example.gates()

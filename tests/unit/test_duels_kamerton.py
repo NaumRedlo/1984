@@ -131,7 +131,8 @@ def test_a_refused_map_is_not_counted_as_admitted_and_reserved_classes_are_score
     judged = kamerton.judged_on(model, held)
     assert [one.refusal for one in judged] == ["outside", None, "below_threshold", "not_working"]
     found = kamerton.summary(judged)
-    assert found["confident"] == {"count": 1, "precision": 1.0, "share": 0.25}, "the map outside the trained range is not a confident answer"
+    assert found["confident"] == {"count": 1, "precision": 1.0, "share": 0.25, "slots": {"NM1": {"count": 1, "right": 1}}}, \
+        "the map outside the trained range is not a confident answer"
     assert found["admitted"]["checked"] == 4 and found["admitted"]["count"] == 1 and found["admitted"]["refused"] == {
         "count": 3, "share": 0.75, "outside": 1, "not_working": 1, "below_threshold": 1}
     assert found["per_slot"]["NM1"]["recall"] == 1.0, "the catalogue figures still see what the model thought"
@@ -169,3 +170,10 @@ def test_a_model_that_cannot_answer_is_refused_before_it_is_used():
     for wrong in broken:
         with pytest.raises(kamerton.BROKEN):
             kamerton.checked(wrong)
+
+
+def test_kamerton_is_trusted_only_in_slots_with_enough_right_confident_answers():
+    report = {"test": {"confident": {"slots": {"NM1": {"count": 10, "right": 9}, "NM2": {"count": 9, "right": 9},
+                                               "NM3": {"count": 20, "right": 17}, "FM1": {"count": 40, "right": 40}}}}}
+    assert kamerton.trusted(report) == frozenset({"NM1"})
+    assert kamerton.trusted(None) == frozenset() and kamerton.trusted({"test": {}}) == frozenset()

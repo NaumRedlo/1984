@@ -116,6 +116,17 @@ async def test_only_ranked_admitted_assigned_maps_are_playable(session):
     assert catalog.playable(await session.get(DuelMapAssignment, 1), loved) is None
     assert await session.scalar(select(func.count()).select_from(DuelMapRevision)) == 1
 
+async def test_an_automatic_slot_plays_only_while_kamerton_is_trusted_there(session):
+    await catalog.propose(session, 2, "NM3", 0.95, 0.5, "m1", NOW)
+    ranked, _ = await catalog.revision(session, 2, "d" * 32, ranked_status="ranked", now=NOW)
+    await catalog.admit(session, 2, "d" * 32, True, now=NOW)
+    row = await session.get(DuelMapAssignment, 2)
+    assert catalog.playable(row, ranked) == "confident"
+    assert catalog.playable(row, ranked, frozenset({"NM3"})) == "confident"
+    assert catalog.playable(row, ranked, frozenset({"NM1"})) is None
+    await catalog.review(session, 2, "APPROVE", 1, "fits", now=NOW)
+    assert catalog.playable(await session.get(DuelMapAssignment, 2), ranked, frozenset()) == "human"
+
 async def test_locking_marks_maps_once(session):
     await catalog.propose(session, 1, "NM4", 0.9, 0.3, "m1", NOW)
     await catalog.lock(session, [1], NOW)
@@ -171,6 +182,12 @@ def test_a_slot_with_no_maps_at_all_makes_the_pool_unavailable():
     maps = [candidate for candidate in _catalogue() if candidate.slot != "HR2"]
     pool = generator.generate(maps, _profile(5.0), _profile(5.0), "seed")
     assert (pool.status, pool.deficits) == ("unavailable", ["HR2"])
+
+def test_fewer_than_five_maps_in_a_slots_corridor_leave_no_pool():
+    maps = [candidate for candidate in _catalogue() if candidate.slot != "HR2" or candidate.beatmap_id % 6 < 4]
+    pool = generator.generate(maps, _profile(5.0), _profile(5.0), "seed")
+    assert (pool.status, pool.deficits) == ("unavailable", ["HR2"])
+    assert generator.generate(_catalogue(per_slot=5), _profile(5.0), _profile(5.0), "seed").status == "ready"
 
 def test_recently_played_maps_wait_until_the_first_relaxation():
     maps = [Candidate(c.beatmap_id, c.beatmapset_id, c.mapper, c.slot, c.stars, c.level, c.confidence, c.revision,

@@ -13,7 +13,7 @@ from db.database import Base
 from db.models.duel import Duel, DuelRoom
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
-from services.duels import deadlines, outbox, series, service, states
+from services.duels import balance, deadlines, outbox, series, service, states
 from services.duels.bancho_text import parse_line, said
 from services.duels.coordinator import Coordinator
 from services.duels.features import FEATURE_VERSION
@@ -87,7 +87,7 @@ async def factory(tmp_path):
         session.add_all([Player(id=1, osu_user_id=101, osu_username="one"), Player(id=2, osu_user_id=102, osu_username="two")])
         number = 0
         for slot in SLOTS:
-            for stars in (5.2, 5.3, 5.4):
+            for stars in (5.2, 5.3, 5.4, 5.5, 5.6):
                 number += 1
                 digest = f"{number:032x}"
                 session.add(DuelMapRevision(beatmap_id=number, beatmapset_id=number, hash=digest, status="ok", ranked_status="ranked",
@@ -110,6 +110,10 @@ def unseen_candidates(monkeypatch):
         return [replace(candidate, beatmap_id=candidate.beatmap_id + 1000,
                         beatmapset_id=candidate.beatmapset_id + 1000, source="model") for candidate in known]
     monkeypatch.setattr(discovery, "candidates", found)
+
+    async def every(factory):
+        return frozenset(SLOTS)
+    monkeypatch.setattr(balance, "trusted_slots", every)
 
 async def _fives(factory, people):
     skills = {slot: Skill(5.5, 0.5) for slot in SLOTS}

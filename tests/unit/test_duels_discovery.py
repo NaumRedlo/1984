@@ -18,14 +18,14 @@ class Model:
         return SimpleNamespace(slot="DT1", probability=0.91, margin=0.4)
 
 
-def candidates():
+def candidates(each=1):
     return [Candidate(n, n, f"mapper{n}", slot, 5.5, "human", 1.0, f"{n:032x}")
-            for n, slot in enumerate(SLOTS, start=1)]
+            for n, slot in enumerate([slot for slot in SLOTS for _ in range(each)], start=1)]
 
 @pytest.mark.parametrize("count", [4, 5])
 def test_mixed_pools_keep_the_quota_even_when_catalogue_maps_score_better(count):
-    known = candidates()
-    new = [replace(c, beatmap_id=c.beatmap_id + 100, beatmapset_id=c.beatmapset_id + 100,
+    known = candidates(3)
+    new = [replace(c, beatmap_id=c.beatmap_id + 100, beatmapset_id=c.beatmapset_id + 100, mapper=f"new{c.beatmap_id}",
                    source="model", level="confident", confidence=0.81) for c in known]
     skills = {slot: Skill(5.5, 0.5) for slot in SLOTS}
     result = generator.generate(known + new, skills, skills, "mixed", generated_count=count)
