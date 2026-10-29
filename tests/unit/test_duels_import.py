@@ -52,7 +52,7 @@ def _archive(files: dict[str, bytes]) -> bytes:
 def _set(set_id: int, maps: list[tuple[int, float, str, int, bytes]]) -> dict:
     return {"id": set_id, "artist": "Artist", "title": f"Song {set_id}", "creator": "Meg", "status": "ranked",
             "beatmaps": [{"id": beatmap_id, "difficulty_rating": stars, "mode": mode, "status": "ranked", "version": "Extra",
-                          "total_length": length, "max_combo": 40, "checksum": hashlib.md5(raw).hexdigest(), "convert": False}
+                          "total_length": length, "max_combo": 40, "checksum": hashlib.md5(raw, usedforsecurity=False).hexdigest(), "convert": False}
                          for beatmap_id, stars, mode, length, raw in maps]}
 
 class Osu:
