@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import math
 import os
 import secrets
@@ -851,6 +852,72 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 live_tracker.nudge(int(osu_user_id))
         return web.json_response({"kept": verdict == witnessed.KEPT, "play": row.id if row is not None else None}, status=201 if verdict == witnessed.KEPT else 200)
 
+    async def witnessed_day(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        from db.database import AsyncSessionFactory
+        from services.render_farm import witnessed
+
+        start, end = witnessed.day_bounds(request.query.get("zone", ""))
+        async with AsyncSessionFactory() as session:
+            player = await videos.player_of(session, owner)
+            if player is None:
+                return web.json_response({"error": "not registered"}, status=404)
+            body = await witnessed.day(session, player.id, start, end)
+        return web.json_response(body)
+
+    async def witnessed_send(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        if _bot is None:
+            return web.json_response({"error": "bot asleep"}, status=503)
+        told = await _json_object(request)
+        replay = str(told.get("replay") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{32}", replay):
+            return web.json_response({"error": "no play"}, status=400)
+        chat_id, allowed = await _group_for(owner.telegram_id, str(told.get("chat", "")))
+        if not allowed:
+            return web.json_response({"error": "not your chat"}, status=403)
+        if chat_id is None:
+            return web.json_response({"error": "no chat"}, status=404)
+        from db.database import AsyncSessionFactory
+        from sqlalchemy import select
+
+        from db.models.witnessed_play import WitnessedPlay
+        from services.image import card_renderer
+        from services.image.render.recent import build_recent_card_data
+        from services.render_farm import witnessed
+        from utils.language import get_language
+
+        async with AsyncSessionFactory() as session:
+            player = await videos.player_of(session, owner)
+            row = await session.scalar(select(WitnessedPlay).where(WitnessedPlay.player_id == player.id, WitnessedPlay.replay_hash == replay)) if player else None
+            if player is None or row is None:
+                return web.json_response({"error": "no play"}, status=404)
+            name, osu_user_id = player.osu_username or "", player.osu_user_id
+        raw = await witnessed.card_score(_osu, osu_user_id, row)
+        lang = (await get_language(owner.telegram_id) or "en").lower()
+        try:
+            data = await build_recent_card_data(raw, username=name, player_id=int(osu_user_id or 0), lang=lang, card_mode="shared", client=_osu)
+            png = (await card_renderer.generate_recent_card_async(data)).getvalue()
+            await _bot.send_photo(chat_id, types.BufferedInputFile(png, filename="score.png"))
+        except Exception as exc:
+            logger.warning("a witnessed play %s was not sent: %s", row.id, exc, exc_info=True)
+            return web.json_response({"error": "not sent"}, status=502)
+        title, _ = await _chat_card(chat_id)
+        mods = "".join(mod.get("acronym", "") if isinstance(mod, dict) else str(mod) for mod in raw.get("mods") or [])
+        return web.json_response({"chat": title, "title": " ".join(part for part in (row.title or "", f"[{row.version}]" if row.version else "") if part),
+                                  "player": name, "mods": mods, "pp": float(raw.get("pp") or 0.0), "accuracy": round(float(raw.get("accuracy") or 0.0) * 100, 2),
+                                  "grade": str(raw.get("rank") or row.rank or "F")})
+
     async def witness_session(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -1563,6 +1630,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/me/played", played),
         web.post("/render/me/presence", presence),
         web.post("/render/me/play", witnessed_play),
+        web.get("/render/me/day", witnessed_day),
+        web.post("/render/me/play/send", witnessed_send),
         web.post("/render/me/session", witness_session),
         web.post("/render/me/history", local_history),
         web.get("/render/me/friends", friends),

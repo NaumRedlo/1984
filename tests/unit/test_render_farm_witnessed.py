@@ -215,3 +215,92 @@ async def test_the_app_tells_a_play_and_the_chat_sees_it(served, factory, monkey
     assert first["map"]["stars"] == 7.07 and first["max_combo"] == 650 and osu.asked == 1
     card = await (await client.get(f"/render/community/person?chat={CHAT}&id={naum}", headers=mine)).json()
     assert card["recent"][0]["witnessed"] is True and card["recent"][0]["map"]["beatmap"] == 5561
+
+
+async def test_a_day_counts_the_plays_time_and_records_of_its_own_hours(factory):
+    from db.models.best_score import UserBestScore as BestScore
+    from db.models.witness_session import WitnessSession
+
+    naum, _, _ = await _seed(factory)
+    player = await _player(factory, naum)
+    start, end = witnessed.day_bounds("UTC", NOW)
+    async with factory() as s:
+        _, early = await witnessed.keep(s, player, _told(replay="d" * 32), now=start - timedelta(hours=1))
+        _, first = await witnessed.keep(s, player, _told(), now=start + timedelta(hours=2))
+        _, second = await witnessed.keep(s, player, _told(replay="c" * 32, n100=40), now=start + timedelta(hours=3))
+        first.pp_estimated, second.pp_estimated, early.pp_estimated = 412.4, 380.0, 900.0
+        first.star_rating = 7.07
+        s.add(WitnessSession(player_id=player, started_at=start + timedelta(hours=1), ended_at=start + timedelta(hours=4), play_seconds=5400, plays=2))
+        s.add(BestScore(player_id=player, score_id=91001, beatmap_id=1, pp=412.4, created_at=start + timedelta(hours=2)))
+        s.add(BestScore(player_id=player, score_id=91002, beatmap_id=2, pp=300.0, created_at=start - timedelta(days=1)))
+        await s.commit()
+    async with factory() as s:
+        found = await witnessed.day(s, player, start, end)
+    assert (found["plays"], found["seconds"], found["records"]) == (2, 5400, 1)
+    assert found["best"] == {"title": "Blue Zenith [FOUR DIMENSIONS]", "pp": 412.4, "accuracy": pytest.approx(98.28, abs=0.01), "mods": "HDHR", "stars": 7.07}
+    moscow = witnessed.day_bounds("Europe/Moscow", NOW)
+    assert moscow[1] - moscow[0] == timedelta(days=1) and witnessed.day_bounds("No/Where", NOW) == (start, end)
+
+
+async def test_a_sent_play_is_the_real_score_when_osu_has_it_and_the_kept_one_otherwise(factory):
+    naum, _, _ = await _seed(factory)
+    player = await _player(factory, naum)
+    async with factory() as s:
+        _, row = await witnessed.keep(s, player, _told(), now=NOW)
+        await s.commit()
+    at = row.played_at.replace(tzinfo=timezone.utc).isoformat()
+
+    class Recent(_Osu):
+        def __init__(self, scores):
+            super().__init__()
+            self.scores = scores
+
+        async def get_user_recent_scores(self, user_id, limit=1, oauth_token=None, mode=None):
+            return self.scores
+
+    real = {"id": 9, "beatmap": {"id": 555}, "ended_at": at, "pp": 512.0}
+    assert await witnessed.card_score(Recent([{"id": 8, "beatmap": {"id": 1}, "ended_at": at}, real]), 70, row) is real
+    kept = await witnessed.card_score(Recent([{"id": 7, "beatmap": {"id": 555}, "ended_at": "2020-01-01T00:00:00Z"}]), 70, row)
+    assert kept["id"] == 0 and kept["beatmap"]["difficulty_rating"] == 7.07 and kept["beatmapset"]["title"] == "Blue Zenith"
+    assert kept["accuracy"] == pytest.approx(0.9828, abs=0.0001) and [mod["acronym"] for mod in kept["mods"]] == ["HD", "HR"]
+    assert kept["statistics"] == {"great": 500, "ok": 12, "meh": 1, "miss": 0} and kept["rank"] == "SH"
+    offline = await witnessed.card_score(None, None, row)
+    assert offline["beatmap"]["id"] == 555 and offline["beatmapset"]["artist"] == "xi"
+
+
+async def test_the_app_sends_its_own_kept_play_to_the_chat_and_the_day_is_read(served, factory, monkeypatch):
+    from services.image import card_renderer
+    from services.image.render import recent
+    from services.render_farm import http
+
+    naum, _, _ = await _seed(factory)
+    client, mine = served
+    monkeypatch.setattr(http, "_osu", None)
+    photos = []
+
+    async def built(raw, **kw):
+        return {"raw": raw}
+
+    class Picture:
+        def getvalue(self):
+            return b"png"
+
+    async def drawn(data):
+        return Picture()
+
+    async def photo(chat_id, picture):
+        photos.append(chat_id)
+
+    monkeypatch.setattr(recent, "build_recent_card_data", built)
+    monkeypatch.setattr(card_renderer, "generate_recent_card_async", drawn)
+    monkeypatch.setattr(http._bot, "send_photo", photo, raising=False)
+    assert (await client.post("/render/me/play", headers=mine, json=_told(id=5561))).status == 201
+    sent = await client.post("/render/me/play/send", headers=mine, json={"chat": CHAT, "replay": REPLAY})
+    assert sent.status == 200 and photos == [CHAT]
+    said = await sent.json()
+    assert (said["chat"], said["title"], said["mods"], said["grade"]) == ("Osu Squad", "Blue Zenith [FOUR DIMENSIONS]", "HDHR", "SH")
+    assert (await client.post("/render/me/play/send", headers=mine, json={"chat": -12345, "replay": REPLAY})).status == 403
+    assert (await client.post("/render/me/play/send", headers=mine, json={"chat": CHAT, "replay": "e" * 32})).status == 404
+    assert (await client.post("/render/me/play/send", headers=mine, json={"chat": CHAT, "replay": "nope"})).status == 400
+    day = await client.get("/render/me/day?zone=Europe/Moscow", headers=mine)
+    assert day.status == 200 and set(await day.json()) == {"plays", "seconds", "records", "best"}

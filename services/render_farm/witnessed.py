@@ -314,3 +314,80 @@ def said(row: WitnessedPlay) -> dict[str, Any]:
         "counts": [row.count_300, row.count_100, row.count_50, row.count_miss],
         "at": stamp(row.played_at),
     }
+
+
+def day_bounds(zone: str, now: Optional[datetime] = None) -> tuple[datetime, datetime]:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        place = ZoneInfo(zone) if zone else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        place = timezone.utc
+    local = (now or utcnow()).replace(tzinfo=timezone.utc).astimezone(place)
+    start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return start.astimezone(timezone.utc).replace(tzinfo=None), (start + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
+
+async def day(session, player_id: int, start: datetime, end: datetime) -> dict[str, Any]:
+    from db.models.best_score import UserBestScore as BestScore
+    from db.models.witness_session import WitnessSession
+    from services.render_farm.community import mods_of
+
+    plays = (await session.scalars(select(WitnessedPlay).where(WitnessedPlay.player_id == player_id, WitnessedPlay.played_at >= start,
+                                                             WitnessedPlay.played_at < end))).all()
+    seconds = await session.scalar(select(func.coalesce(func.sum(WitnessSession.play_seconds), 0)).where(
+        WitnessSession.player_id == player_id, WitnessSession.ended_at >= start, WitnessSession.started_at < end))
+    records = await session.scalar(select(func.count(BestScore.id)).where(BestScore.player_id == player_id, BestScore.created_at >= start,
+                                                                         BestScore.created_at < end))
+    best = max((row for row in plays if row.passed and row.pp_estimated is not None), key=lambda row: row.pp_estimated, default=None)
+    return {"plays": len(plays), "seconds": int(seconds or 0), "records": int(records or 0),
+            "best": {"title": " ".join(part for part in (best.title or "", f"[{best.version}]" if best.version else "") if part),
+                     "pp": round(float(best.pp_estimated), 2), "accuracy": round(float(best.accuracy or 0.0), 2),
+                     "mods": "".join(mods_of(best.mods)), "stars": round(float(best.star_rating or 0.0), 2)} if best is not None else None}
+
+SAME_PLAY = timedelta(minutes=10)
+
+def _stamp_of(said: Any) -> Optional[datetime]:
+    if not isinstance(said, str):
+        return None
+    try:
+        return datetime.fromisoformat(said.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+def matching(row: WitnessedPlay, recent: list[dict]) -> Optional[dict]:
+    near = []
+    for score in recent:
+        beatmap = (score.get("beatmap") or {}).get("id") or score.get("beatmap_id")
+        at = _stamp_of(score.get("ended_at") or score.get("created_at"))
+        if row.beatmap_id and beatmap == row.beatmap_id and at is not None and abs(at - row.played_at) <= SAME_PLAY:
+            near.append((abs(at - row.played_at), score))
+    return min(near, key=lambda pair: pair[0])[1] if near else None
+
+def raw_score_of(row: WitnessedPlay, beatmap: Optional[dict]) -> dict[str, Any]:
+    from services.render_farm.community import mods_of
+
+    found = dict(beatmap or {})
+    beatmapset = dict(found.pop("beatmapset", None) or {})
+    found = {"id": row.beatmap_id or 0, "version": row.version or "", "difficulty_rating": row.star_rating or 0.0, "bpm": row.bpm or 0.0,
+             "total_length": row.length or 0, "max_combo": row.map_max_combo or 0, "checksum": row.beatmap_md5, **found}
+    beatmapset = {"id": row.beatmapset_id or 0, "artist": row.artist or "", "title": row.title or "", "creator": row.creator or "", **beatmapset}
+    return {"id": 0, "beatmap": found, "beatmapset": beatmapset, "accuracy": float(row.accuracy or 0.0) / 100, "passed": bool(row.passed),
+            "rank": row.rank or "F", "pp": row.pp_estimated, "max_combo": row.max_combo or 0, "ruleset_id": 0,
+            "mods": [{"acronym": mod} for mod in mods_of(row.mods)], "ended_at": row.played_at.isoformat() + "Z",
+            "statistics": {"great": row.count_300 or 0, "ok": row.count_100 or 0, "meh": row.count_50 or 0, "miss": row.count_miss or 0}}
+
+async def card_score(osu, osu_user_id: Optional[int], row: WitnessedPlay) -> dict[str, Any]:
+    if osu is not None and osu_user_id:
+        try:
+            found = matching(row, await osu.get_user_recent_scores(int(osu_user_id), limit=50, mode="osu"))
+        except Exception:
+            found = None
+        if found is not None:
+            return found
+    beatmap = None
+    if osu is not None and row.beatmap_id:
+        try:
+            beatmap = await osu.get_beatmap(row.beatmap_id)
+        except Exception:
+            beatmap = None
+    return raw_score_of(row, beatmap)
