@@ -1,4 +1,3 @@
-"""Build a diagnostic pool without creating a duel or contacting Bancho."""
 import argparse
 import asyncio
 import json
@@ -35,7 +34,7 @@ async def probe(first, second, human_only, seed):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Build a diagnostic pool without creating a duel or contacting Bancho")
     parser.add_argument("--first", type=star_level, default=5.5, help="first synthetic player skill in stars")
     parser.add_argument("--second", type=star_level, default=5.5, help="second synthetic player skill in stars")
     parser.add_argument("--human-only", action="store_true")

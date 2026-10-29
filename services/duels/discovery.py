@@ -1,4 +1,3 @@
-"""Analyse unseen maps for duel pools without admitting them to the catalogue."""
 import asyncio
 import random
 from typing import Optional

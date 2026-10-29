@@ -80,11 +80,6 @@ async def propose(session, beatmap_id: int, slot: str, probability: float, margi
 
 async def reconsider(session, beatmap_id: int, slot: Optional[str], probability: float, margin: float, version: str,
                      why: Optional[str], now: Optional[datetime] = None) -> Optional[str]:
-    """A published model's fresh word on a map no person has decided.
-
-    Automatic slots belong to the published model: a slot it admits is set or moved, and a map it refuses loses its
-    automatic slot, so rolling back a bad model also takes back what that model let in. Human decisions are never
-    touched, and pools already drawn keep their own copy of every slot."""
     now = now or utcnow()
     row = await _row(session, beatmap_id)
     if row is None or row.state not in (UNASSIGNED, AUTO_ASSIGNED):

@@ -191,11 +191,6 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
 REANALYSE_FAILURES = (OsuFileError, ValueError, ArithmeticError, IndexError, KeyError, TypeError)
 
 async def reanalyse(factory, folder: str, report=print, now: Optional[datetime] = None) -> dict[str, int]:
-    """Analyse every stored .osu file again for the current feature version.
-
-    Each map is committed on its own and maps already analysed for this version are skipped, so a stopped run carries on
-    where it stopped. Stars known from an earlier analysis of the same map and mods are kept, and every map that could
-    not be analysed is reported with the reason."""
     now = now or utcnow()
     counted = {"analysed": 0, "current": 0, "missing_file": 0, "unreadable": 0, "unsupported": 0, "failed": 0}
     async with factory() as session:
@@ -419,9 +414,6 @@ async def corpus_labels(session) -> dict[tuple, str]:
             for row in rows}
 
 async def reassess(factory, model, now: Optional[datetime] = None) -> dict[str, int]:
-    """Let the published model look again at every admitted map no person has decided; catalog.reconsider holds the rules.
-
-    A map without a current analysis keeps what it had: `reanalyse` brings it up to the current features first."""
     from services.duels import kamerton
 
     now = now or utcnow()

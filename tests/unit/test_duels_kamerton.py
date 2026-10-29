@@ -14,7 +14,6 @@ def _features(**values) -> dict:
     return found
 
 class _Noise:
-    """Repeatable jitter for the made-up maps; a plain linear congruential step is enough here."""
 
     def __init__(self, seed: int):
         self.state = seed

@@ -154,7 +154,6 @@ class SlotModel:
     @classmethod
     def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5,
             paths: tuple[str, ...] = PATHS, also: Optional[list[Optional[str]]] = None, share: float = 0.0) -> "SlotModel":
-        """`also` names a second acceptable slot per row; it takes `share` of that row's target and the first slot the rest."""
         seconds = also or [None] * len(labels)
         classes = SLOTS + tuple(sorted({label for label in list(labels) + list(seconds) if label and reserved(label)}))
         kept = [(row, label, second) for row, label, second in zip(rows, labels, seconds) if label in classes]
@@ -220,7 +219,6 @@ class SlotModel:
                    _numbers(body["bias"], len(classes), "bias"), body.get("version", MODEL_VERSION), classes, paths)
 
 def levels_of(paths: tuple[str, ...], row: list[float], reasons: list[tuple[str, float]]) -> dict[str, float]:
-    """How far each reason's input sits from a typical map, read from the very row the prediction used."""
     at = {path: j for j, path in enumerate(paths)}
     return {name: row[at[name]] for name, _ in reasons if name in at}
 

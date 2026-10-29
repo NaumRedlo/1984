@@ -95,7 +95,6 @@ JOBS_KEPT = 20
 jobs: dict[str, dict[str, Any]] = {}
 
 def open_job(now: Optional[datetime] = None) -> str:
-    """A training run the desk can follow by its id until it is done, found nothing new, or failed."""
     for old in [name for name, job in jobs.items() if job["state"] != "running"][:max(0, len(jobs) + 1 - JOBS_KEPT)]:
         del jobs[old]
     name = uuid.uuid4().hex[:12]

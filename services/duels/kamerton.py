@@ -279,7 +279,6 @@ def _filled(value: float) -> dict[str, Any]:
     return found
 
 def trial(model) -> None:
-    """Ask the model about a plain made-up map and about an empty one; a usable model answers both with real odds."""
     for plain, views in ((_filled(1.0), {"NFDT": _filled(1.0), "NFHR": _filled(1.0)}), ({}, {})):
         example = Example(plain, views, "", 0, 0)
         odds = list(decide(model, example).probabilities.values())
@@ -302,10 +301,6 @@ class Judgement:
     top2: tuple[str, ...]
 
 def judge(model, example: Example) -> Judgement:
-    """What the model thinks of a held-out map and what the catalogue would really do with it.
-
-    `best` is the most likely class for the classification figures. `slot` is set only when the map would be
-    admitted to duels: inside the trained range, a working slot, and at least uncertain confidence."""
     prediction = decide(model, example)
     odds = prediction.probabilities
     ranked = tuple(sorted(odds, key=lambda name: -odds[name]))
@@ -314,7 +309,6 @@ def judge(model, example: Example) -> Judgement:
                      catalog.confidence_level(prediction.probability, prediction.margin) if why is None else None, why, ranked[:2])
 
 def refusal(prediction: Prediction) -> Optional[str]:
-    """Why a prediction would not admit its map to duels, or None when it would."""
     if prediction.outside:
         return "outside"
     if prediction.slot is None:
@@ -333,7 +327,6 @@ def _right(group: list[Judgement]) -> int:
     return sum(1 for one in group if one.slot == one.truth)
 
 def summary(judgements: list[Judgement]) -> dict[str, Any]:
-    """Classification of the catalogue (every class, reserved ones included) apart from what would really be admitted."""
     found = report([one.truth for one in judgements], [one.best for one in judgements])
     admitted = [one for one in judgements if one.slot is not None]
     sure = [one for one in admitted if one.level == "confident"]
@@ -448,7 +441,6 @@ async def decision_examples(factory) -> list[Example]:
     return found
 
 async def examples(factory) -> list[Example]:
-    """The one set of maps Kamerton learns from; training, its report and the "anything new?" check all read this."""
     return await corpus_examples(factory) + await decision_examples(factory)
 
 def fingerprint(found: list[Example]) -> str:
