@@ -88,6 +88,7 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
         features = await asyncio.to_thread(analyse, beatmap, mods)
         analyses[mods] = (features, await _stars(osu, entry["beatmap_id"], mods, entry["stars"]))
     prediction = None
+    described = await tags.description_of(osu, entry["beatmapset_id"])
     if model is not None:
         hr_cs = apply_mods(beatmap, "HR")[0]
         prediction = model.predict(analyses["NF"][0], beatmap.ar, hr_cs, {mods: analyses[mods][0] for mods in VIEWED if mods in analyses})
@@ -99,7 +100,7 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
         made.title = (entry.get("title") or "")[:200] or made.title
         made.artist = (entry.get("artist") or "")[:200] or made.artist
         made.version = (entry.get("version") or "")[:200] or made.version
-        made.tags = tags.read(entry["tags"]) if entry.get("tags") else made.tags
+        made.tags = tags.read(entry.get("tags"), described) if entry.get("tags") or described else made.tags
         made.ranked_status = entry.get("status")
         made.beatmapset_id = made.beatmapset_id or entry["beatmapset_id"]
         made.mapper = made.mapper or entry.get("mapper")

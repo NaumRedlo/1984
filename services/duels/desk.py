@@ -248,6 +248,7 @@ def _described(beatmap_id: int, digest: Optional[str], revision: Optional[DuelMa
             "mapper": revision.mapper if revision is not None else None, "ranked_status": revision.ranked_status if revision is not None else None,
             "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
             "version": revision.version if revision is not None else None,
+            "tags": {key: (revision.tags or {}).get(key) or [] for key in ("tournaments", "stages", "slots")} if revision is not None and revision.tags else None,
             "stars": (slotted or plain).stars if (slotted or plain) is not None else None, "plain_stars": plain.stars if plain is not None else None,
             "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"), "bpm": bpm,
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs, views)}
@@ -284,9 +285,11 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
             found.append(({"kind": "review", "id": None, "reason": "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
                            **_graded(assignment), "state": assignment.state, "opinions": True, "feedback": None},
                           int(assignment.beatmap_id), assignment.revision_hash, assignment.slot))
-        waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
-                                                                         DuelMapAssignment.admitted.is_(True))
-                                         .order_by(DuelMapAssignment.updated_at).limit(max(0, QUEUE_MOST - len(found))))).all()
+        waiting = (await session.execute(select(DuelMapAssignment, DuelMapRevision.tags).join(
+            DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id) & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
+            .where(DuelMapAssignment.state == catalog.UNASSIGNED, DuelMapAssignment.admitted.is_(True))
+            .order_by(DuelMapAssignment.updated_at))).all()
+        waiting = [assignment for assignment, _ in sorted(waiting, key=lambda row: not (row[1] or {}).get("tournaments"))][:max(0, QUEUE_MOST - len(found))]
         for assignment in waiting:
             if int(assignment.beatmap_id) in seen:
                 continue

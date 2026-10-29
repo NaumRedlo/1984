@@ -95,7 +95,7 @@ def test_the_last_note_does_not_make_a_false_peak_of_load():
     found = features.windows([0.0, 1.0, 2.0], [0.0, 1.0, 1.0], 2.0, 2.0)
     shifted = features.windows([0.0, 1.0, 1.999], [0.0, 1.0, 1.0], 1.999, 2.0)
     assert found["max"] == pytest.approx(1.0) and shifted["max"] == pytest.approx(1.0)
-    assert features.FEATURE_VERSION == "features-v2"
+    assert features.FEATURE_VERSION == "features-v3"
 
 def test_reading_counts_objects_on_screen_at_once():
     crowded = features.analyse(parse(_map(_stream(30, gap=40))))
@@ -284,3 +284,15 @@ def test_owc_pools_are_read_with_stage_slot_and_map():
     assert corpus.conflicts(found) == {658127}
     assert len(corpus.distinct(found)) == 5
     assert (corpus.normalised("HD1"), corpus.normalised("NM1"), corpus.normalised("DT3")) == (None, "NM1", None)
+
+
+def test_snaps_tell_quarter_streams_from_triplets_and_count_tempo_changes():
+    quarters = features.analyse(parse(_map(_stream(32, gap=62))))["snaps"]
+    assert quarters["quarter"] == pytest.approx(1.0) and quarters["triplet"] == 0.0 and quarters["change"] == 0.0
+    mixed = _stream(16, start=1000, gap=62) + _stream(16, start=3000, gap=83) + _stream(8, start=5000, gap=42)
+    found = features.analyse(parse(_map(mixed)))["snaps"]
+    assert found["third"] > 0.3 and found["sixth"] > 0.1 and found["triplet"] == pytest.approx(found["third"] + found["sixth"])
+    assert 0.0 < found["change"] < 0.2 and 0.0 < found["breaks"] < 0.1 and found["tempo_changes"] == 0.0
+    head = HEAD.replace("0,250,4,2,0,60,1,0", "0,250,4,2,0,60,1,0\n4000,200,4,2,0,60,1,0\n4500,-50,4,2,0,60,0,0")
+    sped = features.analyse(parse(_map(_stream(8, start=1000, gap=125) + _stream(8, start=4000, gap=100), head)))["snaps"]
+    assert sped["half"] == pytest.approx(1.0) and sped["tempo_changes"] == 1.0 and sped["breaks"] > 0.0

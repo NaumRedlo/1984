@@ -34,6 +34,7 @@ PATHS = (
     "sliders.speed.p90", "sliders.repeats", "effective.ar", "effective.cs", "effective.od", "length_seconds",
     "aim_windows.2s.median", "aim_windows.2s.p90", "aim_windows.2s.max", "aim_windows.10s.p90", "aim_windows.30s.loaded_share",
     "tap_windows.2s.median", "tap_windows.2s.p90", "tap_windows.2s.max", "tap_windows.10s.p90", "tap_windows.30s.loaded_share",
+    "snaps.triplet", "snaps.change",
 )
 
 VIEWS = (

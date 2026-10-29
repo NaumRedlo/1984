@@ -4,12 +4,16 @@ from typing import Any
 
 from services.duels.osu_file import Beatmap, HitObject
 
-FEATURE_VERSION = "features-v2"
+FEATURE_VERSION = "features-v3"
 WINDOWS = (2.0, 10.0, 30.0)
 STREAM_SPREAD = 0.12
 STREAM_LEAST = 3
 STREAM_BINS = ((3, 5), (6, 15), (16, 31), (32, None))
 LOADED = 0.5
+SNAPS = (("half", 1 / 2, 1 / 2), ("quarter", 1 / 4, 1 / 4), ("quarter", 3 / 4, 1 / 4), ("third", 1 / 3, 1 / 3), ("third", 2 / 3, 1 / 3),
+         ("sixth", 1 / 6, 1 / 6), ("eighth", 1 / 8, 1 / 8), ("whole", 1.0, 1.0))
+SNAP_SLACK_MS = 2.5
+SNAP_SLACK = 0.03
 
 def radius(cs: float) -> float:
     return 54.4 - 4.48 * cs
@@ -82,6 +86,31 @@ def streams(times: list[float]) -> list[int]:
         chains.append(len(current))
     return chains
 
+def _snap(gap: float, beat: float) -> str:
+    if beat <= 0 or gap > 2 * beat + SNAP_SLACK_MS:
+        return "long"
+    for name, part, _ in SNAPS:
+        expected = beat * part
+        if abs(gap - expected) <= max(SNAP_SLACK_MS, SNAP_SLACK * expected):
+            return name
+    return "odd"
+
+def snaps(beatmap: Beatmap) -> dict[str, float]:
+    reds = [point for point in beatmap.timing if point.uninherited]
+    items = [item for item in beatmap.objects if item.kind != "spinner"]
+    found, at = [], 0
+    for before, after in zip(items, items[1:]):
+        while at + 1 < len(reds) and reds[at + 1].time <= before.time + 1:
+            at += 1
+        found.append(_snap(after.time - before.time, reds[at].beat_length if reds else 0.0))
+    near = [name for name in found if name != "long"]
+    counted = {name: sum(1 for held in near if held == name) / max(1, len(near)) for name in ("half", "quarter", "third", "sixth", "eighth", "whole", "odd")}
+    dense = [name for name in near if name not in ("whole", "odd")]
+    changes = sum(1 for a, b in zip(dense, dense[1:]) if a != b)
+    tempos = {round(60000 / point.beat_length, 1) for point in reds if point.beat_length > 0}
+    return {**counted, "triplet": counted["third"] + counted["sixth"], "change": changes / max(1, len(dense) - 1),
+            "breaks": sum(1 for name in found if name == "long") / max(1, len(found)), "tempo_changes": float(max(0, len(tempos) - 1))}
+
 def windows(moments: list[float], loads: list[float], length: float, size: float) -> dict[str, float]:
     if not moments:
         return {"median": 0.0, "p90": 0.0, "p99": 0.0, "max": 0.0, "loaded_share": 0.0, "longest_rest": 0.0}
@@ -146,6 +175,7 @@ def analyse(beatmap: Beatmap, mods: str = "") -> dict[str, Any]:
         "angle_deg": _summary(angles),
         "speed_px_ms": _summary(speeds),
         "rhythm_change": _summary(rhythm),
+        "snaps": snaps(beatmap),
         "streams": {"chains": len(chains), "objects": sum(chains), "share": sum(chains) / max(1, len(circles)), "lengths": bins},
         "reading": {"visible": _summary([float(v) for v in visible]), "preempt_ms": round(window_ms, 1), "overlaps": overlaps},
         "sliders": {"share": len(sliders) / max(1, len(items)), "speed": _summary(slider_speed),

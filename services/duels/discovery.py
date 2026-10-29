@@ -77,9 +77,10 @@ async def inspect(factory, fetch, osu, folder, entry, model) -> Optional[Candida
     if beatmap.mode != 0 or len(beatmap.objects) < 2:
         return None
     digest = await asyncio.to_thread(mirrors.store, folder, raw)
+    described = await tags.description_of(osu, entry["beatmapset_id"])
     revision = DuelMapRevision(beatmap_id=entry["beatmap_id"], beatmapset_id=entry["beatmapset_id"], hash=digest,
                                status="ok", ranked_status=entry["status"], source="duel-discovery", mapper=beatmap.creator,
-                               title=beatmap.title[:200], artist=beatmap.artist[:200], version=beatmap.version[:200], tags=tags.read(entry.get("tags")),
+                               title=beatmap.title[:200], artist=beatmap.artist[:200], version=beatmap.version[:200], tags=tags.read(entry.get("tags"), described),
                                object_count=len(beatmap.objects), max_combo=entry.get("max_combo"),
                                format_version=beatmap.format_version, downloaded_at=utcnow())
     analyses = {}

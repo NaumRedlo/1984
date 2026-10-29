@@ -356,3 +356,17 @@ async def test_discovery_result_is_visible_in_the_balance_journal(factory):
     result = next(entry for entry in entries if entry["action"] == "discover_result")
     assert result["after"]["outcomes"]["below_threshold"] == 3
     assert result["after"]["slot"] == "DT2"
+
+
+async def test_maps_from_tournament_pools_wait_first_and_show_their_tags(factory):
+    async with factory() as session:
+        for number, tags in ((30, None), (31, {"raw": "owc2024 qf nm2", "tournaments": ["owc2024"], "stages": ["qf"], "slots": ["NM2"]})):
+            digest = f"{number:032x}"
+            session.add(DuelMapRevision(beatmap_id=number, beatmapset_id=number * 10, hash=digest, status="ok", ranked_status="ranked", mapper="Meg",
+                                        tags=tags))
+            session.add(DuelMapAssignment(beatmap_id=number, slot=None, state="UNASSIGNED", revision_hash=digest, admitted=True))
+        await session.commit()
+    waiting = [task for task in await desk.queue(factory, 1) if task["kind"] == "unassigned"]
+    assert [task["map"]["beatmap_id"] for task in waiting][0] == 31
+    assert waiting[0]["map"]["tags"] == {"tournaments": ["owc2024"], "stages": ["qf"], "slots": ["NM2"]}
+    assert all(task["map"]["tags"] is None for task in waiting[1:])
