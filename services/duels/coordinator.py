@@ -20,6 +20,7 @@ logger = get_logger("duels.coordinator")
 
 CATALOG_VERSION = "mixed-v2"
 CLOCK_SLACK = 10
+FOUND_IN_POOL = 2
 
 class NotYet(Exception):
     pass
@@ -132,8 +133,13 @@ class Coordinator:
         first, second = await self.profiles(self.factory, people)
         unseen = [found for found in await discovery.candidates(self.factory, self.osu, generator.targets(first, second), duel.seed)
                   if found.slot in trusted]
-        count = min(4 + (int.from_bytes(duel.seed.encode(), "big") % 2), len({found.slot for found in unseen}))
-        pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count or None)
+        pool = None
+        for count in range(min(FOUND_IN_POOL, len({found.slot for found in unseen})), 0, -1):
+            pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count)
+            if pool.status == "ready":
+                break
+        if pool is None or pool.status != "ready":
+            pool = generator.generate(candidates, first, second, duel.seed)
         await series.pool_built(self.factory, duel_id, pool, CATALOG_VERSION, FEATURE_VERSION)
 
     async def open_room(self, command: dict[str, Any]) -> None:

@@ -15,7 +15,7 @@ from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRe
 from db.models.player import Player
 from services.duels import balance, deadlines, outbox, series, service, states
 from services.duels.bancho_text import parse_line, said
-from services.duels.coordinator import Coordinator
+from services.duels.coordinator import FOUND_IN_POOL, Coordinator
 from services.duels.features import FEATURE_VERSION
 from services.duels.generator import SLOT_MODS, Skill
 from services.duels.rules import SLOTS
@@ -158,7 +158,7 @@ async def test_a_round_goes_from_challenge_to_an_official_point_through_bancho(f
         await series.pool_ack(factory, duel["id"], player, shown["pool"]["manifest"], f"ack-{player}-e2e")
     assert await _state(factory, duel["id"]) == states.DRAFTING
 
-    assert sum(e["source"] == "model" for e in shown["pool"]["entries"]) in (4, 5)
+    assert sum(e["source"] == "model" for e in shown["pool"]["entries"]) == FOUND_IN_POOL
     side = {p["side"]: p["player"] for p in shown["participants"]}
     free = [s for s in SLOTS if s != "TB"]
     for turn, who in enumerate(series.BANS):
@@ -218,3 +218,28 @@ async def test_a_map_with_a_secondary_slot_is_offered_twice_and_counted_apart(fa
     coverage = await desk.coverage(factory, 1)
     assert sum(coverage["secondary"]["HD2"]) == 1 and coverage["secondary"]["HD2"][desk.band_of(5.6)] == 1
     assert catalog.secondary_of(held) == "HD2"
+
+
+async def test_a_pool_falls_back_to_collected_maps_when_kamertons_own_finds_do_not_fit(factory, monkeypatch):
+    from services.duels import discovery
+    from services.duels.coordinator import catalogue
+
+    async def far(factory, osu, aims, seed):
+        async with factory() as session:
+            known = await catalogue(session)
+        return [replace(candidate, beatmap_id=candidate.beatmap_id + 2000, beatmapset_id=candidate.beatmapset_id + 2000,
+                        stars=9.9, source="model") for candidate in known]
+    monkeypatch.setattr(discovery, "candidates", far)
+    monkeypatch.setattr(outbox, "HANDLERS", {})
+    bancho, osu = FakeBancho(), FakeOsu()
+    Coordinator(factory, bancho, osu, profiles=_fives, budget=Budget(per_minute=1000)).install()
+    duel = await service.invite(factory, 1, 2, "invite-far")
+    await service.accept(factory, duel["id"], 2, "accept-far")
+    assert await outbox.sweep(factory) == 1
+    assert await _state(factory, duel["id"]) == states.WAITING_ROOM
+    from db.models.duel import DuelPool, DuelPoolEntry
+
+    async with factory() as session:
+        entries = (await session.scalars(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
+                                         .where(DuelPool.duel_id == duel["id"]))).all()
+    assert len(entries) == len(SLOTS) and all(entry.metrics_snapshot["source"] == "catalogue" for entry in entries)
