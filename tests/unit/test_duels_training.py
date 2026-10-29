@@ -91,7 +91,7 @@ async def test_a_training_job_reports_done_nothing_new_or_failed(factory, monkey
     version, _ = await training.run_job(factory, name, steps=20)
     assert (training.jobs[name]["state"], training.jobs[name]["version"]) == ("done", version)
 
-    async def stumble(factory, steps=400, now=None):
+    async def stumble(factory, steps=400, now=None, report=None):
         await asyncio.sleep(0)
         raise RuntimeError("disk full")
 

@@ -327,7 +327,7 @@ async def test_a_training_run_is_followed_by_its_job_until_it_ends(client, facto
     from tests.unit.test_duels_balance import _labelled
 
     real = training.train
-    monkeypatch.setattr(training, "train", lambda factory, steps=400, now=None: real(factory, 20, now))
+    monkeypatch.setattr(training, "train", lambda factory, steps=400, now=None, report=None: real(factory, 20, now, report))
     started = await client.post("/render/admin/duels/models/train", json={"reason": "first"}, headers=_as(1))
     assert started.status == 403
     async with factory() as session:
@@ -402,3 +402,62 @@ async def test_discovery_requires_a_model_forwards_slot_and_resumes_search(facto
         assert calls[-1][1]["page_from"] == 3
         result = next(row for row in await desk.journal(factory, 1) if row["action"] == "discover_result")
         assert result["after"]["outcomes"]["below_threshold"] == 3
+
+
+async def test_a_review_carries_the_tier_and_the_reasons_and_refuses_unknown_ones(client, factory):
+    from db.models.duel import DuelRole
+    from db.models.duel_catalog import DuelMapAssignment
+
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        session.add(DuelMapAssignment(beatmap_id=7, slot="NM1", state="AUTO_ASSIGNED", revision_hash="a" * 32, admitted=True))
+        await session.commit()
+    path = "/render/admin/duels/maps/7/review"
+    for body in ({"tier": 1}, {"reasons": "jumps"}, {"reasons": [1]}):
+        assert (await client.post(path, json={"decision": "APPROVE", "reason": "", **body}, headers=_as(1))).status == 400, body
+    refused = await client.post(path, json={"decision": "APPROVE", "reason": "", "reasons": ["vibes"]}, headers=_as(1))
+    assert refused.status == 409 and (await refused.json())["error"] == "UNKNOWN_REASON"
+    answered = await client.post(path, json={"decision": "APPROVE", "reason": "", "tier": "exemplary", "reasons": ["jumps", "turns"]}, headers=_as(1))
+    assert answered.status == 200
+    found = await answered.json()
+    assert (found["tier"], found["reasons"]) == ("exemplary", ["jumps", "turns"])
+
+
+async def test_presence_recovers_training_and_repeated_start_joins_the_same_job(client, factory, monkeypatch):
+    from db.models.duel import DuelRole
+    from services.duels import training
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(training, "jobs", {})
+    monkeypatch.setattr(training, "unchanged", AsyncMock(return_value=False))
+    entered, release, ended = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls = []
+    async def train(factory, steps=400, now=None, report=None):
+        calls.append(1)
+        report(phase="fitting", completed=35, total=100, maps=20)
+        entered.set()
+        await release.wait()
+        ended.set()
+        return "kamerton-42", {}
+    monkeypatch.setattr(training, "train", train)
+    async with factory() as session:
+        session.add(DuelRole(player_id=1, role="BALANCE_REVIEWER"))
+        await session.commit()
+    path = "/render/admin/duels/models/train"
+    first = await (await client.post(path, json={"reason": "first"}, headers=_as(1))).json()
+    await asyncio.wait_for(entered.wait(), 2)
+    try:
+        repeated = await (await client.post(path, json={"reason": "repeat"}, headers=_as(1))).json()
+        assert repeated == {"started": False, "job": first["job"]}
+        found = await (await client.post("/render/admin/duels/presence", json={"section": "model"}, headers=_as(1))).json()
+        assert found["training_known"] and found["training"]["job"] == first["job"]
+        assert found["training"]["completed"] == 35 and found["training"]["total"] == 100
+        assert (await client.post("/render/admin/duels/presence", json={"section": "model"}, headers=_as(2))).status == 403
+        release.set()
+        await asyncio.wait_for(ended.wait(), 2)
+        found = await (await client.post("/render/admin/duels/presence", json={"section": "model"}, headers=_as(1))).json()
+        assert found["training"]["state"] == "done" and found["training"]["version"] == "kamerton-42"
+        assert len(calls) == 1
+    finally:
+        release.set()
+        await asyncio.wait_for(ended.wait(), 2)

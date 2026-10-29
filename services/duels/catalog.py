@@ -13,6 +13,13 @@ HUMAN_APPROVED = "HUMAN_APPROVED"
 REJECTED = "REJECTED"
 QUARANTINED = "QUARANTINED"
 
+EXEMPLARY = "exemplary"
+FITS = "fits"
+BORDERLINE = "borderline"
+TIERS = (EXEMPLARY, FITS, BORDERLINE)
+REASONS = ("jumps", "turns", "streams", "bursts", "triplets", "rhythm", "sliders", "low_ar", "small_circles", "stamina")
+MOST_REASONS = 3
+
 CONFIDENT = (0.80, 0.20)
 UNCERTAIN = (0.60, 0.10)
 
@@ -39,7 +46,7 @@ def confidence_level(probability: Optional[float], margin: Optional[float]) -> O
 def _view(row: Optional[DuelMapAssignment]) -> Optional[dict[str, Any]]:
     if row is None:
         return None
-    return {"slot": row.slot, "secondary": secondary_of(row), "state": row.state, "confidence": row.confidence, "margin": row.margin,
+    return {"slot": row.slot, "secondary": secondary_of(row), "tier": row.tier, "reasons": list(row.reasons or []), "state": row.state, "confidence": row.confidence, "margin": row.margin,
             "version": row.assignment_version, "revision": row.revision_hash, "admitted": row.admitted,
             "locked": row.locked_at is not None}
 
@@ -133,8 +140,23 @@ def _second(row, decision: str, secondary: Any) -> None:
         raise CatalogRefusal("UNKNOWN_SECONDARY")
     row.secondary_slots = [secondary] if secondary else None
 
+def _grade(row, decision: str, tier: Any, reasons: Any) -> None:
+    if decision not in ("APPROVE", "MOVE"):
+        row.tier, row.reasons = None, None
+        return
+    if tier is not KEEP and tier not in TIERS:
+        raise CatalogRefusal("UNKNOWN_TIER")
+    if reasons is not KEEP:
+        if not isinstance(reasons, list) or any(reason not in REASONS for reason in reasons):
+            raise CatalogRefusal("UNKNOWN_REASON")
+        reasons = list(dict.fromkeys(reasons))
+        if len(reasons) > MOST_REASONS:
+            raise CatalogRefusal("TOO_MANY_REASONS")
+        row.reasons = reasons or None
+    row.tier = (row.tier or FITS) if tier is KEEP else tier
+
 async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note: str, slot: Optional[str] = None,
-                 now: Optional[datetime] = None, secondary: Any = KEEP) -> dict[str, Any]:
+                 now: Optional[datetime] = None, secondary: Any = KEEP, tier: Any = KEEP, reasons: Any = KEEP) -> dict[str, Any]:
     now = now or utcnow()
     row = await _row(session, beatmap_id)
     if row is None:
@@ -142,6 +164,7 @@ async def review(session, beatmap_id: int, decision: str, reviewer_id: int, note
     before = _view(row)
     _decide(row, decision, slot)
     _second(row, decision, secondary)
+    _grade(row, decision, tier, reasons)
     row.reviewer_id = reviewer_id
     row.reviewed_at = now
     row.note = note

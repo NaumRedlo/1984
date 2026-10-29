@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from services.duels.features import FEATURE_VERSION
 from services.duels.rules import SLOTS, reserved
@@ -130,13 +130,14 @@ def checked_normaliser(body: dict[str, Any], width: int) -> Normaliser:
         raise ValueError("spread does not fit the model")
     return found
 
-def targets_of(labels: list[str], classes: tuple[str, ...], also: Optional[list[Optional[str]]], share: float) -> list[list[float]]:
+def targets_of(labels: list[str], classes: tuple[str, ...], also: Optional[list[Optional[str]]], share: Union[float, list[float]]) -> list[list[float]]:
     found = []
     for at, label in enumerate(labels):
         second = also[at] if also is not None else None
+        part = share[at] if isinstance(share, list) else share
         line = [0.0] * len(classes)
-        if second in classes and second != label and share > 0:
-            line[classes.index(label)], line[classes.index(second)] = 1.0 - share, share
+        if second in classes and second != label and part > 0:
+            line[classes.index(label)], line[classes.index(second)] = 1.0 - part, part
         else:
             line[classes.index(label)] = 1.0
         found.append(line)
@@ -153,11 +154,14 @@ class SlotModel:
 
     @classmethod
     def fit(cls, rows: list[list[float]], labels: list[str], strength: float = 0.01, steps: int = 400, rate: float = 0.5,
-            paths: tuple[str, ...] = PATHS, also: Optional[list[Optional[str]]] = None, share: float = 0.0) -> "SlotModel":
+            paths: tuple[str, ...] = PATHS, also: Optional[list[Optional[str]]] = None, share: Union[float, list[float]] = 0.0,
+            progress=None) -> "SlotModel":
         seconds = also or [None] * len(labels)
+        parts = share if isinstance(share, list) else [share] * len(labels)
         classes = SLOTS + tuple(sorted({label for label in list(labels) + list(seconds) if label and reserved(label)}))
-        kept = [(row, label, second) for row, label, second in zip(rows, labels, seconds) if label in classes]
-        rows, labels, seconds = [row for row, _, _ in kept], [label for _, label, _ in kept], [second for _, _, second in kept]
+        kept = [(row, label, second, part) for row, label, second, part in zip(rows, labels, seconds, parts) if label in classes]
+        rows, labels, seconds = [row for row, _, _, _ in kept], [label for _, label, _, _ in kept], [second for _, _, second, _ in kept]
+        share = [part for _, _, _, part in kept]
         normaliser = Normaliser.fit(rows)
         data = [normaliser.apply(row) for row in rows]
         targets = targets_of(labels, classes, seconds, share)
@@ -165,7 +169,7 @@ class SlotModel:
         weights = [[0.0] * width for _ in classes]
         bias = [0.0] * len(classes)
         count = max(1, len(data))
-        for _ in range(steps):
+        for step in range(steps):
             grad_w = [[0.0] * width for _ in classes]
             grad_b = [0.0] * len(classes)
             for row, target in zip(data, targets):
@@ -180,6 +184,8 @@ class SlotModel:
                 bias[k] -= rate * grad_b[k] / count
                 for j in range(width):
                     weights[k][j] -= rate * (grad_w[k][j] / count + strength * weights[k][j])
+            if progress is not None and ((step + 1) % max(1, steps // 100) == 0 or step + 1 == steps):
+                progress(step + 1)
         return cls(normaliser, weights, bias, MODEL_VERSION, classes, paths)
 
     def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float, views: Optional[dict[str, dict[str, Any]]] = None) -> Prediction:

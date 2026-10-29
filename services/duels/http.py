@@ -235,9 +235,14 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         secondary = said.get("secondary", catalog.KEEP)
         if secondary is not catalog.KEEP and secondary is not None and not isinstance(secondary, str):
             raise web.HTTPBadRequest(text="secondary is a slot or null")
+        tier, reasons = said.get("tier", catalog.KEEP), said.get("reasons", catalog.KEEP)
+        if tier is not catalog.KEEP and not isinstance(tier, str):
+            raise web.HTTPBadRequest(text="tier is exemplary, fits or borderline")
+        if reasons is not catalog.KEEP and not (isinstance(reasons, list) and all(isinstance(reason, str) for reason in reasons)):
+            raise web.HTTPBadRequest(text="reasons is a list of names")
         try:
             return await balance.review_map(factory_of(), player, int(beatmap), said["decision"], said["reason"], owners, said.get("slot"),
-                                            secondary=secondary)
+                                            secondary=secondary, tier=tier, reasons=reasons)
         except catalog.CatalogRefusal as refusal:
             return web.json_response({"error": refusal.code}, status=409)
 
@@ -310,11 +315,14 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         from services.duels import balance, training
 
         await balance.note_training(factory_of(), player, said["reason"], owners)
-        running = discovering.get("training")
-        if running is not None and not running.done():
-            return {"started": False, "job": training.running_job()}
+        running = training.running_job()
+        if running is not None:
+            return {"started": False, "job": running}
         if await training.unchanged(factory_of()):
             return web.json_response({"error": "NOTHING_NEW"}, status=409)
+        running = training.running_job()
+        if running is not None:
+            return {"started": False, "job": running}
         job = training.open_job()
         discovering["training"] = watched(training.run_job(factory_of(), job), "training Kamerton")
         return {"started": True, "job": job}
@@ -338,12 +346,12 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         return await desk.coverage(factory_of(), player, owners)
 
     async def desk_cell(request, player, said, owners):
-        from services.duels import desk
+        from services.duels import balance, desk
 
         slot, band = request.match_info["slot"], request.match_info["band"]
         if (slot not in SLOTS and not reserved(slot)) or not band.isdigit() or int(band) >= len(desk.BANDS):
             raise web.HTTPBadRequest(text="slot and band are required")
-        return {"maps": await desk.coverage_cell(factory_of(), player, slot, int(band), owners)}
+        return {"maps": await desk.coverage_cell(factory_of(), player, slot, int(band), owners, await balance.working_model(factory_of()))}
 
     async def desk_inspect(request, player, said, owners):
         from services.duels import desk
@@ -357,11 +365,11 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         return found
 
     async def desk_presence(request, player, said, owners):
-        from services.duels import presence
+        from services.duels import presence, training
 
         try:
             people = await presence.touch(factory_of(), player, said.get("section"), said.get("beatmap"), owners, slot=said.get("slot"), band=said.get("band"))
-            return {"people": people, "revision": await presence.revision(factory_of())}
+            return {"people": people, "revision": await presence.revision(factory_of()), "training_known": True, "training": training.snapshot()}
         except ValueError:
             raise web.HTTPBadRequest(text="valid section and beatmap are required")
 

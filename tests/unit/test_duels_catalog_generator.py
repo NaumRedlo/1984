@@ -252,6 +252,23 @@ async def test_a_person_gives_a_map_a_secondary_slot_and_an_older_app_keeps_it(s
     cleared = await catalog.review(session, 7, "APPROVE", 1, "one slot is enough", now=NOW, secondary=None)
     assert cleared["secondary"] is None
 
+async def test_a_person_grades_the_map_in_its_slot_and_names_up_to_three_reasons(session):
+    await catalog.propose(session, 8, "NM1", 0.7, 0.05, "kamerton-1", NOW)
+    plain = await catalog.review(session, 8, "APPROVE", 1, "an older app says nothing of the tier", slot="NM1", now=NOW)
+    assert (plain["tier"], plain["reasons"]) == ("fits", []), "a map approved without a tier fits its slot"
+    graded = await catalog.review(session, 8, "APPROVE", 1, "textbook jumps", now=NOW, tier="exemplary", reasons=["jumps", "turns", "jumps"])
+    assert (graded["tier"], graded["reasons"]) == ("exemplary", ["jumps", "turns"])
+    kept = await catalog.review(session, 8, "APPROVE", 1, "approved again by an older app", now=NOW)
+    assert (kept["tier"], kept["reasons"]) == ("exemplary", ["jumps", "turns"])
+    assert await _refused(catalog.review(session, 8, "APPROVE", 1, "no such tier", now=NOW, tier="great")) == "UNKNOWN_TIER"
+    assert await _refused(catalog.review(session, 8, "APPROVE", 1, "no such reason", now=NOW, reasons=["vibes"])) == "UNKNOWN_REASON"
+    assert await _refused(catalog.review(session, 8, "APPROVE", 1, "too many", now=NOW,
+                                         reasons=["jumps", "turns", "streams", "bursts"])) == "TOO_MANY_REASONS"
+    moved = await catalog.review(session, 8, "MOVE", 1, "closer to tech", slot="NM4", now=NOW, tier="borderline", reasons=[])
+    assert (moved["slot"], moved["tier"], moved["reasons"]) == ("NM4", "borderline", [])
+    quarantined = await catalog.review(session, 8, "QUARANTINE", 1, "broken file", now=NOW)
+    assert (quarantined["tier"], quarantined["reasons"]) == (None, [])
+
 def test_a_secondary_slot_costs_more_than_the_same_map_in_its_own_slot():
     a = {slot: Skill(5.5, 0.4) for slot in SLOTS}
     own = Candidate(1, 1, "m", "HD2", 5.5, "human", None, "r")

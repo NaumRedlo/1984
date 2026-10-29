@@ -113,6 +113,27 @@ def test_a_secondary_slot_is_a_second_right_answer_for_the_slot_layer_and_change
     assert kamerton.fingerprint(plain) != kamerton.fingerprint(both), "a new secondary slot is new data to learn from"
 
 
+def test_reasons_teach_the_skill_layer_and_a_borderline_map_leans_towards_its_second_slot():
+    from dataclasses import replace
+
+    from services.duels import catalog
+
+    assert set(kamerton.REASON_SKILLS) == set(catalog.REASONS)
+    assert set(skill for parts in kamerton.REASON_SKILLS.values() for skill in parts) <= set(kamerton.SKILLS)
+    jumps = kamerton.skill_target("NM1", reasons=("jumps",))
+    assert jumps == {"aim": pytest.approx(1.0)}, "a reason that agrees with the slot changes nothing"
+    small = kamerton.skill_target("NM1", reasons=("jumps", "small_circles"))
+    assert small == {"aim": pytest.approx(0.75), "precision": pytest.approx(0.25)}
+    assert sum(kamerton.skill_target("HD3", "NM1", ("low_ar",)).values()) == pytest.approx(1.0)
+    example = kamerton.Example({}, {}, "NM1", 1, 2024, secondary="NM4")
+    assert example.skills()["tech"] == pytest.approx(kamerton.SECONDARY_SHARE)
+    assert replace(example, tier="borderline").skills()["tech"] == pytest.approx(kamerton.BORDERLINE_SHARE)
+    plain = _examples(12)
+    graded = [replace(one, tier="exemplary") if at == 0 else one for at, one in enumerate(plain)]
+    reasoned = [replace(one, reasons=("jumps",)) if at == 0 else one for at, one in enumerate(plain)]
+    assert len({kamerton.fingerprint(plain), kamerton.fingerprint(graded), kamerton.fingerprint(reasoned)}) == 3
+
+
 def test_a_refused_map_is_not_counted_as_admitted_and_reserved_classes_are_scored():
     from services.duels.slot_model import Prediction
 

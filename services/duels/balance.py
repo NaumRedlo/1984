@@ -144,13 +144,14 @@ async def uncertain_revealed(session, duel_id: str, now: datetime) -> int:
     return made
 
 async def review_map(factory, actor: int, beatmap_id: int, decision: str, reason: str, owners: tuple[int, ...] = (),
-                     slot: Optional[str] = None, now: Optional[datetime] = None, secondary: Any = catalog.KEEP) -> dict[str, Any]:
+                     slot: Optional[str] = None, now: Optional[datetime] = None, secondary: Any = catalog.KEEP, tier: Any = catalog.KEEP,
+                     reasons: Any = catalog.KEEP) -> dict[str, Any]:
     now = now or utcnow()
     async with factory() as session:
         async with session.begin():
             role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             before = catalog._view(await catalog._row(session, beatmap_id))
-            after = await catalog.review(session, beatmap_id, decision, actor, reason, slot=slot, now=now, secondary=secondary)
+            after = await catalog.review(session, beatmap_id, decision, actor, reason, slot=slot, now=now, secondary=secondary, tier=tier, reasons=reasons)
             for review in (await session.scalars(select(DuelBalanceReview).where(DuelBalanceReview.beatmap_id == beatmap_id,
                                                                                  DuelBalanceReview.decision.is_(None)))).all():
                 review.decision, review.reviewer_id, review.decided_at = decision, actor, now

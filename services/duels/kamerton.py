@@ -10,15 +10,14 @@ from services.duels.slot_model import (HD2_MOST_AR, HR2_LEAST_CS, OTHER, PATHS, 
                                        _numbers, _softmax, checked_normaliser, levels_of, report, seen_vector, vector)
 
 SKILLS = ("aim", "stream", "alt", "speed", "burst", "tech", "reading", "gimmick", "precision", "mix")
-MODS = ("NM", "HD", "HR", "DT", "FM")
-VIEW_OF = {"NM": "NF", "HD": "NF", "HR": "NFHR", "DT": "NFDT", "FM": "NF"}
+MODS = ("NM", "HD", "HR", "DT")
+VIEW_OF = {"NM": "NF", "HD": "NF", "HR": "NFHR", "DT": "NFDT"}
 PARTS: dict[str, tuple[str, dict[str, float]]] = {
     "NM1": ("NM", {"aim": 1.0}), "NM2": ("NM", {"stream": 1.0}), "NM3": ("NM", {"alt": 1.0}), "NM4": ("NM", {"tech": 1.0}),
     "NM5": ("NM", {"speed": 1.0}), "NM6": ("NM", {"gimmick": 0.5, "reading": 0.5}),
     "HD1": ("HD", {"aim": 1.0}), "HD2": ("HD", {"reading": 1.0}), "HD3": ("HD", {"tech": 0.5, "alt": 0.5}),
     "HR1": ("HR", {"aim": 1.0}), "HR2": ("HR", {"precision": 1.0}), "HR3": ("HR", {"tech": 1.0}),
     "DT1": ("DT", {"aim": 1.0}), "DT2": ("DT", {"speed": 1.0}), "DT3": ("DT", {"burst": 1.0}), "DT4": ("DT", {"tech": 0.5, "gimmick": 0.5}),
-    "FM1": ("FM", {"aim": 1.0}), "FM2": ("FM", {"reading": 0.5, "gimmick": 0.5}), "FM3": ("FM", {"tech": 1.0}), "FM4": ("FM", {"speed": 1.0}),
     "TB": ("NM", {"mix": 1.0}),
 }
 SIGNATURES: dict[str, tuple[tuple[str, float], ...]] = {
@@ -33,8 +32,15 @@ SIGNATURES: dict[str, tuple[tuple[str, float], ...]] = {
     "precision": (("effective.cs", 1.0), ("length_seconds", -1.0), ("aim_windows.2s.max", -1.0)),
     "mix": (("length_seconds", 1.0), ("aim_windows.2s.max", 1.0), ("tap_windows.2s.max", 1.0)),
 }
+REASON_SKILLS: dict[str, dict[str, float]] = {
+    "jumps": {"aim": 1.0}, "turns": {"aim": 0.5, "tech": 0.5}, "streams": {"stream": 1.0}, "bursts": {"burst": 1.0},
+    "triplets": {"tech": 1.0}, "rhythm": {"tech": 1.0}, "sliders": {"tech": 1.0}, "low_ar": {"reading": 1.0},
+    "small_circles": {"precision": 1.0}, "stamina": {"speed": 1.0},
+}
+REASON_SHARE = 0.5
 UNKNOWN_MOD_WEIGHT = 0.3
 SECONDARY_SHARE = 0.25
+BORDERLINE_SHARE = 0.4
 TRUSTED_PRECISION = 0.90
 TRUSTED_LEAST = 10
 VERSION = "kamerton-skills-v1"
@@ -49,19 +55,26 @@ def profile(z_row: list[float]) -> list[float]:
         found.append(_sigmoid(1.5 * sum(sign * z_row[PATHS.index(path)] for path, sign in parts) / len(parts)))
     return found
 
-def skill_target(slot: str, secondary: Optional[str] = None) -> dict[str, float]:
+def skill_target(slot: str, secondary: Optional[str] = None, reasons: tuple[str, ...] = (), share: float = SECONDARY_SHARE) -> dict[str, float]:
     target: dict[str, float] = {}
-    shares = [(slot, 1.0 - SECONDARY_SHARE), (secondary, SECONDARY_SHARE)] if secondary in PARTS and secondary != slot else [(slot, 1.0)]
-    for name, share in shares:
+    shares = [(slot, 1.0 - share), (secondary, share)] if secondary in PARTS and secondary != slot else [(slot, 1.0)]
+    for name, weight in shares:
         for skill, part in PARTS[name][1].items():
-            target[skill] = target.get(skill, 0.0) + share * part
+            target[skill] = target.get(skill, 0.0) + weight * part
+    named = [REASON_SKILLS[reason] for reason in reasons if reason in REASON_SKILLS]
+    if not named:
+        return target
+    target = {skill: value * (1.0 - REASON_SHARE) for skill, value in target.items()}
+    for parts in named:
+        for skill, part in parts.items():
+            target[skill] = target.get(skill, 0.0) + REASON_SHARE * part / len(named)
     return target
 
-def fit_softmax(rows: list[list[float]], targets: list[list[float]], strength: float, steps: int, rate: float) -> tuple[list[list[float]], list[float]]:
+def fit_softmax(rows: list[list[float]], targets: list[list[float]], strength: float, steps: int, rate: float, progress=None) -> tuple[list[list[float]], list[float]]:
     width, classes, count = len(rows[0]), len(targets[0]), max(1, len(rows))
     weights = [[0.0] * width for _ in range(classes)]
     bias = [0.0] * classes
-    for _ in range(steps):
+    for step in range(steps):
         grad_w = [[0.0] * width for _ in range(classes)]
         grad_b = [0.0] * classes
         for row, target in zip(rows, targets):
@@ -76,6 +89,8 @@ def fit_softmax(rows: list[list[float]], targets: list[list[float]], strength: f
             bias[k] -= rate * grad_b[k] / count
             for j in range(width):
                 weights[k][j] -= rate * (grad_w[k][j] / count + strength * weights[k][j])
+        if progress is not None and ((step + 1) % max(1, steps // 100) == 0 or step + 1 == steps):
+            progress(step + 1)
     return weights, bias
 
 def fit_binary(rows: list[list[float]], labels: list[float], weights_of: list[float], strength: float, steps: int, rate: float) -> tuple[list[float], float]:
@@ -104,6 +119,15 @@ class Example:
     secondary: Optional[str] = None
     decided: bool = False
     verified: bool = False
+    tier: Optional[str] = None
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def share(self) -> float:
+        return BORDERLINE_SHARE if self.tier == catalog.BORDERLINE else SECONDARY_SHARE
+
+    def skills(self) -> dict[str, float]:
+        return skill_target(self.slot, self.secondary, self.reasons, self.share)
 
     def view(self, mod: str) -> dict[str, Any]:
         name = VIEW_OF[mod]
@@ -138,7 +162,7 @@ class SkillModModel:
             return z + profile(z)
 
         rows = [skill_row(example.view(PARTS[example.slot][0])) for example in known]
-        targets = [[skill_target(example.slot, example.secondary).get(skill, 0.0) for skill in SKILLS] for example in known]
+        targets = [[example.skills().get(skill, 0.0) for skill in SKILLS] for example in known]
         skill_weights, skill_bias = fit_softmax(rows, targets, strength, steps, rate)
         mod_norm = Normaliser.fit([seen_vector(example.plain, example.views) for example in known])
         mod_rows = [mod_norm.apply(seen_vector(example.plain, example.views)) for example in known]
@@ -189,11 +213,11 @@ class SkillLayer:
     bias: list[float]
 
     @classmethod
-    def fit(cls, examples: list[Example], strength: float, steps: int, rate: float) -> "SkillLayer":
+    def fit(cls, examples: list[Example], strength: float, steps: int, rate: float, progress=None) -> "SkillLayer":
         norm = Normaliser.fit([vector(example.plain) for example in examples])
         rows = [cls.row_of(norm, example.plain) for example in examples]
-        targets = [[skill_target(example.slot, example.secondary).get(skill, 0.0) for skill in SKILLS] for example in examples]
-        return cls(norm, *fit_softmax(rows, targets, strength, steps, rate))
+        targets = [[example.skills().get(skill, 0.0) for skill in SKILLS] for example in examples]
+        return cls(norm, *fit_softmax(rows, targets, strength, steps, rate, progress))
 
     @staticmethod
     def row_of(norm: Normaliser, plain: dict[str, Any]) -> list[float]:
@@ -217,20 +241,23 @@ class StackedModel:
     version: str = VERSION + "-stacked"
 
     @classmethod
-    def fit(cls, examples: list[Example], strength: float = 0.01, steps: int = 300, rate: float = 0.5) -> "StackedModel":
+    def fit(cls, examples: list[Example], strength: float = 0.01, steps: int = 300, rate: float = 0.5, progress=None) -> "StackedModel":
         known = [example for example in examples if example.slot in PARTS]
         outside: dict[int, list[float]] = {}
         sets = sorted({example.set_id for example in known})
+        def reporter(part):
+            return (lambda done: progress(part * steps + done)) if progress is not None else None
+
         for fold in range(STACK_FOLDS):
             held = {set_id for at, set_id in enumerate(sets) if at % STACK_FOLDS == fold}
-            layer = SkillLayer.fit([example for example in known if example.set_id not in held], strength, steps, rate)
+            layer = SkillLayer.fit([example for example in known if example.set_id not in held], strength, steps, rate, reporter(fold))
             for at, example in enumerate(known):
                 if example.set_id in held:
                     outside[at] = layer.both(example.plain, example.views)
         rows = [seen_vector(example.plain, example.views) + outside[at] for at, example in enumerate(known)]
         slots = SlotModel.fit(rows, [example.slot for example in known], strength, steps, rate, paths=SEEN + SKILL_PATHS,
-                              also=[example.secondary for example in known], share=SECONDARY_SHARE)
-        return cls(SkillLayer.fit(known, strength, steps, rate), slots)
+                              also=[example.secondary for example in known], share=[example.share for example in known], progress=reporter(STACK_FOLDS))
+        return cls(SkillLayer.fit(known, strength, steps, rate, reporter(STACK_FOLDS + 1)), slots)
 
     def predict(self, features: dict[str, Any], base_ar: float, hr_cs: float, views: Optional[dict[str, dict[str, Any]]] = None) -> Prediction:
         raw = seen_vector(features, views) + self.layer.both(features, views or {})
@@ -447,7 +474,8 @@ async def decision_examples(factory) -> list[Example]:
             plain, views = await importer.seen_of(session, revision.hash)
             if plain:
                 found.append(Example(plain, views, assignment.slot, int(revision.beatmapset_id or assignment.beatmap_id), 0, False,
-                                     catalog.secondary_of(assignment), True, True))
+                                     catalog.secondary_of(assignment), True, True, assignment.tier,
+                                     tuple(reason for reason in assignment.reasons or () if reason in REASON_SKILLS)))
     return found
 
 async def examples(factory) -> list[Example]:
@@ -456,6 +484,7 @@ async def examples(factory) -> list[Example]:
 def fingerprint(found: list[Example]) -> str:
     made = hashlib.sha256()
     lines = sorted(f"{example.set_id}:{example.year}:{example.own:d}{example.decided:d}:{example.slot}:{example.secondary or ''}:"
+                   f"{example.tier or ''}:{','.join(example.reasons)}:"
                    f"{','.join(f'{value:.6f}' for value in seen_vector(example.plain, example.views))}" for example in found)
     for line in lines:
         made.update(f"{line};".encode())

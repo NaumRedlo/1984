@@ -34,12 +34,14 @@ async def _number(session) -> int:
     names += (await session.scalars(select(DuelAudit.target).where(DuelAudit.action == "delete_model", DuelAudit.target.like(f"{NAME}-%")))).all()
     return max((int(name.split("-", 1)[1]) for name in names if name.split("-", 1)[1].isdigit()), default=0) + 1
 
-async def train(factory, steps: int = 400, now: Optional[datetime] = None) -> Optional[tuple[str, dict[str, Any]]]:
+async def train(factory, steps: int = 400, now: Optional[datetime] = None, report=None) -> Optional[tuple[str, dict[str, Any]]]:
     async with busy:
-        return await _train(factory, steps, now)
+        return await _train(factory, steps, now, report)
 
-async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple[str, dict[str, Any]]]:
+async def _train(factory, steps: int, now: Optional[datetime], report=None) -> Optional[tuple[str, dict[str, Any]]]:
     now = now or utcnow()
+    emit = report or (lambda **_: None)
+    emit(phase="gathering")
     examples = await kamerton.examples(factory)
     if len({example.slot for example in examples}) < 2:
         return None
@@ -53,18 +55,32 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
     folds = [(str(year), [example for example in examples if not example.own and not example.decided and example.year == year])
              for year in sorted({example.year for example in examples if not example.own and not example.decided})]
     folds.append(("queue", [example for example in examples if example.decided and held_out(example.set_id)]))
+    checks = []
     for name, held in folds:
-        if not held:
-            continue
         sets = {example.set_id for example in held}
         rest = [example for example in examples if example.set_id not in sets]
-        if len({example.slot for example in rest}) < 2:
-            continue
-        model = await asyncio.to_thread(kamerton.StackedModel.fit, rest, 0.01, steps)
-        part = kamerton.judged_on(model, held)
+        if held and len({example.slot for example in rest}) >= 2:
+            checks.append((name, held, rest))
+    unit = (kamerton.STACK_FOLDS + 2) * steps
+    total = (len(checks) + 1) * unit + len(checks) + 1
+    emit(maps=len(examples), total=total, completed=0, checks_total=len(checks), checks_done=0)
+    loop = asyncio.get_running_loop()
+    def reporter(offset):
+        def progressed(done):
+            loop.call_soon_threadsafe(lambda: emit(completed=offset + done))
+        return progressed
+    offset = 0
+    for index, (name, held, rest) in enumerate(checks):
+        emit(phase="validation", fold=name, checks_done=index)
+        model = await asyncio.to_thread(kamerton.StackedModel.fit, rest, 0.01, steps, progress=reporter(offset))
+        part = await asyncio.to_thread(kamerton.judged_on, model, held)
         years[name] = kamerton.summary(part)
         judged += part
-    model = await asyncio.to_thread(kamerton.StackedModel.fit, examples, 0.01, steps)
+        offset += unit + 1
+        emit(completed=offset, checks_done=index + 1)
+    emit(phase="fitting", fold=None)
+    model = await asyncio.to_thread(kamerton.StackedModel.fit, examples, 0.01, steps, progress=reporter(offset))
+    emit(phase="saving", completed=total - 1)
     async with factory() as session:
         number = await _number(session)
     version = f"{NAME}-{number}"
@@ -78,7 +94,7 @@ async def _train(factory, steps: int, now: Optional[datetime]) -> Optional[tuple
     return version, found_report
 
 async def maybe_train(factory, now: Optional[datetime] = None, steps: int = 400) -> Optional[str]:
-    if busy.locked():
+    if busy.locked() or running_job() is not None:
         return None
     now = now or utcnow()
     async with factory() as session:
@@ -88,7 +104,9 @@ async def maybe_train(factory, now: Optional[datetime] = None, steps: int = 400)
     before = last.labels if last is not None and last.version.startswith(f"{NAME}-") else 0
     if _people(await kamerton.examples(factory)) - before < NEW_LABELS_LEAST:
         return None
-    made = await train(factory, steps, now)
+    if running_job() is not None:
+        return None
+    made = await run_job(factory, open_job(now), steps, now)
     return made[0] if made is not None else None
 
 JOBS_KEPT = 20
@@ -98,18 +116,36 @@ def open_job(now: Optional[datetime] = None) -> str:
     for old in [name for name, job in jobs.items() if job["state"] != "running"][:max(0, len(jobs) + 1 - JOBS_KEPT)]:
         del jobs[old]
     name = uuid.uuid4().hex[:12]
-    jobs[name] = {"job": name, "state": "running", "version": None, "error": None, "started_at": (now or utcnow()).isoformat(), "finished_at": None}
+    jobs[name] = {"job": name, "state": "running", "version": None, "error": None, "started_at": (now or utcnow()).isoformat(), "finished_at": None, "phase": "queued", "completed": 0, "total": 0, "maps": 0, "checks_done": 0, "checks_total": 0, "fold": None, "revision": 0}
     return name
 
 def running_job() -> Optional[str]:
     return next((name for name, job in jobs.items() if job["state"] == "running"), None)
 
-async def run_job(factory, name: str, steps: int = 400) -> Optional[tuple[str, dict[str, Any]]]:
+def snapshot(name: Optional[str] = None) -> Optional[dict[str, Any]]:
+    if name is None:
+        name = running_job() or next(reversed(jobs), None)
+    job = jobs.get(name)
+    if job is None:
+        return None
+    end = datetime.fromisoformat(job["finished_at"]) if job["finished_at"] else utcnow()
+    return {**job, "elapsed_seconds": max(0, int((end - datetime.fromisoformat(job["started_at"])).total_seconds()))}
+
+
+async def run_job(factory, name: str, steps: int = 400, now: Optional[datetime] = None) -> Optional[tuple[str, dict[str, Any]]]:
     job = jobs[name]
+    def report(**values):
+        if job["state"] == "running":
+            job.update(values)
+            job["revision"] += 1
     try:
-        made = await train(factory, steps)
-    except Exception as error:
-        job.update(state="failed", error=f"{type(error).__name__}: {error}"[:500], finished_at=utcnow().isoformat())
+        made = await train(factory, steps, now=now, report=report)
+    except asyncio.CancelledError:
+        job.update(state="interrupted", finished_at=utcnow().isoformat(), revision=job["revision"] + 1)
         raise
-    job.update(state="done" if made is not None else "nothing_new", version=made[0] if made is not None else None, finished_at=utcnow().isoformat())
+    except Exception as error:
+        job.update(state="failed", error=f"{type(error).__name__}: {error}"[:500], finished_at=utcnow().isoformat(), revision=job["revision"] + 1)
+        raise
+    job.update(state="done" if made is not None else "nothing_new", version=made[0] if made is not None else None,
+               completed=job["total"] if made is not None else job["completed"], finished_at=utcnow().isoformat(), revision=job["revision"] + 1)
     return made

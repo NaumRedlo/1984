@@ -252,6 +252,9 @@ def _described(beatmap_id: int, digest: Optional[str], revision: Optional[DuelMa
             "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"), "bpm": bpm,
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs, views)}
 
+def _graded(assignment: Optional[DuelMapAssignment]) -> dict[str, Any]:
+    return {"tier": assignment.tier if assignment is not None else None, "reasons": list((assignment.reasons if assignment is not None else None) or [])}
+
 async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:
     async with factory() as session:
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
@@ -266,7 +269,7 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
             seen.add(int(review.beatmap_id))
             slot = assignment.slot if assignment is not None else None
             found.append(({"kind": "review", "id": review.id, "reason": review.reason, "since": _stamp(review.requested_at),
-                           "slot": slot, "secondary": catalog.secondary_of(assignment),
+                           "slot": slot, "secondary": catalog.secondary_of(assignment), **_graded(assignment),
                            "state": assignment.state if assignment is not None else None, "opinions": True, "feedback": True},
                           int(review.beatmap_id), review.revision_hash, slot))
         unsure = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.AUTO_ASSIGNED,
@@ -279,7 +282,7 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
                 continue
             seen.add(int(assignment.beatmap_id))
             found.append(({"kind": "review", "id": None, "reason": "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
-                           "state": assignment.state, "opinions": True, "feedback": None},
+                           **_graded(assignment), "state": assignment.state, "opinions": True, "feedback": None},
                           int(assignment.beatmap_id), assignment.revision_hash, assignment.slot))
         waiting = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.UNASSIGNED,
                                                                          DuelMapAssignment.admitted.is_(True))
@@ -368,10 +371,25 @@ async def inspect_map(factory, actor: int, beatmap_id: int, owners: tuple[int, .
             return None
         model = await balance.working_model(factory)
         return {"kind": "review", "id": None, "reason": "manual", "slot": assignment.slot, "secondary": catalog.secondary_of(assignment),
-                "state": assignment.state, "map": await _map(session, beatmap_id, assignment.revision_hash, model, assignment.slot),
+                **_graded(assignment), "state": assignment.state, "map": await _map(session, beatmap_id, assignment.revision_hash, model, assignment.slot),
                 "opinions": await _opinions(session, beatmap_id)}
 
-async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple[int, ...] = ()) -> list[dict[str, Any]]:
+def _typical(model, slot: str, digest: str, found: dict[tuple[str, str], DuelMapAnalysis]) -> Optional[float]:
+    plain = found.get((digest, importer.SEEN_AS))
+    if model is None or plain is None or not plain.features:
+        return None
+    rock = found.get((digest, "NFHR"))
+    effective = plain.features.get("effective") or {}
+    rock_cs = (((rock.features or {}).get("effective") or {}).get("cs") if rock is not None else None) or effective.get("cs", 0.0)
+    views = {mods: row.features for mods in importer.VIEWED if (row := found.get((digest, mods))) is not None and row.features}
+    try:
+        return model.predict(plain.features, effective.get("ar", 0.0), rock_cs, views).probabilities.get(slot)
+    except Exception:
+        return None
+
+TIER_ORDER = {catalog.EXEMPLARY: 0, catalog.FITS: 1, None: 1, catalog.BORDERLINE: 2}
+
+async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:
     async with factory() as session:
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
         rows = (await session.execute(
@@ -383,15 +401,17 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
         names = await _names(session, [assignment.reviewer_id for assignment, _ in rows if assignment.reviewer_id is not None])
         listed = [(assignment, revision, level) for assignment, revision in rows if (level := catalogue_level(assignment, revision)) is not None]
         stars = await _stars(session, [(revision.hash, catalogue_mods(slot)) for _, revision, _ in listed])
+        listed = [(assignment, revision, level) for assignment, revision, level in listed
+                  if in_catalogue(own := stars.get((revision.hash, catalogue_mods(slot)))) and band_of(float(own)) == band]
+        seen = await _analyses(session, {(revision.hash, mods) for _, revision, _ in listed for mods in (importer.SEEN_AS, *importer.VIEWED)}) if model is not None else {}
         found = []
         for assignment, revision, level in listed:
-            own = stars.get((revision.hash, catalogue_mods(slot)))
-            if not in_catalogue(own) or band_of(float(own)) != band:
-                continue
+            own = stars[(revision.hash, catalogue_mods(slot))]
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
+                          "tier": assignment.tier, "typical": _typical(model, slot, revision.hash, seen),
                           "stars": float(own), "level": level, "mapper": revision.mapper, "title": revision.title,
                           "version": revision.version, "reviewer": names.get(assignment.reviewer_id)})
-        return sorted(found, key=lambda item: item["stars"])
+        return sorted(found, key=lambda item: (TIER_ORDER.get(item["tier"], 1), -(item["typical"] or 0.0), item["stars"]))
 
 async def _stuck_detail(session, duel: Duel) -> dict[str, Any]:
     room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id).order_by(DuelRoom.id.desc()).limit(1))
@@ -475,8 +495,7 @@ async def training_job(factory, actor: int, name: str, owners: tuple[int, ...] =
 
     async with factory() as session:
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
-    found = training.jobs.get(name)
-    return dict(found) if found is not None else None
+    return training.snapshot(name)
 
 async def live(factory, now: Optional[datetime] = None, watchers: Optional[Callable[[str], int]] = None) -> dict[str, Any]:
     now = now or utcnow()

@@ -34,6 +34,8 @@ class DuelMapAssignment(Base):
     beatmap_id = Column(BigInteger, primary_key=True)
     slot = Column(String(4), nullable=True)
     secondary_slots = Column(JSON, nullable=True)
+    tier = Column(String(16), nullable=True)
+    reasons = Column(JSON, nullable=True)
     state = Column(String(16), nullable=False, default="UNASSIGNED")
     confidence = Column(Float, nullable=True)
     margin = Column(Float, nullable=True)

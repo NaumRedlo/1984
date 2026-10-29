@@ -36,7 +36,7 @@ async def seen_of(session, digest: Optional[str]) -> tuple[Optional[dict[str, An
                                                                 DuelMapAnalysis.feature_version == FEATURE_VERSION))).all() if digest else []
     found = {row.mods: row.features for row in rows if row.features}
     return found.get(SEEN_AS), {mods: found[mods] for mods in VIEWED if mods in found}
-GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "EZ": "NF", "FL": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
+GROUP_MODS = {"NM": "NF", "FM": "NF", "TB": "NF", "HD": "NFHD", "HR": "NFHR", "DT": "NFDT"}
 
 async def known(factory, entry: dict[str, Any]) -> bool:
     async with factory() as session:

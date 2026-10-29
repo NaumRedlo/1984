@@ -113,6 +113,32 @@ async def test_the_queue_and_the_catalogue_ask_the_database_the_same_few_times_h
     assert len(await desk.queue(factory, 1)) > 60
     assert await asked() == few
 
+async def test_a_catalogue_cell_shows_exemplary_maps_first_and_the_most_typical_first_within_a_tier(factory):
+    class Model:
+        version = "slots-test"
+
+        def predict(self, features, base_ar, hr_cs, views=None):
+            from services.duels.slot_model import Prediction
+            typical = features["typical"]
+            return Prediction("NM1", typical, 0.3, {"NM1": typical, "NM2": 1 - typical}, False)
+
+    async with factory() as session:
+        for number, tier, typical in ((20, "fits", 0.4), (21, "borderline", 0.9), (22, "fits", 0.8), (23, "exemplary", 0.2)):
+            digest = f"{number:032x}"
+            session.add(DuelMapRevision(beatmap_id=number, beatmapset_id=number * 10, hash=digest, status="ok", ranked_status="ranked", mapper="Meg"))
+            session.add(DuelMapAssignment(beatmap_id=number, slot="NM1", state="HUMAN_APPROVED", revision_hash=digest, admitted=True, tier=tier,
+                                          reasons=["jumps"]))
+            for mods in ("NF", "NFHR", "NFDT"):
+                session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version="t", feature_version=FEATURE_VERSION,
+                                            model_version="none", stars=7.1, features={"effective": {"ar": 9.0, "cs": 4.0}, "typical": typical}))
+        await session.commit()
+    cell = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(7.1), model=Model())
+    assert [(found["beatmap_id"], found["tier"]) for found in cell] == [(23, "exemplary"), (22, "fits"), (20, "fits"), (21, "borderline")]
+    assert cell[1]["typical"] == pytest.approx(0.8)
+    shown = await desk.inspect_map(factory, 1, 23)
+    assert (shown["tier"], shown["reasons"]) == ("exemplary", ["jumps"])
+    assert [found["beatmap_id"] for found in await desk.coverage_cell(factory, 1, "NM1", desk.band_of(7.1))] == [23, 20, 22, 21]
+
 def test_a_map_shows_its_own_difficulty_settings(tmp_path):
     (tmp_path / "abc.osu").write_text("osu file format v14\n\n[Difficulty]\nHPDrainRate:6\nCircleSize:4.2\nOverallDifficulty:9\n"
                                       "ApproachRate:9.6\nSliderMultiplier:1.8\n\n[Events]\nHPDrainRate:1\n", encoding="utf-8")
@@ -288,7 +314,7 @@ async def test_reserve_catalogue_slots_keep_duel_eligibility_unchanged(factory):
         revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 1, DuelMapRevision.hash == digest))
         assert catalog.playable(assignment, revision) is None
     coverage = await desk.coverage(factory, 1)
-    assert set(("FM4", "HD4", "HR4", "EZ2", "FL2")).issubset(coverage["slots"])
+    assert set(("FM4", "HD4", "HR4")).issubset(coverage["slots"]) and not {"EZ1", "EZ2", "FL1", "FL2"} & set(coverage["slots"])
     assert coverage["grid"]["DT4"][desk.band_of(5.2)] == 1
     assert coverage["totals"]["human"] == 1
     maps = await desk.coverage_cell(factory, 1, "DT4", desk.band_of(5.2))

@@ -318,7 +318,7 @@ def test_wiki_pools_become_slots_and_foreign_slots_become_negatives():
     assert [(e.stage, e.original_slot, e.beatmap_id, e.beatmapset_id) for e in found] == [
         ("grand finals", "NM1", 1, 10), ("grand finals", "NM2", 2, 20), ("grand finals", "NM5", 3, 30),
         ("grand finals", "HD2", 4, 40), ("grand finals", "FL1", 5, 50), ("grand finals", "TB", 6, 60)]
-    assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "NM5", "HD2", "FL1", "TB"]
+    assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "NM5", "HD2", None, "TB"], "Flashlight is no catalogue slot"
 
 async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_model(factory, tmp_path):
     from db.models.duel import DuelModelVersion
@@ -482,9 +482,9 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     assert await importer.load_missing(factory, fetch, str(tmp_path), pause=0, report=lambda text: None) == {"filed": 3}
     rows = await kamerton.corpus_examples(factory)
     own = sorted((row.slot, row.own, row.verified) for row in rows if row.own)
-    assert own == [("DT1", True, True), ("FM1", True, True), ("NM1", True, True)]
+    assert own == [("DT1", True, True), ("NM1", True, True)], "free mod picks test no skill of their own and are not learned"
     version, found = await training.train(factory, steps=10)
-    assert version == "kamerton-1" and found["own"] == 3 and found["verified"] == 5
+    assert version == "kamerton-1" and found["own"] == 2 and found["verified"] == 4
     async with factory() as session:
         actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
     assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]
