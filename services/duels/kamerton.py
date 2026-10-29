@@ -10,14 +10,15 @@ from services.duels.slot_model import (HD2_MOST_AR, HR2_LEAST_CS, OTHER, PATHS, 
                                        _numbers, _softmax, checked_normaliser, levels_of, report, seen_vector, vector)
 
 SKILLS = ("aim", "stream", "alt", "speed", "burst", "tech", "reading", "gimmick", "precision", "mix")
-MODS = ("NM", "HD", "HR", "DT")
-VIEW_OF = {"NM": "NF", "HD": "NF", "HR": "NFHR", "DT": "NFDT"}
+MODS = ("NM", "HD", "HR", "DT", "FM")
+VIEW_OF = {"NM": "NF", "HD": "NF", "HR": "NFHR", "DT": "NFDT", "FM": "NF"}
 PARTS: dict[str, tuple[str, dict[str, float]]] = {
     "NM1": ("NM", {"aim": 1.0}), "NM2": ("NM", {"stream": 1.0}), "NM3": ("NM", {"alt": 1.0}), "NM4": ("NM", {"tech": 1.0}),
     "NM5": ("NM", {"speed": 1.0}), "NM6": ("NM", {"gimmick": 0.5, "reading": 0.5}),
     "HD1": ("HD", {"aim": 1.0}), "HD2": ("HD", {"reading": 1.0}), "HD3": ("HD", {"tech": 0.5, "alt": 0.5}),
     "HR1": ("HR", {"aim": 1.0}), "HR2": ("HR", {"precision": 1.0}), "HR3": ("HR", {"tech": 1.0}),
     "DT1": ("DT", {"aim": 1.0}), "DT2": ("DT", {"speed": 1.0}), "DT3": ("DT", {"burst": 1.0}), "DT4": ("DT", {"tech": 0.5, "gimmick": 0.5}),
+    "FM1": ("FM", {"aim": 1.0}), "FM2": ("FM", {"precision": 0.5, "reading": 0.5}), "FM3": ("FM", {"tech": 1.0}),
     "TB": ("NM", {"mix": 1.0}),
 }
 SIGNATURES: dict[str, tuple[tuple[str, float], ...]] = {

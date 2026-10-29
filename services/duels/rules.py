@@ -30,10 +30,11 @@ PARAMETERS = {
 
 SLOTS = ("NM1", "NM2", "NM3", "NM4", "HD2", "HR2", "DT1", "DT2", "TB")
 RESERVE_GROUPS = ("NM", "HD", "HR", "DT", "FM")
-RESERVE_SLOTS = ("NM5", "NM6", "HD1", "HD3", "HD4", "HR1", "HR3", "HR4", "DT3", "DT4", "FM1", "FM2", "FM3", "FM4")
+RESERVE_SLOTS = ("NM5", "NM6", "HD1", "HD3", "HD4", "HR1", "HR3", "HR4", "DT3", "DT4", "FM1", "FM2", "FM3")
+RETIRED_SLOTS = ("FM4",)
 
 def reserved(slot: str) -> bool:
-    return slot not in SLOTS and len(slot) == 3 and slot[:2] in RESERVE_GROUPS and slot[2] in "123456789"
+    return slot not in SLOTS and slot not in RETIRED_SLOTS and len(slot) == 3 and slot[:2] in RESERVE_GROUPS and slot[2] in "123456789"
 
 STARS_LEAST = 5.0
 STARS_MOST = 10.0

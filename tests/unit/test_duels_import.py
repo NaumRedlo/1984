@@ -319,6 +319,7 @@ def test_wiki_pools_become_slots_and_foreign_slots_become_negatives():
         ("grand finals", "NM1", 1, 10), ("grand finals", "NM2", 2, 20), ("grand finals", "NM5", 3, 30),
         ("grand finals", "HD2", 4, 40), ("grand finals", "FL1", 5, 50), ("grand finals", "TB", 6, 60)]
     assert [corpus.label(e.original_slot) for e in found] == ["NM1", "NM2", "NM5", "HD2", None, "TB"], "Flashlight is no catalogue slot"
+    assert (corpus.label("FM4"), corpus.label("FM3"), corpus.label("NM7")) == (None, "FM3", "NM7"), "the fourth free mod pick is no slot at all"
 
 async def test_the_corpus_is_filed_apart_from_the_catalogue_and_trains_a_shadow_model(factory, tmp_path):
     from db.models.duel import DuelModelVersion
@@ -482,9 +483,9 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     assert await importer.load_missing(factory, fetch, str(tmp_path), pause=0, report=lambda text: None) == {"filed": 3}
     rows = await kamerton.corpus_examples(factory)
     own = sorted((row.slot, row.own, row.verified) for row in rows if row.own)
-    assert own == [("DT1", True, True), ("NM1", True, True)], "free mod picks test no skill of their own and are not learned"
+    assert own == [("DT1", True, True), ("FM1", True, True), ("NM1", True, True)]
     version, found = await training.train(factory, steps=10)
-    assert version == "kamerton-1" and found["own"] == 2 and found["verified"] == 4
+    assert version == "kamerton-1" and found["own"] == 3 and found["verified"] == 5
     async with factory() as session:
         actions = sorted(row.action for row in (await session.scalars(select(DuelAudit))).all())
     assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]
@@ -693,7 +694,7 @@ async def test_failed_search_reports_mirror_outage_and_keeps_cursor(monkeypatch)
     assert await importer.discover(None, None, None, "", 5.0, 5.5, 4, page_from=8, advance=cursor.append, report=lambda _: None) == {"mirrors_unavailable": 1}
     assert cursor[-1] == 8
 
-@pytest.mark.parametrize("slot,probability,margin,expected", [("NM1", .4, .1, "below_threshold"), (None, .2, .01, "no_slot"), ("FM4", .95, .8, "reserve_slot")])
+@pytest.mark.parametrize("slot,probability,margin,expected", [("NM1", .4, .1, "below_threshold"), (None, .2, .01, "no_slot"), ("FM3", .95, .8, "reserve_slot")])
 async def test_import_reports_why_a_map_has_no_slot(factory, tmp_path, slot, probability, margin, expected):
     from services.duels.slot_model import Prediction
     class Model:

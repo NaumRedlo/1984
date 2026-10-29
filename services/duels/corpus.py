@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from services.duels.rules import SLOTS, reserved as _reserved
+from services.duels.rules import RETIRED_SLOTS, SLOTS, reserved as _reserved
 
 CORPUS_VERSION = "owc-2021-2025-v1"
 OWN_VERSION = "own-v1"
@@ -115,6 +115,8 @@ def learned(label: str) -> str:
 def label(slot: str) -> Optional[str]:
     if slot in SLOTS or reserved(slot):
         return slot
+    if slot in RETIRED_SLOTS:
+        return None
     if slot[:2] in ("NM", "HD", "HR", "DT", "FM"):
         return "OTHER"
     return None

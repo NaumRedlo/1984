@@ -268,11 +268,11 @@ async def test_balance_presence_is_authenticated_and_requires_a_role(client, fac
     response = await client.post(path, json={"section": "label", "beatmap": 123}, headers=_as(1))
     assert response.status == 200
     assert (await response.json())["people"][0]["beatmap"] == 123
-    response = await client.post(path, json={"section": "catalog", "slot": "FM4", "band": 9}, headers=_as(1))
+    response = await client.post(path, json={"section": "catalog", "slot": "FM3", "band": 9}, headers=_as(1))
     assert response.status == 200
     person = (await response.json())["people"][0]
-    assert (person["section"], person["slot"], person["band"]) == ("catalog", "FM4", 9)
-    assert (await client.get("/render/admin/duels/catalog/FM4/0", headers=_as(1))).status == 200
+    assert (person["section"], person["slot"], person["band"]) == ("catalog", "FM3", 9)
+    assert (await client.get("/render/admin/duels/catalog/FM3/0", headers=_as(1))).status == 200
     for body in ({"section": []}, {"section": "queue", "beatmap": True}):
         assert (await client.post(path, json=body, headers=_as(1))).status == 400
     response = await client.post(path, json={"section": None}, headers=_as(1))

@@ -214,8 +214,8 @@ async def test_confident_maps_can_be_inspected_moved_and_removed_by_reviewers(fa
     assert task["map"]["beatmap_id"] == 2 and task["state"] == "AUTO_ASSIGNED"
     with pytest.raises(balance.Forbidden):
         await desk.inspect_map(factory, 2, 2)
-    changed = await balance.review_map(factory, 1, 2, "MOVE", "corrected", slot="FM4")
-    assert changed["slot"] == "FM4" and changed["state"] == "HUMAN_APPROVED"
+    changed = await balance.review_map(factory, 1, 2, "MOVE", "corrected", slot="FM3")
+    assert changed["slot"] == "FM3" and changed["state"] == "HUMAN_APPROVED"
     removed = await balance.review_map(factory, 1, 2, "REJECT", "not suitable")
     assert removed["state"] == "REJECTED"
     assert await desk.inspect_map(factory, 1, 9999) is None
@@ -264,10 +264,10 @@ async def test_unlabelled_batch_waits_for_a_person_and_accepts_bare_ids(factory)
         assert importer.resolved(rows[0], labels) == (None, False)
         assert importer.resolved(rows[1], labels) == (None, False)
         assert importer.resolved(rows[2], labels) == ("DT1", True)
-    await balance.label_corpus(factory, 1, corpus.OWN_VERSION, 0, "Speed samples", "PENDING", 123, "FM4", "reviewed")
+    await balance.label_corpus(factory, 1, corpus.OWN_VERSION, 0, "Speed samples", "PENDING", 123, "FM3", "reviewed")
     async with factory() as session:
         labels = await importer.corpus_labels(session)
-        assert importer.resolved(rows[0], labels) == ("FM4", True)
+        assert importer.resolved(rows[0], labels) == ("FM3", True)
 
 async def test_pool_probe_reports_catalogue_deficits_without_creating_a_duel(factory, monkeypatch):
     from sqlalchemy import func, select
@@ -314,7 +314,7 @@ async def test_reserve_catalogue_slots_keep_duel_eligibility_unchanged(factory):
         revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 1, DuelMapRevision.hash == digest))
         assert catalog.playable(assignment, revision) is None
     coverage = await desk.coverage(factory, 1)
-    assert set(("FM4", "HD4", "HR4")).issubset(coverage["slots"]) and not {"EZ1", "EZ2", "FL1", "FL2"} & set(coverage["slots"])
+    assert set(("FM3", "HD4", "HR4")).issubset(coverage["slots"]) and not {"FM4", "EZ1", "EZ2", "FL1", "FL2"} & set(coverage["slots"])
     assert coverage["grid"]["DT4"][desk.band_of(5.2)] == 1
     assert coverage["totals"]["human"] == 1
     maps = await desk.coverage_cell(factory, 1, "DT4", desk.band_of(5.2))
@@ -328,11 +328,11 @@ async def test_reserve_catalogue_slots_keep_duel_eligibility_unchanged(factory):
 
 async def test_catalogue_presence_retains_cell_and_clears_it_on_navigation(factory):
     from services.duels import presence
-    live = await presence.touch(factory, 1, "catalog", slot="FM4", band=9)
-    assert (live[0]["section"], live[0]["slot"], live[0]["band"]) == ("catalog", "FM4", 9)
+    live = await presence.touch(factory, 1, "catalog", slot="FM3", band=9)
+    assert (live[0]["section"], live[0]["slot"], live[0]["band"]) == ("catalog", "FM3", 9)
     live = await presence.touch(factory, 1, "queue", beatmap=1)
     assert live[0]["slot"] is None and live[0]["band"] is None and live[0]["beatmap"] == 1
-    for section, slot, band in [("queue", "FM4", 1), ("catalog", "BAD", 0), ("catalog", "FM4", True), ("catalog", "FM4", 10), ("catalog", None, 0)]:
+    for section, slot, band in [("queue", "FM3", 1), ("catalog", "BAD", 0), ("catalog", "FM3", True), ("catalog", "FM3", 10), ("catalog", None, 0)]:
         with pytest.raises(ValueError):
             await presence.touch(factory, 1, section, slot=slot, band=band)
 

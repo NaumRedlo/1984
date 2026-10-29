@@ -62,7 +62,7 @@ async def test_discovered_maps_use_modded_stars_without_catalogue_admission(fact
     assert await discovery.inspect(factory, None, Osu(), str(tmp_path), entry, Model()) is None
 
 
-@pytest.mark.parametrize("slot,probability,margin", [(None, 0.99, 0.9), ("DT1", 0.7, 0.4), ("DT1", 0.9, 0.1), ("FM4", 0.99, 0.9)])
+@pytest.mark.parametrize("slot,probability,margin", [(None, 0.99, 0.9), ("DT1", 0.7, 0.4), ("DT1", 0.9, 0.1), ("FM3", 0.99, 0.9)])
 def test_unseen_maps_require_confident_in_distribution_predictions(slot, probability, margin):
     class Refusing(Model):
         def predict(self, *args):

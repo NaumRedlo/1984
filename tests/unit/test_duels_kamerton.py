@@ -144,11 +144,11 @@ def test_a_refused_map_is_not_counted_as_admitted_and_reserved_classes_are_score
         def predict(self, features, base_ar, hr_cs, views=None):
             return self.answers.pop(0)
 
-    held = [kamerton.Example({}, {}, slot, at, 2024, secondary="HR1" if slot == "NM1" else None) for at, slot in enumerate(("NM1", "NM1", "NM2", "FM4"))]
+    held = [kamerton.Example({}, {}, slot, at, 2024, secondary="HR1" if slot == "NM1" else None) for at, slot in enumerate(("NM1", "NM1", "NM2", "FM3"))]
     model = Fixed(Prediction(None, 0.95, 0.9, {"NM1": 0.95, "NM2": 0.05}, True),
                   Prediction("NM1", 0.9, 0.8, {"NM1": 0.9, "NM2": 0.1}, False),
                   Prediction("NM2", 0.55, 0.1, {"NM2": 0.55, "NM1": 0.45}, False),
-                  Prediction(None, 0.7, 0.4, {"FM4": 0.7, "NM2": 0.3}, False))
+                  Prediction(None, 0.7, 0.4, {"FM3": 0.7, "NM2": 0.3}, False))
     judged = kamerton.judged_on(model, held)
     assert [one.refusal for one in judged] == ["outside", None, "below_threshold", "not_working"]
     found = kamerton.summary(judged)
@@ -157,7 +157,7 @@ def test_a_refused_map_is_not_counted_as_admitted_and_reserved_classes_are_score
     assert found["admitted"]["checked"] == 4 and found["admitted"]["count"] == 1 and found["admitted"]["refused"] == {
         "count": 3, "share": 0.75, "outside": 1, "not_working": 1, "below_threshold": 1}
     assert found["per_slot"]["NM1"]["recall"] == 1.0, "the catalogue figures still see what the model thought"
-    assert found["per_slot"]["FM4"]["f1"] == 1.0 and found["macro_f1_all"] > found["macro_f1"] - 1e-9
+    assert found["per_slot"]["FM3"]["f1"] == 1.0 and found["macro_f1_all"] > found["macro_f1"] - 1e-9
 
 
 def test_reasons_carry_the_level_of_the_very_row_the_prediction_used():
