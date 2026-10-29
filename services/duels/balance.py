@@ -98,8 +98,12 @@ async def weigh(session, beatmap_id: int, now: Optional[datetime] = None) -> dic
     rows = (await session.scalars(select(DuelFeedback).where(DuelFeedback.beatmap_id == beatmap_id, DuelFeedback.fit_label.is_not(None),
                                                             DuelFeedback.updated_at >= now - timedelta(days=ONE_VOICE_DAYS))
                                   .order_by(DuelFeedback.updated_at))).all()
+    return weighed(rows, now)
+
+def weighed(rows, now: datetime) -> dict[str, Any]:
+    since = now - timedelta(days=ONE_VOICE_DAYS)
     latest: dict[int, DuelFeedback] = {}
-    for row in rows:
+    for row in sorted((row for row in rows if row.fit_label is not None and row.updated_at >= since), key=lambda row: (row.updated_at, row.id or 0)):
         latest[row.player_id] = row
     bad = total = 0.0
     negatives = played = 0

@@ -79,6 +79,40 @@ async def test_the_queue_lists_reviews_first_then_maps_waiting_for_a_slot(factor
     assert first["opinions"]["comments"] == ["это не стримы"]
     assert first["map"]["model"]["top"][0] == {"slot": "NM2", "probability": 0.7} and first["map"]["model"]["reasons"][0]["feature"] == "streams.share"
 
+async def test_the_queue_and_the_catalogue_ask_the_database_the_same_few_times_however_many_maps_wait(factory):
+    from sqlalchemy import event
+
+    async def asked() -> int:
+        engine = factory.kw["bind"]
+        count = 0
+
+        def heard(*_):
+            nonlocal count
+            count += 1
+
+        event.listen(engine.sync_engine, "before_cursor_execute", heard)
+        try:
+            await desk.queue(factory, 1)
+            await desk.coverage(factory, 1)
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", heard)
+        return count
+
+    few = await asked()
+    async with factory() as session:
+        for number in range(10, 70):
+            digest = f"{number:032x}"
+            session.add(DuelMapRevision(beatmap_id=number, beatmapset_id=number * 10, hash=digest, status="ok", ranked_status="ranked", mapper="Meg"))
+            session.add(DuelMapAssignment(beatmap_id=number, slot="NM3", state="AUTO_ASSIGNED", revision_hash=digest, admitted=True,
+                                          confidence=0.6, margin=0.1))
+            for mods in ("NF", "NFHR", "NFDT"):
+                session.add(DuelMapAnalysis(revision_hash=digest, mods=mods, engine_version="t", feature_version=FEATURE_VERSION,
+                                            model_version="none", stars=6.0, features={"effective": {"ar": 9.0, "cs": 4.0}}))
+            session.add(DuelBalanceReview(beatmap_id=number, revision_hash=digest, reason="uncertain_revealed", requested_at=utcnow()))
+        await session.commit()
+    assert len(await desk.queue(factory, 1)) > 60
+    assert await asked() == few
+
 def test_a_map_shows_its_own_difficulty_settings(tmp_path):
     (tmp_path / "abc.osu").write_text("osu file format v14\n\n[Difficulty]\nHPDrainRate:6\nCircleSize:4.2\nOverallDifficulty:9\n"
                                       "ApproachRate:9.6\nSliderMultiplier:1.8\n\n[Events]\nHPDrainRate:1\n", encoding="utf-8")
