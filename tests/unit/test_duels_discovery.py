@@ -51,7 +51,6 @@ async def test_discovered_maps_use_modded_stars_without_catalogue_admission(fact
         assert await session.scalar(select(func.count()).select_from(DuelMapAssignment)) == 0
         assert await session.scalar(select(func.count()).select_from(DuelMapRevision)) == 1
     assert await discovery.cached(factory, Model(), set()) == [candidate]
-    # A human decision takes priority even if discovery already cached the map.
     async with factory() as session:
         session.add(DuelMapAssignment(beatmap_id=91, state="QUARANTINED", admitted=False))
         session.add(DuelTrainingExample(beatmap_id=92, corpus_version="fixture", source="batch", year=0,

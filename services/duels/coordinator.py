@@ -128,7 +128,6 @@ class Coordinator:
             return
         first, second = await self.profiles(self.factory, people)
         unseen = await discovery.candidates(self.factory, self.osu, generator.targets(first, second), duel.seed)
-        # Nine slots cannot split evenly: alternate four and five unseen maps by seed.
         count = 4 + (int.from_bytes(duel.seed.encode(), "big") % 2)
         pool = generator.generate(candidates + unseen, first, second, duel.seed, generated_count=count)
         await series.pool_built(self.factory, duel_id, pool, CATALOG_VERSION, FEATURE_VERSION)

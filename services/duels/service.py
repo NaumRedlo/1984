@@ -320,7 +320,6 @@ async def enter_queue(factory, actor_id: int, operation_id: str, mode: str = "ra
                 await step.session.delete(lease)
                 await step.session.flush()
         await step.occupy([actor_id], "queue")
-        # Old offered rows must not be picked when a later offer returns to the queue.
         for previous in (await step.session.scalars(select(DuelQueueEntry).where(
             DuelQueueEntry.player_id == actor_id, DuelQueueEntry.status.in_(["waiting", "offered"])))).all():
             previous.status = "left"

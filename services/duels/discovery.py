@@ -91,7 +91,6 @@ async def inspect(factory, fetch, osu, folder, entry, model) -> Optional[Candida
                                        feature_version=FEATURE_VERSION, model_version=model.version, stars=stars, features=features)
     candidate = predicted(model, revision, analyses)
     async with factory() as session:
-        # A reviewer may have imported or quarantined the map while its file was being analysed.
         if entry["beatmap_id"] in await excluded(session):
             return None
         session.add(revision)

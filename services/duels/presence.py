@@ -23,7 +23,6 @@ async def touch(factory, actor, section, beatmap=None, owners=(), now=None, *, s
     if slot is not None or band is not None:
         if section != "catalog" or not isinstance(slot, str) or (slot not in SLOTS and not reserved(slot)) or type(band) is not int or not 0 <= band < 10:
             raise ValueError("slot and band")
-    # Store the selected catalogue route in the existing short section column.
     context = f"{section}:{slot}:{band}" if slot is not None else section
     now = now or utcnow()
     async with factory() as session:
@@ -56,7 +55,6 @@ async def revision(factory):
     from db.models.duel import Duel, DuelAudit, DuelFeedback, DuelModelVersion
     from db.models.duel_catalog import DuelCorpusLabel, DuelMapAnalysis, DuelMapAssignment, DuelTrainingExample
 
-    # Presence heartbeats do not change catalogue data or invalidate other readers.
     columns = []
     for model, stamp in ((Duel, Duel.updated_at), (DuelAudit, DuelAudit.created_at),
                          (DuelFeedback, DuelFeedback.updated_at), (DuelModelVersion, DuelModelVersion.created_at),

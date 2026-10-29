@@ -132,7 +132,6 @@ async def _restar(session, digest: str, mods: str, stars: Optional[float]) -> No
         row.stars = stars
 
 def search_range(least: float, most: float, slot: Optional[str] = None) -> tuple[float, float]:
-    # Mirror stars are NM. Exact modded stars are fetched when the map is analysed.
     if slot and slot.startswith("DT"):
         return least / DT_STARS, most / DT_STARS
     if slot and slot.startswith("HR"):

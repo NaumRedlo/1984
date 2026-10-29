@@ -223,7 +223,6 @@ async def pool_ack(factory, duel_id: str, actor_id: int, manifest: str, operatio
         if not waiting:
             await step.move(duel, states.DRAFTING)
             step.deadline(duel, "draft", PARAMETERS["draft_action_seconds"])
-    # Both players acknowledge the same manifest independently; the first ack changes the duel version.
     return await _act(factory, duel_id, actor_id, operation_id, "pool_ack", None, body, now)
 
 async def draft(factory, duel_id: str, actor_id: int, slot: str, operation_id: str, expected_version: Optional[int] = None,
