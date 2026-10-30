@@ -452,10 +452,41 @@ def test_a_chat_without_plays_of_the_map_falls_back_to_the_global_top(monkeypatc
         async def __aexit__(self, *_):
             return False
 
+    async def same_chat(_telegram_id, chat_id):
+        return chat_id
+
     monkeypatch.setattr(maps, "board", empty_board)
+    monkeypatch.setattr(orders, "board_chat", same_chat)
     monkeypatch.setattr(orders, "AsyncSessionFactory", lambda: Session())
     api = SimpleNamespace(get_beatmap_scores=AsyncMock(return_value=[
         {"user": {"username": "mrekk"}, "legacy_total_score": 9, "accuracy": 1.0, "mods": []}]))
     head = SimpleNamespace(mode=0, beatmap_md5="a" * 32)
     rivals = asyncio.run(orders.rivals_for(api, {"id": 5}, head, 7, -100))
     assert [rival["name"] for rival in rivals] == ["mrekk"]
+
+
+def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_in_it(monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    import db.models
+    from db.database import Base
+    from db.models.chat_member import ChatMember
+    from db.models.player import Player
+    from services.render_farm import orders
+
+    async def go():
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        made = async_sessionmaker(engine, expire_on_commit=False)
+        monkeypatch.setattr(orders, "AsyncSessionFactory", made)
+        async with made() as session:
+            session.add(Player(id=1, osu_user_id=11, osu_username="a", telegram_id=7, pinned_chat_id=-500))
+            session.add(Player(id=2, osu_user_id=12, osu_username="b", telegram_id=8, pinned_chat_id=-500))
+            session.add(ChatMember(chat_id=-500, player_id=1, user_id=1))
+            await session.commit()
+        found = [await orders.board_chat(7, 42), await orders.board_chat(7, -100), await orders.board_chat(8, -100), await orders.board_chat(0, -100)]
+        await engine.dispose()
+        return found
+
+    assert asyncio.run(go()) == [-500, -500, -100, -100]

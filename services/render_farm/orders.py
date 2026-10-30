@@ -64,11 +64,30 @@ def status_of(job: Job, lang: str) -> str:
         return t("farm.waiting_alone", lang, title=job.title, minutes=int(settings.RENDER_GIVE_UP // 60))
     return t("farm.waiting", lang, title=job.title, ahead=queue.ahead_of(job), workers=workers)
 
-async def rivals_for(osu_api_client, beatmap: Optional[dict], head: Header, telegram_id: int, chat_id: int) -> list[dict[str, Any]]:
+async def board_chat(telegram_id: int, chat_id: int) -> int:
+    from db.models.chat_member import ChatMember
+    from services.render_farm import players
+    from sqlalchemy import select
+
+    if not telegram_id:
+        return chat_id
+    async with AsyncSessionFactory() as session:
+        pinned = await players.pinned_chat(session, telegram_id)
+        player = await players._player_of(session, telegram_id)
+        if pinned is not None and player is not None:
+            held = await session.scalar(select(ChatMember.id).where(ChatMember.player_id == player.id, ChatMember.chat_id == pinned))
+            if held is not None:
+                return pinned
+    return chat_id
+
+async def rivals_for(osu_api_client, beatmap: Optional[dict], head: Header, telegram_id: int, chat_id: int,
+                     board: Optional[str] = None) -> list[dict[str, Any]]:
     beatmap_id = int((beatmap or {}).get("id") or 0)
     if not beatmap_id:
         return []
-    if skins.board_for(telegram_id) == "chat" and chat_id < 0 and head.mode == 0:
+    if (board or skins.board_for(telegram_id)) == "chat" and head.mode == 0:
+        chat_id = await board_chat(telegram_id, chat_id)
+    if (board or skins.board_for(telegram_id)) == "chat" and chat_id < 0 and head.mode == 0:
         try:
             from services.render_farm import maps
 

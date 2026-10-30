@@ -732,13 +732,14 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         said = request.match_info["beatmap"]
         if not said.isdigit():
             return web.json_response({"error": "no map"}, status=400)
-        chat_id, allowed = await _group_for(owner.telegram_id, request.query.get("chat", ""))
+        chat_id, allowed = await _group_for(owner.telegram_id, "")
         from types import SimpleNamespace
 
         from services.render_farm import orders
 
         head = SimpleNamespace(mode=0, beatmap_md5=said)
-        rivals = await orders.rivals_for(_osu, {"id": int(said)}, head, owner.telegram_id or 0, chat_id if allowed and chat_id else 0)
+        rivals = await orders.rivals_for(_osu, {"id": int(said)}, head, owner.telegram_id or 0, chat_id if allowed and chat_id else 0,
+                                         request.query.get("board"))
         return web.json_response({"rivals": rivals})
 
     async def someone(request: web.Request) -> web.Response:
