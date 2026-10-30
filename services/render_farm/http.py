@@ -722,6 +722,25 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             body = await maps.board(session, _osu, int(said), chat_id, owner.telegram_id, sync=request.query.get("sync", "1") != "0")
         return web.json_response(body)
 
+    async def map_rivals(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        owner = await _who(request)
+        if owner is None:
+            return web.json_response({"error": "no one"}, status=404)
+        said = request.match_info["beatmap"]
+        if not said.isdigit():
+            return web.json_response({"error": "no map"}, status=400)
+        chat_id, allowed = await _group_for(owner.telegram_id, request.query.get("chat", ""))
+        from types import SimpleNamespace
+
+        from services.render_farm import orders
+
+        head = SimpleNamespace(mode=0, beatmap_md5=said)
+        rivals = await orders.rivals_for(_osu, {"id": int(said)}, head, owner.telegram_id or 0, chat_id if allowed and chat_id else 0)
+        return web.json_response({"rivals": rivals})
+
     async def someone(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -1625,6 +1644,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/community", community),
         web.get("/render/community/person", someone),
         web.get("/render/maps/{beatmap}/board", map_board),
+        web.get("/render/maps/{beatmap}/rivals", map_rivals),
         web.post("/render/me/profile", share_card),
         web.post("/render/me/title", wear_title),
         web.post("/render/me/played", played),

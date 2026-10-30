@@ -20,7 +20,8 @@ from utils.ttl_cache import TTLCache
 
 TOP = 5
 RECENT = 12
-LIVE = 40
+LIVE = 1000
+LIVE_FOR = timedelta(days=3)
 HAPPENED = timedelta(days=14)
 ACTIVITY_DAYS = 91
 BASELINE_GRACE = timedelta(minutes=10)
@@ -216,7 +217,7 @@ async def _gather(session, chat_id: int, now: Optional[datetime]) -> tuple[dict[
     if players:
         attempts = (await session.execute(
             select(UserMapAttempt)
-            .where(UserMapAttempt.player_id.in_(players), UserMapAttempt.played_at.isnot(None))
+            .where(UserMapAttempt.player_id.in_(players), UserMapAttempt.played_at >= now - LIVE_FOR)
             .order_by(UserMapAttempt.played_at.desc())
             .limit(LIVE)
         )).scalars().all()
