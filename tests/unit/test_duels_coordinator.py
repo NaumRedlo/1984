@@ -243,3 +243,20 @@ async def test_a_pool_falls_back_to_collected_maps_when_kamertons_own_finds_do_n
         entries = (await session.scalars(select(DuelPoolEntry).join(DuelPool, DuelPool.id == DuelPoolEntry.pool_id)
                                          .where(DuelPool.duel_id == duel["id"]))).all()
     assert len(entries) == len(SLOTS) and all(entry.metrics_snapshot["source"] == "catalogue" for entry in entries)
+
+async def test_a_new_analyser_keeps_maps_in_the_catalogue_until_they_are_measured_again(factory):
+    from services.duels.coordinator import catalogue
+
+    async with factory() as session:
+        before = len(await catalogue(session))
+        for row in (await session.scalars(select(DuelMapAnalysis))).all():
+            row.feature_version = "features-old"
+        await session.commit()
+    async with factory() as session:
+        assert len(await catalogue(session)) == before
+        held = await session.get(DuelMapAssignment, 1)
+        session.add(DuelMapAnalysis(revision_hash=held.revision_hash, mods="NF", engine_version="test", feature_version=FEATURE_VERSION,
+                                    model_version="none", stars=6.1, features={}))
+        await session.commit()
+    async with factory() as session:
+        assert next(c for c in await catalogue(session) if c.beatmap_id == 1).stars == 6.1

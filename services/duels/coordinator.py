@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 
 from db.models.duel import Duel, DuelAttempt, DuelBonus, DuelCommand, DuelDeadline, DuelParticipant, DuelPool, DuelPoolEntry, DuelRoom, DuelRound
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
@@ -57,7 +57,9 @@ async def catalogue(session, trusted: Optional[frozenset[str]] = None) -> list[C
                 continue
             analysis = await session.scalar(select(DuelMapAnalysis).where(DuelMapAnalysis.revision_hash == revision.hash,
                                                                          DuelMapAnalysis.mods == "".join(SLOT_MODS[slot]),
-                                                                         DuelMapAnalysis.feature_version == FEATURE_VERSION))
+                                                                         DuelMapAnalysis.stars.is_not(None))
+                                            .order_by(case((DuelMapAnalysis.feature_version == FEATURE_VERSION, 0), else_=1),
+                                                      DuelMapAnalysis.created_at.desc()).limit(1))
             if analysis is None or not in_catalogue(analysis.stars):
                 continue
             peak = None
