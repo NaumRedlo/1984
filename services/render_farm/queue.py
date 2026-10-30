@@ -19,6 +19,11 @@ STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0,
 RIVALS = 50
 
 
+def _picture(url: Any) -> str:
+    said = str(url or "").strip()
+    return said if said.startswith("https://a.ppy.sh/") else ""
+
+
 def chat_rivals_of(rows: Any) -> list[dict[str, Any]]:
     found = []
     for row in rows if isinstance(rows, list) else []:
@@ -35,6 +40,7 @@ def chat_rivals_of(rows: Any) -> list[dict[str, Any]]:
             "score": int(points),
             "accuracy": round(float(accuracy), 2) if isinstance(accuracy, (int, float)) else None,
             "mods": "".join(str(mod) for mod in mods) if isinstance(mods, list) else str(mods),
+            "avatar": _picture(row.get("avatar")),
         })
     return found[:RIVALS]
 
@@ -57,6 +63,7 @@ def rivals_of(scores: Any) -> list[dict[str, Any]]:
             "score": points,
             "accuracy": round(float(accuracy) * 100.0, 2) if isinstance(accuracy, (int, float)) else None,
             "mods": mods,
+            "avatar": _picture((score.get("user") or {}).get("avatar_url")),
         })
     return found[:RIVALS]
 

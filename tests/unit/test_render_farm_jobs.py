@@ -405,7 +405,7 @@ def test_the_maps_top_rides_with_the_job_in_classic_points():
     from services.render_farm.queue import RenderQueue, rivals_of
 
     scores = [
-        {"user": {"username": "mrekk"}, "legacy_total_score": 52_000_000, "total_score": 990_000,
+        {"user": {"username": "mrekk", "avatar_url": "https://a.ppy.sh/7562902"}, "legacy_total_score": 52_000_000, "total_score": 990_000,
          "accuracy": 0.9912, "mods": [{"acronym": "HD"}, {"acronym": "CL"}]},
         {"user": {"username": "lazer"}, "classic_total_score": 0, "total_score": 870_000, "accuracy": 0.97, "mods": []},
         {"user": {}, "total_score": 5},
@@ -413,8 +413,8 @@ def test_the_maps_top_rides_with_the_job_in_classic_points():
     ]
     rivals = rivals_of(scores)
     assert rivals == [
-        {"name": "mrekk", "score": 52_000_000, "accuracy": 99.12, "mods": "HD"},
-        {"name": "lazer", "score": 870_000, "accuracy": 97.0, "mods": ""},
+        {"name": "mrekk", "score": 52_000_000, "accuracy": 99.12, "mods": "HD", "avatar": "https://a.ppy.sh/7562902"},
+        {"name": "lazer", "score": 870_000, "accuracy": 97.0, "mods": "", "avatar": ""},
     ]
     job = RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32, leaderboard=rivals)
     assert job.handed()["leaderboard"] == rivals
@@ -425,9 +425,9 @@ def test_the_chat_board_turns_into_rivals_and_the_choice_is_kept_per_player(tmp_
     from services.render_farm import skins
     from services.render_farm.queue import STANDARD, chat_rivals_of
 
-    rows = [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": ["HD", "DT"]},
+    rows = [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": ["HD", "DT"], "avatar": "https://evil.example/x"},
             {"name": "", "score": 5}, {"name": "zero", "score": 0}]
-    assert chat_rivals_of(rows) == [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": "HDDT"}]
+    assert chat_rivals_of(rows) == [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": "HDDT", "avatar": ""}]
     monkeypatch.setattr(skins, "folder", lambda: str(tmp_path))
     assert skins.board_for(7) == "global"
     skins.choose_board(7, "chat")
