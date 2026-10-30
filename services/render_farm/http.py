@@ -722,6 +722,26 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             body = await maps.board(session, _osu, int(said), chat_id, owner.telegram_id, sync=request.query.get("sync", "1") != "0")
         return web.json_response(body)
 
+    async def map_lookup(request: web.Request) -> web.Response:
+        bad = await guard(request)
+        if bad:
+            return bad
+        said = request.match_info["checksum"].lower()
+        if len(said) != 32 or not all(letter in "0123456789abcdef" for letter in said):
+            return web.json_response({"error": "no checksum"}, status=400)
+        if _osu is None:
+            return web.json_response({"error": "osu! is not reachable"}, status=503)
+        try:
+            found = await _osu.lookup_beatmap_by_checksum(said)
+        except Exception as exc:
+            logger.info("the map %s could not be looked up: %s", said, exc)
+            found = None
+        if not isinstance(found, dict) or not found.get("beatmapset_id"):
+            return web.json_response({"error": "no map"}, status=404)
+        beatmapset = found.get("beatmapset") or {}
+        return web.json_response({"beatmapset_id": found["beatmapset_id"], "version": found.get("version") or "",
+                                  "beatmapset": {"artist": beatmapset.get("artist") or "", "title": beatmapset.get("title") or ""}})
+
     async def map_rivals(request: web.Request) -> web.Response:
         bad = await guard(request)
         if bad:
@@ -1646,6 +1666,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.get("/render/community/person", someone),
         web.get("/render/maps/{beatmap}/board", map_board),
         web.get("/render/maps/{beatmap}/rivals", map_rivals),
+        web.get("/render/maps/lookup/{checksum}", map_lookup),
         web.post("/render/me/profile", share_card),
         web.post("/render/me/title", wear_title),
         web.post("/render/me/played", played),
