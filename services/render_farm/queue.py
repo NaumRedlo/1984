@@ -38,6 +38,7 @@ def chat_rivals_of(rows: Any) -> list[dict[str, Any]]:
         found.append({
             "name": name,
             "score": int(points),
+            "standard": int(points),
             "accuracy": round(float(accuracy), 2) if isinstance(accuracy, (int, float)) else None,
             "mods": "".join(str(mod) for mod in mods) if isinstance(mods, list) else str(mods),
             "avatar": _picture(row.get("avatar")),
@@ -58,9 +59,13 @@ def rivals_of(scores: Any) -> list[dict[str, Any]]:
         accuracy = score.get("accuracy")
         mods = "".join(str(mod.get("acronym") if isinstance(mod, dict) else mod) for mod in score.get("mods") or []
                        if (mod.get("acronym") if isinstance(mod, dict) else mod) not in ("CL",))
+        standard = score.get("total_score")
         found.append({
             "name": name,
             "score": points,
+            "stable": next((int(score[key]) for key in ("legacy_total_score", "classic_total_score")
+                            if isinstance(score.get(key), (int, float)) and score[key] > 0), None),
+            "standard": int(standard) if isinstance(standard, (int, float)) and standard > 0 else None,
             "accuracy": round(float(accuracy) * 100.0, 2) if isinstance(accuracy, (int, float)) else None,
             "mods": mods,
             "avatar": _picture((score.get("user") or {}).get("avatar_url")),
