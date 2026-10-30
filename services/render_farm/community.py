@@ -479,6 +479,7 @@ def friends_from(raw: Any) -> list[dict[str, Any]]:
             "online": bool(user.get("is_online")),
             "seen": seen_at,
             "avatar": user.get("avatar_url") or "",
+            "cover": (user.get("cover") or {}).get("url") or "",
             "supporter": bool(user.get("is_supporter")),
             "support_level": int(user.get("support_level") or 0),
             "mutual": bool(item.get("mutual")) if "target" in item else False,
