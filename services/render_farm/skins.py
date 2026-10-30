@@ -114,6 +114,37 @@ def _personal_folder(telegram_id: int) -> str:
 def _choice_path(telegram_id: int) -> str:
     return os.path.join(_personal_folder(telegram_id), "selected.json")
 
+BOARDS = ("global", "chat")
+
+def _board_path(telegram_id: int) -> str:
+    return os.path.join(_personal_folder(telegram_id), "board.json")
+
+def board_for(telegram_id: int) -> str:
+    try:
+        with open(_board_path(telegram_id), encoding="utf-8") as source:
+            saved = json.load(source)
+    except (OSError, ValueError, TypeError, SkinError):
+        return BOARDS[0]
+    board = saved.get("board") if isinstance(saved, dict) else None
+    return board if board in BOARDS else BOARDS[0]
+
+def choose_board(telegram_id: int, board: str) -> None:
+    import tempfile
+
+    if board not in BOARDS:
+        raise SkinError("invalid")
+    root = _personal_folder(telegram_id)
+    os.makedirs(root, exist_ok=True)
+    fd, part = tempfile.mkstemp(prefix=".board-", dir=root)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as destination:
+            json.dump({"board": board}, destination)
+        os.replace(part, _board_path(telegram_id))
+    except Exception:
+        if os.path.exists(part):
+            os.remove(part)
+        raise
+
 def _path_for(name: str, telegram_id: Optional[int]) -> Optional[str]:
     if not name or os.path.basename(name) != name or "\\" in name:
         return None

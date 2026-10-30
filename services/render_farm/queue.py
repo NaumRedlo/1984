@@ -13,9 +13,30 @@ LEASE_SECONDS = 90.0
 MAX_AGE_SECONDS = 3600.0
 MAX_ATTEMPTS = 3
 
-STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0}
+STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0,
+            "play": {"map_sounds": False, "storyboard": True, "map_video": True}}
 
 RIVALS = 50
+
+
+def chat_rivals_of(rows: Any) -> list[dict[str, Any]]:
+    found = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        points = row.get("score")
+        if not name or not isinstance(points, (int, float)) or points <= 0:
+            continue
+        accuracy = row.get("accuracy")
+        mods = row.get("mods") or []
+        found.append({
+            "name": name,
+            "score": int(points),
+            "accuracy": round(float(accuracy), 2) if isinstance(accuracy, (int, float)) else None,
+            "mods": "".join(str(mod) for mod in mods) if isinstance(mods, list) else str(mods),
+        })
+    return found[:RIVALS]
 
 
 def rivals_of(scores: Any) -> list[dict[str, Any]]:

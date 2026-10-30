@@ -16,6 +16,11 @@ def _keyboard(names: list[str], current: str, lang: str, telegram_id: int) -> In
     for at, name in enumerate(names):
         mark = "✓ " if name == current else ""
         rows.append([InlineKeyboardButton(text=f"{mark}{skins.display_name(name, telegram_id)}"[:60], callback_data=f"st:skin:{at}")])
+    board = skins.board_for(telegram_id)
+    rows.append([
+        InlineKeyboardButton(text=("✓ " if board == shown else "") + t(f"sts.board.{shown}", lang), callback_data=f"st:board:{shown}")
+        for shown in skins.BOARDS
+    ])
     rows.append(_nav_row(lang))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -26,6 +31,7 @@ async def _show(callback: types.CallbackQuery, lang: str) -> None:
         current = ""
     shown = html.escape(skins.display_name(current, callback.from_user.id)) if current else t("sts.skin.default", lang)
     body = t("sts.skin.home", lang, skin=shown)
+    body += "\n\n" + t("sts.board.about", lang, board=t(f"sts.board.{skins.board_for(callback.from_user.id)}", lang))
     if not names:
         body += "\n\n" + t("sts.skin.none_here", lang)
     try:
@@ -37,6 +43,14 @@ async def _show(callback: types.CallbackQuery, lang: str) -> None:
 async def cb_skin(callback: types.CallbackQuery, lang: str = "en", **_) -> None:
     await _show(callback, lang)
     await callback.answer()
+
+@router.callback_query(F.data.startswith("st:board:"))
+async def cb_board(callback: types.CallbackQuery, lang: str = "en", **_) -> None:
+    picked = callback.data.split(":", 2)[2]
+    if picked in skins.BOARDS:
+        skins.choose_board(callback.from_user.id, picked)
+    await _show(callback, lang)
+    await callback.answer(t("sts.skin.saved", lang))
 
 @router.callback_query(F.data.startswith("st:skin:"))
 async def cb_pick(callback: types.CallbackQuery, lang: str = "en", **_) -> None:

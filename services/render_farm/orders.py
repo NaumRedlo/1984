@@ -13,7 +13,7 @@ from config import settings
 from db.database import AsyncSessionFactory
 from db.models.player import Player
 from services.render_farm import app_storage, invites, members, skins
-from services.render_farm.queue import RIVALS, STANDARD, Job, State, queue, rivals_of
+from services.render_farm.queue import RIVALS, STANDARD, Job, State, chat_rivals_of, queue, rivals_of
 from services.render_farm.roster import roster
 from utils.i18n import t
 from utils.logger import get_logger
@@ -49,15 +49,43 @@ def status_of(job: Job, lang: str) -> str:
         total = int(progress.get("total") or 0)
         done = int(progress.get("done") or 0)
         stage = str(progress.get("stage") or "")
+        worker = job.worker_name or "?"
+        if stage == "sending":
+            return t("farm.sending", lang, title=job.title, worker=worker)
+        if stage == "polishing":
+            return t("farm.drawing", lang, title=job.title, worker=worker, share=100, left=_clock(0.0))
         if total > 0 and stage == "drawing":
             share = min(100, int(done * 100 / total))
             left = float(progress.get("seconds_left") or 0.0)
-            return t("farm.drawing", lang, title=job.title, worker=job.worker_name or "?", share=share, left=_clock(left))
-        return t("farm.preparing", lang, title=job.title, worker=job.worker_name or "?")
+            return t("farm.drawing", lang, title=job.title, worker=worker, share=share, left=_clock(left))
+        return t("farm.preparing", lang, title=job.title, worker=worker)
     workers = roster.taking()
     if workers == 0:
         return t("farm.waiting_alone", lang, title=job.title, minutes=int(settings.RENDER_GIVE_UP // 60))
     return t("farm.waiting", lang, title=job.title, ahead=queue.ahead_of(job), workers=workers)
+
+async def rivals_for(osu_api_client, beatmap: Optional[dict], head: Header, telegram_id: int, chat_id: int) -> list[dict[str, Any]]:
+    beatmap_id = int((beatmap or {}).get("id") or 0)
+    if not beatmap_id:
+        return []
+    if skins.board_for(telegram_id) == "chat" and chat_id < 0 and head.mode == 0:
+        try:
+            from services.render_farm import maps
+
+            async with AsyncSessionFactory() as session:
+                shown = await maps.board(session, osu_api_client, beatmap_id, chat_id, telegram_id)
+            chat = chat_rivals_of(shown.get("rows"))
+            if chat:
+                return chat
+        except Exception as exc:
+            logger.info("no chat leaderboard for %s in %s: %s", beatmap_id, chat_id, exc)
+    if osu_api_client is None:
+        return []
+    try:
+        return rivals_of(await osu_api_client.get_beatmap_scores(beatmap_id, limit=RIVALS, mode="mania" if head.mode == 3 else "osu"))
+    except Exception as exc:
+        logger.info("no leaderboard for %s: %s", head.beatmap_md5, exc)
+        return []
 
 async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
     person = message.from_user
@@ -125,13 +153,7 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
             except Exception as exc:
                 logger.info("no beatmap for %s: %s", head.beatmap_md5, exc)
         title, set_id = title_of(head, beatmap)
-        rivals = []
-        if osu_api_client is not None and (beatmap or {}).get("id"):
-            try:
-                rivals = rivals_of(await osu_api_client.get_beatmap_scores(
-                    int(beatmap["id"]), limit=RIVALS, mode="mania" if head.mode == 3 else "osu"))
-            except Exception as exc:
-                logger.info("no leaderboard for %s: %s", head.beatmap_md5, exc)
+        rivals = await rivals_for(osu_api_client, beatmap, head, person.id, message.chat.id)
         skin = await skins.chosen_for(person.id)
         beatmapset = (beatmap or {}).get("beatmapset") or {}
         song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)

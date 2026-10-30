@@ -133,20 +133,24 @@ CATALOG = {
         "ru": "\nosu!mania, экспериментальный рендер: возможны расхождения с игрой",
     },
     "farm.waiting": {
-        "en": "🎬 {title}\nIn the queue. Ahead of you: {ahead}. Workers online: {workers}",
-        "ru": "🎬 {title}\nВ очереди. Перед тобой: {ahead}. Воркеров онлайн: {workers}",
+        "en": "🎬 {title}\nIn the queue: {ahead} ahead\nWorkers online: {workers}",
+        "ru": "🎬 {title}\nВ очереди: впереди {ahead}\nВоркеров онлайн: {workers}",
     },
     "farm.waiting_alone": {
-        "en": "🎬 {title}\nIn the queue, but no worker is online right now. The replay will wait up to {minutes} min.",
-        "ru": "🎬 {title}\nВ очереди, но сейчас нет ни одного воркера онлайн. Реплей подождёт до {minutes} мин.",
+        "en": "🎬 {title}\nIn the queue\nNo worker is online, the replay will wait up to {minutes} min",
+        "ru": "🎬 {title}\nВ очереди\nВоркеров онлайн нет, реплей подождёт до {minutes} мин",
     },
     "farm.preparing": {
-        "en": "🎬 {title}\n{worker} took the replay and is preparing the map",
-        "ru": "🎬 {title}\n«{worker}» взял реплей и готовит карту",
+        "en": "🎬 {title}\nPreparing\nWorker: {worker}",
+        "ru": "🎬 {title}\nПодготовка\nВоркер: «{worker}»",
     },
     "farm.drawing": {
-        "en": "🎬 {title}\n{worker} is rendering: {share}%, {left} left",
-        "ru": "🎬 {title}\n«{worker}» рендерит: {share}%, осталось {left}",
+        "en": "🎬 {title}\nRendering: {share}%, {left} left\nWorker: {worker}",
+        "ru": "🎬 {title}\nРендер: {share}%, осталось {left}\nВоркер: «{worker}»",
+    },
+    "farm.sending": {
+        "en": "🎬 {title}\nSending\nWorker: {worker}",
+        "ru": "🎬 {title}\nОтправка\nВоркер: «{worker}»",
     },
     "farm.nobody": {
         "en": "🎬 {title}\nNo worker picked up the replay in time. Send it again a bit later.",

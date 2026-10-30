@@ -278,9 +278,9 @@ def test_the_status_says_where_the_job_stands(monkeypatch):
     job = line.offer("a.osr", "NaumRedlo — Bluenation", beatmap_md5=HASH)
     assert "подождёт" in orders.status_of(job, "ru")
     who.hello("k", "MacBook")
-    assert "Перед тобой: 0" in orders.status_of(job, "ru")
+    assert "впереди 0" in orders.status_of(job, "ru")
     line.claim("k", "MacBook")
-    assert "готовит карту" in orders.status_of(job, "ru")
+    assert "Подготовка" in orders.status_of(job, "ru")
     line.heartbeat(job.id, "k", {"stage": "drawing", "done": 25, "total": 100, "seconds_left": 75})
     assert "25%" in orders.status_of(job, "ru") and "1:15" in orders.status_of(job, "ru")
 
@@ -419,3 +419,43 @@ def test_the_maps_top_rides_with_the_job_in_classic_points():
     job = RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32, leaderboard=rivals)
     assert job.handed()["leaderboard"] == rivals
     assert RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32).handed()["leaderboard"] == []
+
+
+def test_the_chat_board_turns_into_rivals_and_the_choice_is_kept_per_player(tmp_path, monkeypatch):
+    from services.render_farm import skins
+    from services.render_farm.queue import STANDARD, chat_rivals_of
+
+    rows = [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": ["HD", "DT"]},
+            {"name": "", "score": 5}, {"name": "zero", "score": 0}]
+    assert chat_rivals_of(rows) == [{"name": "kotofey", "score": 4_100_000, "accuracy": 98.61, "mods": "HDDT"}]
+    monkeypatch.setattr(skins, "folder", lambda: str(tmp_path))
+    assert skins.board_for(7) == "global"
+    skins.choose_board(7, "chat")
+    assert skins.board_for(7) == "chat" and skins.board_for(8) == "global"
+    assert STANDARD["play"] == {"map_sounds": False, "storyboard": True, "map_video": True}
+
+
+def test_a_chat_without_plays_of_the_map_falls_back_to_the_global_top(monkeypatch):
+    from types import SimpleNamespace
+
+    from services.render_farm import maps, orders, skins
+
+    monkeypatch.setattr(skins, "board_for", lambda _: "chat")
+
+    async def empty_board(*_args, **_kwargs):
+        return {"rows": []}
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+    monkeypatch.setattr(maps, "board", empty_board)
+    monkeypatch.setattr(orders, "AsyncSessionFactory", lambda: Session())
+    api = SimpleNamespace(get_beatmap_scores=AsyncMock(return_value=[
+        {"user": {"username": "mrekk"}, "legacy_total_score": 9, "accuracy": 1.0, "mods": []}]))
+    head = SimpleNamespace(mode=0, beatmap_md5="a" * 32)
+    rivals = asyncio.run(orders.rivals_for(api, {"id": 5}, head, 7, -100))
+    assert [rival["name"] for rival in rivals] == ["mrekk"]

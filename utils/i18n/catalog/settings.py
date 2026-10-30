@@ -9,10 +9,16 @@ CATALOG = {
     "sts.kb.language": {"en": "Language", "ru": "Язык"},
     "sts.kb.skin": {"en": "Render skin", "ru": "Скин для рендера"},
     "sts.skin.home": {
-        "en": "🎨 <b>Render skin</b>\n\nSend an .osk or ZIP skin file to this chat to use your own skin.\n\nVideos drawn for you on the farm use: <b>{skin}</b>\nAlways 1080p at 60 FPS with normalised loudness.",
-        "ru": "🎨 <b>Скин для рендера</b>\n\nПришли в этот чат файл скина .osk или ZIP, чтобы использовать свой скин.\n\nВидео, которые для тебя рисует ферма, будут в скине: <b>{skin}</b>\nВсегда 1080p, 60 кадров, громкость нормализована.",
+        "en": "🎨 <b>Render skin</b>\n\nTo render in your own skin, send an .osk or ZIP file here.\n\nYour videos are rendered in: <b>{skin}</b>\nAlways 1080p at 60 FPS. If the map has a video or a storyboard, it plays in the background instead of the blurred picture.",
+        "ru": "🎨 <b>Скин для рендера</b>\n\nЧтобы рендерить в своём скине, пришли сюда файл .osk или ZIP.\n\nСейчас твои видео рендерятся в скине: <b>{skin}</b>\nВсегда 1080p и 60 кадров. Если у карты есть видео или сториборд, они идут фоном вместо размытой картинки.",
     },
     "sts.skin.default": {"en": "Dossier Default", "ru": "Dossier Default"},
+    "sts.board.global": {"en": "Global top", "ru": "Глобальный топ"},
+    "sts.board.chat": {"en": "Chat top", "ru": "Топ беседы"},
+    "sts.board.about": {
+        "en": "Leaderboard in the video: <b>{board}</b>\nIf nobody in the chat has played the map, the global top is shown.",
+        "ru": "Таблица в видео: <b>{board}</b>\nЕсли в беседе карту ещё никто не играл, покажется глобальный топ.",
+    },
     "sts.skin.none_here": {"en": "No other skins are on the server yet.", "ru": "Других скинов на сервере пока нет."},
     "sts.skin.saved": {"en": "Saved", "ru": "Сохранено"},
 
