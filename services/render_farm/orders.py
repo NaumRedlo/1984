@@ -13,7 +13,7 @@ from config import settings
 from db.database import AsyncSessionFactory
 from db.models.player import Player
 from services.render_farm import app_storage, invites, members, skins
-from services.render_farm.queue import STANDARD, Job, State, queue
+from services.render_farm.queue import RIVALS, STANDARD, Job, State, queue, rivals_of
 from services.render_farm.roster import roster
 from utils.i18n import t
 from utils.logger import get_logger
@@ -125,12 +125,20 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
             except Exception as exc:
                 logger.info("no beatmap for %s: %s", head.beatmap_md5, exc)
         title, set_id = title_of(head, beatmap)
+        rivals = []
+        if osu_api_client is not None and (beatmap or {}).get("id"):
+            try:
+                rivals = rivals_of(await osu_api_client.get_beatmap_scores(
+                    int(beatmap["id"]), limit=RIVALS, mode="mania" if head.mode == 3 else "osu"))
+            except Exception as exc:
+                logger.info("no leaderboard for %s: %s", head.beatmap_md5, exc)
         skin = await skins.chosen_for(person.id)
         beatmapset = (beatmap or {}).get("beatmapset") or {}
         song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
         meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
         job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta, ruleset=head.mode)
+                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta, ruleset=head.mode,
+                          leaderboard=rivals)
         if head.mode == 3:
             await message.reply(t("farm.mania_note", lang))
         status = await message.reply(status_of(job, lang))

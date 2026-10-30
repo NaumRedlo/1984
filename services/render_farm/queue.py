@@ -15,6 +15,31 @@ MAX_ATTEMPTS = 3
 
 STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0}
 
+RIVALS = 50
+
+
+def rivals_of(scores: Any) -> list[dict[str, Any]]:
+    found = []
+    for score in scores if isinstance(scores, list) else []:
+        if not isinstance(score, dict):
+            continue
+        name = str(((score.get("user") or {}).get("username")) or "").strip()
+        points = next((int(score[key]) for key in ("legacy_total_score", "classic_total_score", "total_score")
+                       if isinstance(score.get(key), (int, float)) and score[key] > 0), 0)
+        if not name or points <= 0:
+            continue
+        accuracy = score.get("accuracy")
+        mods = "".join(str(mod.get("acronym") if isinstance(mod, dict) else mod) for mod in score.get("mods") or []
+                       if (mod.get("acronym") if isinstance(mod, dict) else mod) not in ("CL",))
+        found.append({
+            "name": name,
+            "score": points,
+            "accuracy": round(float(accuracy) * 100.0, 2) if isinstance(accuracy, (int, float)) else None,
+            "mods": mods,
+        })
+    return found[:RIVALS]
+
+
 class State(str, Enum):
     WAITING = "waiting"
     CLAIMED = "claimed"
@@ -46,6 +71,7 @@ class Job:
     in_app: bool = False
     video_meta: Optional[dict[str, Any]] = None
     ruleset: int = 0
+    leaderboard: list[dict[str, Any]] = field(default_factory=list)
 
     def handed(self) -> dict[str, Any]:
         skin = None
@@ -59,6 +85,7 @@ class Job:
             "settings": dict(self.settings or STANDARD),
             "skin": skin,
             "lease_seconds": LEASE_SECONDS,
+            "leaderboard": list(self.leaderboard),
         }
 
 class RenderQueue:
@@ -69,7 +96,8 @@ class RenderQueue:
               skin: Optional[dict[str, Any]] = None, requester: int = 0, chat_id: int = 0,
               now: Optional[float] = None, video_id: Optional[int] = None,
               settings: Optional[dict[str, Any]] = None, in_app: bool = False,
-              video_meta: Optional[dict[str, Any]] = None, ruleset: int = 0) -> Job:
+              video_meta: Optional[dict[str, Any]] = None, ruleset: int = 0,
+              leaderboard: Optional[list[dict[str, Any]]] = None) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:16],
             replay_path=replay_path,
@@ -85,6 +113,7 @@ class RenderQueue:
             in_app=in_app,
             video_meta=dict(video_meta) if video_meta else None,
             ruleset=ruleset,
+            leaderboard=list(leaderboard or []),
         )
         self._jobs[job.id] = job
         logger.info("job %s offered: %s", job.id, title)

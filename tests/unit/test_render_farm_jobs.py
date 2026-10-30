@@ -399,3 +399,23 @@ def test_bot_renders_sound_at_four_fifths_of_the_old_level():
     from services.render_farm.queue import STANDARD
 
     assert round(10 ** ((STANDARD["loudness"] + 14.0) / 20.0), 2) == 0.79
+
+
+def test_the_maps_top_rides_with_the_job_in_classic_points():
+    from services.render_farm.queue import RenderQueue, rivals_of
+
+    scores = [
+        {"user": {"username": "mrekk"}, "legacy_total_score": 52_000_000, "total_score": 990_000,
+         "accuracy": 0.9912, "mods": [{"acronym": "HD"}, {"acronym": "CL"}]},
+        {"user": {"username": "lazer"}, "classic_total_score": 0, "total_score": 870_000, "accuracy": 0.97, "mods": []},
+        {"user": {}, "total_score": 5},
+        "noise",
+    ]
+    rivals = rivals_of(scores)
+    assert rivals == [
+        {"name": "mrekk", "score": 52_000_000, "accuracy": 99.12, "mods": "HD"},
+        {"name": "lazer", "score": 870_000, "accuracy": 97.0, "mods": ""},
+    ]
+    job = RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32, leaderboard=rivals)
+    assert job.handed()["leaderboard"] == rivals
+    assert RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32).handed()["leaderboard"] == []
