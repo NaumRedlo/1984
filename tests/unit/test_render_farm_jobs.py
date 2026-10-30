@@ -278,7 +278,7 @@ def test_the_status_says_where_the_job_stands(monkeypatch):
     job = line.offer("a.osr", "NaumRedlo — Bluenation", beatmap_md5=HASH)
     assert "подождёт" in orders.status_of(job, "ru")
     who.hello("k", "MacBook")
-    assert "впереди: 0" in orders.status_of(job, "ru")
+    assert "Перед тобой: 0" in orders.status_of(job, "ru")
     line.claim("k", "MacBook")
     assert "готовит карту" in orders.status_of(job, "ru")
     line.heartbeat(job.id, "k", {"stage": "drawing", "done": 25, "total": 100, "seconds_left": 75})
@@ -393,3 +393,9 @@ def test_a_mania_replay_waits_for_a_worker_that_draws_mania():
     assert line.claim("old", now=3.0) is osu, "a worker that names no rulesets is given osu! only"
     assert line.claim("old", now=3.0) is None
     assert line.claim("new", now=3.0, rulesets=frozenset({0, 3})) is mania
+
+
+def test_bot_renders_sound_at_four_fifths_of_the_old_level():
+    from services.render_farm.queue import STANDARD
+
+    assert round(10 ** ((STANDARD["loudness"] + 14.0) / 20.0), 2) == 0.79

@@ -13,7 +13,7 @@ LEASE_SECONDS = 90.0
 MAX_AGE_SECONDS = 3600.0
 MAX_ATTEMPTS = 3
 
-STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -14.0}
+STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0}
 
 class State(str, Enum):
     WAITING = "waiting"
