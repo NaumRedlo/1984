@@ -34,7 +34,7 @@ def predicted(model, revision, analyses) -> Optional[Candidate]:
     if prediction.slot not in SLOT_MODS or catalog.confidence_level(prediction.probability, prediction.margin) != "confident":
         return None
     measured = analyses.get("".join(SLOT_MODS[prediction.slot]))
-    if measured is None or not in_catalogue(measured.stars):
+    if measured is None or not in_catalogue(measured.stars) or catalog.barred(revision) or catalog.doubted(revision):
         return None
     return Candidate(int(revision.beatmap_id), int(revision.beatmapset_id), revision.mapper or "", prediction.slot,
                      float(measured.stars), "confident", prediction.probability, revision.hash, source="model", model_version=model.version)

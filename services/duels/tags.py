@@ -31,6 +31,7 @@ described_sets: dict[int, str] = {}
 TOURNAMENT = re.compile(r"(owc20\d\d|moe20\d\d|roundtable\d*|trt\d*|perennial\d*)")
 PIECE = re.compile(r"((?:nm|hd|hr|dt|fm)[1-9]|qualifiers?|quals|qlf|ro\d+|quarterfinals?|qf|semifinals?|sf|grandfinals?|gf|finals?|tiebreaker|tb|f)")
 TRIMMED = re.compile(r"\bcut\s*ver|\bsp(?:ee|e)d\s*up|\btv\s*(?:size|ver)")
+DOUBTED = re.compile(r"\btv\s*edit|\bshort\s*(?:ver|edit|cut|size)|\b(?:game|movie|anime)\s*(?:ver|size|edit|cut)|\bnightcore\b|[(\[]\s*(?:cut|short)\s*[)\]]")
 
 def _tournament(word: str) -> str:
     return "roundtable" + word[3:] if word.startswith("trt") else word
@@ -101,3 +102,10 @@ async def description_of(osu, set_id: Optional[int]) -> str:
 
 def trimmed(*names: Optional[str]) -> bool:
     return any(TRIMMED.search((name or "").lower()) for name in names)
+
+def doubted(*names: Optional[str]) -> bool:
+    return any(DOUBTED.search((name or "").lower()) for name in names)
+
+def tagged_short(said: Any) -> bool:
+    raw = said.get("raw") if isinstance(said, dict) else None
+    return bool(raw) and (trimmed(raw) or doubted(raw))

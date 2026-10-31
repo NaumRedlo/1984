@@ -4,6 +4,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from db.models.duel_catalog import DuelAssignmentLog, DuelMapAssignment, DuelMapRevision
+from services.duels import tags
 from services.duels.rules import SLOTS, reserved
 from utils.timeutils import utcnow
 
@@ -241,13 +242,19 @@ async def admit(session, beatmap_id: int, digest: str, ok: bool, reason: Optiona
         await quarantine(session, beatmap_id, reason or "parse_failed", now)
     await session.flush()
 
+def barred(revision_row: DuelMapRevision) -> bool:
+    return tags.trimmed(revision_row.title, revision_row.version)
+
+def doubted(revision_row: DuelMapRevision) -> bool:
+    return tags.doubted(revision_row.title, revision_row.version) or tags.tagged_short(revision_row.tags)
+
 def playable(row: DuelMapAssignment, revision_row: Optional[DuelMapRevision], trusted: Optional[frozenset[str]] = None) -> Optional[str]:
-    if row.slot not in SLOTS or not row.admitted or revision_row is None or revision_row.status != "ok":
+    if row.slot not in SLOTS or not row.admitted or revision_row is None or revision_row.status != "ok" or barred(revision_row):
         return None
     if revision_row.ranked_status != "ranked" and row.state != HUMAN_APPROVED:
         return None
     if row.state == HUMAN_APPROVED:
         return "human"
-    if row.state == AUTO_ASSIGNED and (trusted is None or row.slot in trusted):
+    if row.state == AUTO_ASSIGNED and (trusted is None or row.slot in trusted) and not doubted(revision_row):
         return confidence_level(row.confidence, row.margin)
     return None

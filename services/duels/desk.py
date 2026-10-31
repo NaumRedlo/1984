@@ -273,23 +273,27 @@ async def queue(factory, actor: int, owners: tuple[int, ...] = (), model=None) -
                            "slot": slot, "secondary": catalog.secondary_of(assignment), **_graded(assignment),
                            "state": assignment.state if assignment is not None else None, "opinions": True, "feedback": True},
                           int(review.beatmap_id), review.revision_hash, slot))
-        unsure = (await session.scalars(select(DuelMapAssignment).where(DuelMapAssignment.state == catalog.AUTO_ASSIGNED,
-                                                                        DuelMapAssignment.admitted.is_(True))
+        current = (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id) & (DuelMapRevision.hash == DuelMapAssignment.revision_hash)
+        unsure = (await session.execute(select(DuelMapAssignment, DuelMapRevision).join(DuelMapRevision, current, isouter=True)
+                                        .where(DuelMapAssignment.state == catalog.AUTO_ASSIGNED, DuelMapAssignment.admitted.is_(True))
                                         .order_by(DuelMapAssignment.confidence, DuelMapAssignment.margin))).all()
-        for assignment in unsure:
+        for assignment, revision in sorted(unsure, key=lambda row: not (row[1] is not None and catalog.doubted(row[1]))):
             if len(found) >= QUEUE_MOST:
                 break
-            if int(assignment.beatmap_id) in seen or catalog.confidence_level(assignment.confidence, assignment.margin) == "confident":
+            if int(assignment.beatmap_id) in seen or (revision is not None and catalog.barred(revision)):
+                continue
+            doubted = revision is not None and catalog.doubted(revision)
+            if not doubted and catalog.confidence_level(assignment.confidence, assignment.margin) == "confident":
                 continue
             seen.add(int(assignment.beatmap_id))
-            found.append(({"kind": "review", "id": None, "reason": "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
+            found.append(({"kind": "review", "id": None, "reason": "doubted" if doubted else "uncertain", "since": _stamp(assignment.updated_at), "slot": assignment.slot,
                            **_graded(assignment), "state": assignment.state, "opinions": True, "feedback": None},
                           int(assignment.beatmap_id), assignment.revision_hash, assignment.slot))
-        waiting = (await session.execute(select(DuelMapAssignment, DuelMapRevision.tags).join(
-            DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id) & (DuelMapRevision.hash == DuelMapAssignment.revision_hash), isouter=True)
+        waiting = (await session.execute(select(DuelMapAssignment, DuelMapRevision).join(DuelMapRevision, current, isouter=True)
             .where(DuelMapAssignment.state == catalog.UNASSIGNED, DuelMapAssignment.admitted.is_(True))
             .order_by(DuelMapAssignment.updated_at))).all()
-        waiting = [assignment for assignment, _ in sorted(waiting, key=lambda row: not (row[1] or {}).get("tournaments"))][:max(0, QUEUE_MOST - len(found))]
+        waiting = [row for row in waiting if row[1] is None or not catalog.barred(row[1])]
+        waiting = [assignment for assignment, _ in sorted(waiting, key=lambda row: not ((row[1].tags if row[1] is not None else None) or {}).get("tournaments"))][:max(0, QUEUE_MOST - len(found))]
         for assignment in waiting:
             if int(assignment.beatmap_id) in seen:
                 continue
@@ -314,7 +318,7 @@ async def coverage(factory, actor: int, owners: tuple[int, ...] = ()) -> dict[st
 
 def catalogue_level(assignment, revision):
     if reserved(assignment.slot or ""):
-        if assignment.state == catalog.HUMAN_APPROVED and assignment.admitted and revision is not None and revision.status == "ok":
+        if assignment.state == catalog.HUMAN_APPROVED and assignment.admitted and revision is not None and revision.status == "ok" and not catalog.barred(revision):
             return "human"
         return None
     return catalog.playable(assignment, revision)

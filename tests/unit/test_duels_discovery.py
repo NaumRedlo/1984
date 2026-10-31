@@ -70,3 +70,16 @@ def test_unseen_maps_require_confident_in_distribution_predictions(slot, probabi
     revision = SimpleNamespace(status="ok", ranked_status="ranked")
     analysis = SimpleNamespace(features={"effective": {"ar": 9, "cs": 5.2}}, stars=6.5)
     assert discovery.predicted(Refusing(), revision, {"NF": analysis, "NFHR": analysis, "NFDT": analysis}) is None
+
+
+@pytest.mark.parametrize("title,version,raw,played", [("Song", "Insane", "", True), ("Song (TV Size)", "Insane", "", False),
+                                                      ("Song (Short Ver.)", "Insane", "", False), ("Song", "Insane", "tv size", False)])
+def test_an_unseen_map_goes_unreviewed_only_with_a_name_that_raises_no_doubt(title, version, raw, played):
+    class Sure(Model):
+        version = "slots-test"
+
+        def predict(self, *args):
+            return SimpleNamespace(slot="DT1", probability=0.95, margin=0.9)
+    revision = SimpleNamespace(status="ok", ranked_status="ranked", title=title, version=version, tags={"raw": raw}, beatmap_id=7, beatmapset_id=70, mapper="Meg", hash="a" * 32)
+    analysis = SimpleNamespace(features={"effective": {"ar": 9, "cs": 5.2}}, stars=6.5)
+    assert (discovery.predicted(Sure(), revision, {"NF": analysis, "NFHR": analysis, "NFDT": analysis}) is not None) is played

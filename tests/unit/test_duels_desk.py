@@ -370,3 +370,30 @@ async def test_maps_from_tournament_pools_wait_first_and_show_their_tags(factory
     assert [task["map"]["beatmap_id"] for task in waiting][0] == 31
     assert waiting[0]["map"]["tags"] == {"tournaments": ["owc2024"], "stages": ["qf"], "slots": ["NM2"]}
     assert all(task["map"]["tags"] is None for task in waiting[1:])
+
+async def _named(factory, beatmap_id, **fields):
+    async with factory() as session:
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == beatmap_id))
+        for name, value in fields.items():
+            setattr(revision, name, value)
+        await session.commit()
+
+async def test_a_trimmed_map_already_in_the_catalogue_leaves_it_whoever_accepted_it(factory):
+    await _named(factory, 1, title="Song (TV Size)", version="Insane")
+    await _named(factory, 2, title="Song", version="Sped Up Ver.")
+    found = await desk.coverage(factory, 1)
+    assert found["grid"]["NM1"][desk.band_of(5.2)] == 0 and found["grid"]["NM1"][desk.band_of(6.1)] == 0
+    assert 2 not in [task["map"]["beatmap_id"] for task in await desk.queue(factory, 1)]
+
+async def test_a_doubted_map_waits_for_a_reviewer_however_sure_the_model_is(factory):
+    await _named(factory, 2, title="Song (Short Ver.)", version="Insane")
+    found = await desk.coverage(factory, 1)
+    assert found["grid"]["NM1"][desk.band_of(6.1)] == 0
+    tasks = await desk.queue(factory, 1)
+    task = next(task for task in tasks if task["map"]["beatmap_id"] == 2)
+    assert task["reason"] == "doubted" and task["kind"] == "review" and task["slot"] == "NM1"
+
+async def test_a_doubted_map_a_reviewer_approved_stays_in_the_catalogue(factory):
+    await _named(factory, 1, title="Song (Game Ver.)", tags={"raw": "tv size"})
+    found = await desk.coverage(factory, 1)
+    assert found["grid"]["NM1"][desk.band_of(5.2)] == 1

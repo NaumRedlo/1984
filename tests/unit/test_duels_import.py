@@ -763,3 +763,30 @@ async def test_a_tag_search_asks_only_mirrors_that_read_the_query():
         return b'{"beatmapsets": []}'
     await mirrors.search(fetch, "ranked", 0, 50, 6.0, 7.0, clock=lambda: 10**9, text="owc2024")
     assert asked and all("osu.direct" in address and "owc2024" in address for address in asked)
+
+
+async def test_old_revisions_get_their_names_and_tags_and_shortened_maps_are_listed(factory, tmp_path, monkeypatch):
+    from db.models.duel_catalog import DuelMapAssignment, DuelMapRevision
+
+    digest = "a" * 32
+    (tmp_path / f"{digest}.osu").write_bytes(b"osu file format v14\n")
+    async with factory() as session:
+        session.add(DuelMapRevision(beatmap_id=91, beatmapset_id=910, hash=digest, status="ok", ranked_status="ranked"))
+        session.add(DuelMapAssignment(beatmap_id=91, slot="NM1", state="AUTO_ASSIGNED", revision_hash=digest, admitted=True))
+        await session.commit()
+
+    class Parsed:
+        title, artist, version = "Song (TV Size)", "Artist", "Insane"
+
+    async def described(fetch, beatmap_id):
+        return {"tags": "owc2024 qf nm2"}
+
+    monkeypatch.setattr(importer, "parse", lambda raw: Parsed)
+    monkeypatch.setattr(importer.mirrors, "describe", described)
+    said = []
+    counted = await importer.rename(factory, None, None, str(tmp_path), pause=0, report=said.append)
+    assert counted == {"named": 1, "tagged": 1, "untouched": 0, "barred": 1, "doubted": 0}
+    assert said == [f"barred 91 NM1 AUTO_ASSIGNED: Artist - Song (TV Size) [Insane]"]
+    async with factory() as session:
+        made = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 91))
+    assert made.title == "Song (TV Size)" and made.tags["tournaments"] == ["owc2024"]

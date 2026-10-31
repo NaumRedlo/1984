@@ -56,3 +56,20 @@ async def test_a_set_description_is_asked_once_and_kept():
     assert await tags.description_of(osu, 77) == await tags.description_of(osu, 77)
     assert Osu.asked == 1 and tags.read("", await tags.description_of(osu, 77))["stages"] == ["sf"]
     assert await tags.description_of(None, 77) == "" and await tags.description_of(osu, None) == ""
+
+
+@pytest.mark.parametrize("name,doubted", [
+    ("Song (TV Edit)", True), ("Song (Short Ver.)", True), ("Song -Game Ver.-", True), ("Song (Movie Ver.)", True),
+    ("Song [Anime Size]", True), ("Song (Nightcore Mix)", True), ("Song (Cut)", True), ("Song [Short]", True),
+    ("Cut To The Feeling", False), ("Short Change Hero", False), ("Video Game Over", False), ("Song (Extended Ver.)", False),
+])
+def test_names_that_only_may_be_shortened_are_doubted(name, doubted):
+    assert tags.doubted(name) is doubted
+
+
+def test_a_shortened_word_in_the_mappers_tags_is_a_doubt_and_not_a_verdict():
+    assert tags.tagged_short(tags.read("anime tv size opening"))
+    assert tags.tagged_short(tags.read("nightcore remix"))
+    assert not tags.tagged_short(tags.read("owc2024 qf nm2"))
+    assert not tags.tagged_short(None)
+    assert not tags.trimmed("Song", "Insane")
