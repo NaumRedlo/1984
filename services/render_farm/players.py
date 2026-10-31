@@ -11,6 +11,7 @@ from db.models.user import User
 from services.leaderboard.deltas import DELTA_CATEGORIES
 from services.render_farm.community import TITLE_REGISTRY, TOP, _play, _profile, naive, person, stamp
 from utils.timeutils import utcnow
+from utils.ttl_cache import TTLCache
 
 PIN_EVERY = timedelta(days=30)
 
@@ -49,16 +50,15 @@ async def _rows_by_player(session, player_ids: Optional[list[int]] = None) -> di
         grouped.setdefault(row.player_id, []).append(row)
     return grouped
 
-async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None, signed: Iterable[int] = (),
-                   me: Optional[int] = None, online: Iterable[int] = (), signed_telegram: Iterable[int] = (),
-                   online_telegram: Iterable[int] = ()) -> dict[str, Any]:
-    signed = set(signed)
-    online = set(online)
-    signed_telegram = {int(held) for held in signed_telegram if held}
-    online_telegram = {int(held) for held in online_telegram if held}
+EVERYONE_KEEP = 60.0
+_everyone_cache = TTLCache(maxsize=8, ttl=EVERYONE_KEEP)
+
+def forget_everyone() -> None:
+    _everyone_cache.clear()
+
+async def _everyone_cards(session, query: str, signed: set[int], signed_telegram: set[int]) -> tuple[list[dict[str, Any]], dict[int, Any]]:
     players = {player.id: player for player in (await session.execute(select(Player))).scalars().all()}
-    signed |= {player.id for player in players.values() if player.telegram_id in signed_telegram}
-    online |= {player.id for player in players.values() if player.telegram_id in online_telegram}
+    signed = signed | {player.id for player in players.values() if player.telegram_id in signed_telegram}
     grouped = await _rows_by_player(session, list(players))
     wanted = query.strip().lower()
     chosen = {
@@ -94,15 +94,47 @@ async def everyone(session, viewer: int, *, query: str = "", now: Optional[datet
             top=[_play(found) for found in best[player_id][:TOP]],
             moved=[0] * len(DELTA_CATEGORIES),
             gained=[0.0] * len(DELTA_CATEGORIES),
-            you=player_id == me or (bool(viewer) and players[player_id].telegram_id == viewer),
+            you=False,
         )
         card["player"] = player_id
         card["earned"] = earned[player_id]
         card["app"] = player_id in signed
-        card["online"] = player_id in online
         people.append(card)
     people.sort(key=lambda card: card["pp"], reverse=True)
+    return people, {player_id: players[player_id].telegram_id for player_id in chosen}
+
+def _as_seen(cards: list[dict[str, Any]], telegrams: dict[int, Any], viewer: int, me: Optional[int], online: set[int], online_telegram: set[int],
+             now: Optional[datetime]) -> dict[str, Any]:
+    people = []
+    for card in cards:
+        player_id = card["player"]
+        telegram = telegrams.get(player_id)
+        people.append({
+            **card,
+            "you": player_id == me or (bool(viewer) and telegram == viewer),
+            "online": player_id in online or telegram in online_telegram,
+        })
     return {"people": people, "at": stamp(naive(now) or utcnow())}
+
+async def everyone(session, viewer: int, *, query: str = "", now: Optional[datetime] = None, signed: Iterable[int] = (),
+                   me: Optional[int] = None, online: Iterable[int] = (), signed_telegram: Iterable[int] = (),
+                   online_telegram: Iterable[int] = ()) -> dict[str, Any]:
+    signed_telegram = {int(held) for held in signed_telegram if held}
+    online_telegram = {int(held) for held in online_telegram if held}
+    cards, telegrams = await _everyone_cards(session, query, set(signed), signed_telegram)
+    return _as_seen(cards, telegrams, viewer, me, set(online), online_telegram, now)
+
+async def everyone_kept(session, viewer: int, *, signed: Iterable[int] = (), me: Optional[int] = None, online: Iterable[int] = (),
+                        signed_telegram: Iterable[int] = (), online_telegram: Iterable[int] = ()) -> dict[str, Any]:
+    signed = frozenset(signed)
+    signed_telegram = frozenset(int(held) for held in signed_telegram if held)
+    online_telegram = {int(held) for held in online_telegram if held}
+    key = (signed, signed_telegram)
+    kept = _everyone_cache.get(key)
+    if kept is None:
+        kept = await _everyone_cards(session, "", set(signed), set(signed_telegram))
+        _everyone_cache[key] = kept
+    return _as_seen(kept[0], kept[1], viewer, me, set(online), online_telegram, None)
 
 async def one(session, player_id: int, viewer: int, *, now: Optional[datetime] = None, signed: Iterable[int] = (),
               me: Optional[int] = None) -> Optional[dict[str, Any]]:

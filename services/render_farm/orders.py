@@ -18,6 +18,7 @@ from services.render_farm.roster import roster
 from utils.i18n import t
 from utils.logger import get_logger
 from utils.osr import Header, header
+from utils.ttl_cache import TTLCache
 
 logger = get_logger("services.render_farm.orders")
 
@@ -64,6 +65,9 @@ def status_of(job: Job, lang: str) -> str:
         return t("farm.waiting_alone", lang, title=job.title, minutes=int(settings.RENDER_GIVE_UP // 60))
     return t("farm.waiting", lang, title=job.title, ahead=queue.ahead_of(job), workers=workers)
 
+GLOBAL_TOP_KEEP = 600.0
+_global_tops = TTLCache(maxsize=2000, ttl=GLOBAL_TOP_KEEP)
+
 async def board_chat(telegram_id: int, chat_id: int) -> int:
     from db.models.chat_member import ChatMember
     from services.render_farm import players
@@ -100,8 +104,14 @@ async def rivals_for(osu_api_client, beatmap: Optional[dict], head: Header, tele
             logger.info("no chat leaderboard for %s in %s: %s", beatmap_id, chat_id, exc)
     if osu_api_client is None:
         return []
+    key = (beatmap_id, head.mode)
+    kept = _global_tops.get(key)
+    if kept is not None:
+        return kept
     try:
-        return rivals_of(await osu_api_client.get_beatmap_scores(beatmap_id, limit=RIVALS, mode="mania" if head.mode == 3 else "osu"))
+        top = rivals_of(await osu_api_client.get_beatmap_scores(beatmap_id, limit=RIVALS, mode="mania" if head.mode == 3 else "osu"))
+        _global_tops[key] = top
+        return top
     except Exception as exc:
         logger.info("no leaderboard for %s: %s", head.beatmap_md5, exc)
         return []

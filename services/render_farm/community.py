@@ -267,12 +267,15 @@ async def _gather(session, chat_id: int, now: Optional[datetime]) -> tuple[dict[
     }
     return body, {u.id: u.telegram_id for u in users}
 
-GATHERED_KEEP = 10.0
+GATHERED_KEEP = 30.0
 _gathered_cache = TTLCache(maxsize=200, ttl=GATHERED_KEEP)
+OWN_KEEP = 30.0
+_own_cache = TTLCache(maxsize=2000, ttl=OWN_KEEP)
 _gathering: dict[int, asyncio.Lock] = {}
 
 def forget_gathered() -> None:
     _gathered_cache.clear()
+    _own_cache.clear()
     _gathering.clear()
 
 async def gather_shared(session, chat_id: int, viewer: int) -> dict[str, Any]:
@@ -350,6 +353,16 @@ async def own(session, viewer: int, chat_id: Optional[int] = None, *, now: Optio
     if mine is None:
         return None
     return await _profile(session, mine, you=True, now=now)
+
+async def own_kept(session, viewer: int, chat_id: Optional[int] = None) -> Optional[dict[str, Any]]:
+    key = (viewer, chat_id)
+    kept = _own_cache.get(key)
+    if kept is not None:
+        return kept
+    made = await own(session, viewer, chat_id)
+    if made is not None:
+        _own_cache[key] = made
+    return made
 
 async def someone(session, user_id: int, chat_id: int, viewer: int, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
     found = (await session.execute(

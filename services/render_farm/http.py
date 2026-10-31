@@ -105,6 +105,8 @@ async def _card_of(user, session, handle: Optional[str], viewer: int) -> dict:
     return _plain(data)
 
 FRIENDS_URL = "https://osu.ppy.sh/api/v2/friends"
+LOOKUP_KEEP = 86400.0
+_lookup_cache = TTLCache(maxsize=5000, ttl=LOOKUP_KEEP)
 FRIENDS_KEEP = 90.0
 _friends_cache = TTLCache(maxsize=500, ttl=FRIENDS_KEEP)
 
@@ -681,7 +683,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             body = await gathered.gather_shared(session, chat_id, owner.telegram_id) if chat_id is not None else {
                 "chat": None, "week": 0, "people": [], "live": [], "happened": [], "titles": gathered.titles_catalogue(), "at": None,
             }
-            body["me"] = await gathered.own(session, owner.telegram_id, chat_id)
+            body["me"] = await gathered.own_kept(session, owner.telegram_id, chat_id)
             if body["me"] is None and owner.player_id is not None:
                 body["me"] = await players.one(session, owner.player_id, owner.telegram_id, me=owner.player_id)
         body["group"] = ""
@@ -729,6 +731,9 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         said = request.match_info["checksum"].lower()
         if len(said) != 32 or not all(letter in "0123456789abcdef" for letter in said):
             return web.json_response({"error": "no checksum"}, status=400)
+        kept = _lookup_cache.get(said)
+        if kept is not None:
+            return web.json_response(kept)
         if _osu is None:
             return web.json_response({"error": "osu! is not reachable"}, status=503)
         try:
@@ -739,8 +744,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if not isinstance(found, dict) or not found.get("beatmapset_id"):
             return web.json_response({"error": "no map"}, status=404)
         beatmapset = found.get("beatmapset") or {}
-        return web.json_response({"beatmapset_id": found["beatmapset_id"], "version": found.get("version") or "",
-                                  "beatmapset": {"artist": beatmapset.get("artist") or "", "title": beatmapset.get("title") or ""}})
+        made = {"beatmapset_id": found["beatmapset_id"], "version": found.get("version") or "",
+                "beatmapset": {"artist": beatmapset.get("artist") or "", "title": beatmapset.get("title") or ""}}
+        _lookup_cache[said] = made
+        return web.json_response(made)
 
     async def map_rivals(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -1064,11 +1071,15 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            body = await players.everyone(session, owner.telegram_id, query=request.query.get("q", ""),
-                                          signed=invites.linked_players(), me=owner.player_id,
-                                          online=[held.player_id for held in invites.present() if held.player_id is not None],
-                                          signed_telegram=invites.linked(),
-                                          online_telegram=[held.telegram_id for held in invites.present()])
+            online = [held.player_id for held in invites.present() if held.player_id is not None]
+            online_telegram = [held.telegram_id for held in invites.present()]
+            query = request.query.get("q", "")
+            if query:
+                body = await players.everyone(session, owner.telegram_id, query=query, signed=invites.linked_players(), me=owner.player_id,
+                                              online=online, signed_telegram=invites.linked(), online_telegram=online_telegram)
+            else:
+                body = await players.everyone_kept(session, owner.telegram_id, signed=invites.linked_players(), me=owner.player_id,
+                                                   online=online, signed_telegram=invites.linked(), online_telegram=online_telegram)
         return web.json_response(body)
 
     async def one_player(request: web.Request) -> web.Response:
