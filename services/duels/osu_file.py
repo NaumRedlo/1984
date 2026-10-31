@@ -49,6 +49,7 @@ class Beatmap:
     title: str = ""
     artist: str = ""
     version: str = ""
+    tags: str = ""
 
 def _number(value: str, name: str) -> float:
     try:
@@ -238,4 +239,4 @@ def parse(raw: bytes) -> Beatmap:
     return Beatmap(version, mode, values["CircleSize"], values["ApproachRate"], values["OverallDifficulty"], values["HPDrainRate"],
                    multiplier, tick_rate, timing, objects, hashlib.md5(raw).hexdigest(), metadata.get("Creator", ""),
                    int(beatmap_id) if beatmap_id and beatmap_id.isdigit() else None,
-                   metadata.get("Title", ""), metadata.get("Artist", ""), metadata.get("Version", ""))
+                   metadata.get("Title", ""), metadata.get("Artist", ""), metadata.get("Version", ""), metadata.get("Tags", ""))

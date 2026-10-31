@@ -80,9 +80,10 @@ class ProfileUpdater:
         }
 
     @staticmethod
-    def health_said(health: dict) -> tuple[bool, str]:
+    def health_said(health: dict, told: dict | None = None) -> tuple[bool, str]:
         queued = sum(health.get("queued", {}).values())
-        errors = health.get("api_http_errors") or {}
+        errors = {code: count - (told or {}).get(code, 0) for code, count in (health.get("api_http_errors") or {}).items()
+                  if code != 404 and count > (told or {}).get(code, 0)}
         troubled = bool(
             errors
             or health.get("retrying", 0)
@@ -285,6 +286,7 @@ class ProfileUpdater:
                    for i, mode in enumerate(("stats_only", "stats_only", "background_full"))]
         next_snapshot = 0.0
         next_report = 0.0
+        errors_told = {}
         next_trouble = 0.0
         expected_tick = time.monotonic()
         try:
@@ -306,9 +308,11 @@ class ProfileUpdater:
                             next_snapshot = time.monotonic() + 300
                 except Exception:
                     logger.exception("Profile scheduling failed")
-                troubled, said = self.health_said(self.health())
+                health = self.health()
+                troubled, said = self.health_said(health, errors_told)
                 if time.monotonic() >= next_report or (troubled and time.monotonic() >= next_trouble):
                     logger.log(logging.WARNING if troubled else logging.INFO, "%s", said)
+                    errors_told = health["api_http_errors"]
                     next_report = time.monotonic() + self.REPORT_EVERY
                     next_trouble = time.monotonic() + self.TROUBLE_EVERY
                 expected_tick = time.monotonic() + self.TICK_SECONDS

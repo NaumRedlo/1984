@@ -756,6 +756,46 @@ async def test_a_map_keeps_its_tournament_tags_and_a_trimmed_version_is_not_adde
     assert (await importer.ingest_one(factory, fetch, Osu(), 53, str(tmp_path)))[0] == "trimmed"
 
 
+async def test_a_map_added_without_tags_from_the_mirror_keeps_those_of_its_file(factory, tmp_path):
+    raw = _map(54).replace(b"[Metadata]\n", b"[Metadata]\nTags:owc2025 qf dt2 stream\n", 1)
+    assert b"Tags:owc2025" in raw
+    async def fetch(address):
+        return raw if "/osu/54" in address else None
+    entry = {"beatmap_id": 54, "beatmapset_id": 55, "checksum": hashlib.md5(raw).hexdigest(), "stars": 5.0, "status": "ranked", "length": 100, "tags": ""}
+    await importer.ingest(factory, fetch, Osu(), entry, str(tmp_path))
+    async with factory() as session:
+        revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 54))
+    assert revision.tags["raw"] == "owc2025 qf dt2 stream"
+    assert (revision.tags["tournaments"], revision.tags["slots"]) == (["owc2025"], ["DT2"])
+
+
+async def test_a_revision_whose_tags_were_read_empty_reads_them_again_from_its_file(factory, tmp_path, monkeypatch):
+    digest = "b" * 32
+    (tmp_path / f"{digest}.osu").write_bytes(b"osu file format v14\n")
+    async with factory() as session:
+        session.add(DuelMapRevision(beatmap_id=92, beatmapset_id=920, hash=digest, status="ok", ranked_status="ranked", title="Song", version="Hard",
+                                    tags={"raw": "", "tournaments": [], "stages": [], "slots": []}))
+        session.add(DuelMapRevision(beatmap_id=93, beatmapset_id=930, hash="c" * 32, status="ok", ranked_status="ranked", title="Other", version="Hard",
+                                    tags={"raw": "stream", "tournaments": [], "stages": [], "slots": []}))
+        await session.commit()
+
+    class Parsed:
+        title, artist, version, tags = "Song", "Artist", "Hard", "owc2024 nm3"
+
+    async def described(fetch, beatmap_id):
+        raise AssertionError("the file already holds the tags")
+
+    monkeypatch.setattr(importer, "parse", lambda raw: Parsed)
+    monkeypatch.setattr(importer.mirrors, "describe", described)
+    counted = await importer.rename(factory, None, None, str(tmp_path), pause=0, report=lambda said: None)
+    assert (counted["tagged"], counted["named"]) == (1, 0)
+    async with factory() as session:
+        made = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 92))
+        kept = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 93))
+    assert made.tags["raw"] == "owc2024 nm3" and made.tags["slots"] == ["NM3"]
+    assert kept.tags["raw"] == "stream"
+
+
 async def test_a_tag_search_asks_only_mirrors_that_read_the_query():
     asked = []
     async def fetch(address):

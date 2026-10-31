@@ -454,6 +454,11 @@ def test_health_is_one_short_line_and_trouble_is_named():
         assert troubled is True and "retrying" in said, change
     assert "osu! answered 429 x5" in ProfileUpdater.health_said({**calm, "api_http_errors": {429: 5}})[1]
     assert ProfileUpdater.health_said({})[1].startswith("profiles: nothing done yet")
+    assert ProfileUpdater.health_said({**calm, "api_http_errors": {404: 44}})[0] is False, "a missing map or score is an ordinary answer"
+    told = {429: 5}
+    assert ProfileUpdater.health_said({**calm, "api_http_errors": {429: 5}}, told)[0] is False, "errors already reported do not warn for ever"
+    troubled, said = ProfileUpdater.health_said({**calm, "api_http_errors": {429: 7}}, told)
+    assert troubled is True and "osu! answered 429 x2" in said
 
 
 @pytest.mark.parametrize("kind", ["app", "legacy_app", "oauth", "legacy_oauth", "revoked", "unlinked"])

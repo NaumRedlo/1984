@@ -100,7 +100,8 @@ async def ingest(factory, fetch, osu, entry: dict[str, Any], folder: str, model=
         made.title = (entry.get("title") or "")[:200] or made.title
         made.artist = (entry.get("artist") or "")[:200] or made.artist
         made.version = (entry.get("version") or "")[:200] or made.version
-        made.tags = tags.read(entry.get("tags"), described) if entry.get("tags") or described else made.tags
+        said = entry.get("tags") or beatmap.tags
+        made.tags = tags.read(said, described) if said or described else made.tags
         made.ranked_status = entry.get("status")
         made.beatmapset_id = made.beatmapset_id or entry["beatmapset_id"]
         made.mapper = made.mapper or entry.get("mapper")
@@ -208,16 +209,19 @@ async def ingest_one(factory, fetch, osu, beatmap_id: int, folder: str, model=No
 async def rename(factory, fetch, osu, folder: str, pause: float = 0.5, report=print) -> dict[str, int]:
     counted = {"named": 0, "tagged": 0, "untouched": 0, "barred": 0, "doubted": 0}
     async with factory() as session:
-        wanted = (await session.scalars(select(DuelMapRevision).where(
-            DuelMapRevision.title.is_(None) | DuelMapRevision.version.is_(None) | DuelMapRevision.tags.is_(None)).order_by(DuelMapRevision.beatmap_id))).all()
+        held_all = (await session.scalars(select(DuelMapRevision).order_by(DuelMapRevision.beatmap_id))).all()
+    wanted = [held for held in held_all if held.title is None or held.version is None or not (held.tags or {}).get("raw")]
     for held in wanted:
-        named = await _named(folder, held.hash) if held.title is None or held.version is None else None
+        read = await _named(folder, held.hash) if held.title is None or held.version is None or not (held.tags or {}).get("raw") else None
+        named = read[:3] if read is not None and (held.title is None or held.version is None) else None
         said, described = None, ""
-        if held.tags is None:
-            entry = await mirrors.describe(fetch, held.beatmap_id)
-            said = (entry or {}).get("tags")
+        if not (held.tags or {}).get("raw"):
+            said = read[3] if read is not None else None
+            if not said:
+                entry = await mirrors.describe(fetch, held.beatmap_id)
+                said = (entry or {}).get("tags")
+                await asyncio.sleep(pause)
             described = await tags.description_of(osu, held.beatmapset_id)
-            await asyncio.sleep(pause)
         async with factory() as session:
             made = await session.get(DuelMapRevision, held.id)
             if named is not None:
@@ -239,7 +243,7 @@ async def rename(factory, fetch, osu, folder: str, pause: float = 0.5, report=pr
             report(f"{what} {assignment.beatmap_id} {assignment.slot} {assignment.state}: {revision.artist} - {revision.title} [{revision.version}]")
     return counted
 
-async def _named(folder: str, digest: str) -> Optional[tuple[str, str, str]]:
+async def _named(folder: str, digest: str) -> Optional[tuple[str, str, str, str]]:
     path = os.path.join(folder, f"{digest}.osu")
     if not os.path.exists(path):
         return None
@@ -247,7 +251,7 @@ async def _named(folder: str, digest: str) -> Optional[tuple[str, str, str]]:
         beatmap = await asyncio.to_thread(parse, await asyncio.to_thread(_read, path))
     except (OSError, OsuFileError):
         return None
-    return beatmap.title[:200], beatmap.artist[:200], beatmap.version[:200]
+    return beatmap.title[:200], beatmap.artist[:200], beatmap.version[:200], getattr(beatmap, "tags", "")
 
 REANALYSE_FAILURES = (OsuFileError, ValueError, ArithmeticError, IndexError, KeyError, TypeError)
 

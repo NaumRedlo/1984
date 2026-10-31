@@ -368,7 +368,7 @@ async def test_maps_from_tournament_pools_wait_first_and_show_their_tags(factory
         await session.commit()
     waiting = [task for task in await desk.queue(factory, 1) if task["kind"] == "unassigned"]
     assert [task["map"]["beatmap_id"] for task in waiting][0] == 31
-    assert waiting[0]["map"]["tags"] == {"tournaments": ["owc2024"], "stages": ["qf"], "slots": ["NM2"]}
+    assert waiting[0]["map"]["tags"] == {"raw": "owc2024 qf nm2", "tournaments": ["owc2024"], "stages": ["qf"], "slots": ["NM2"]}
     assert all(task["map"]["tags"] is None for task in waiting[1:])
 
 async def _named(factory, beatmap_id, **fields):

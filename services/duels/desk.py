@@ -248,7 +248,7 @@ def _described(beatmap_id: int, digest: Optional[str], revision: Optional[DuelMa
             "mapper": revision.mapper if revision is not None else None, "ranked_status": revision.ranked_status if revision is not None else None,
             "title": revision.title if revision is not None else None, "artist": revision.artist if revision is not None else None,
             "version": revision.version if revision is not None else None,
-            "tags": {key: (revision.tags or {}).get(key) or [] for key in ("tournaments", "stages", "slots")} if revision is not None and revision.tags else None,
+            "tags": {key: (revision.tags or {}).get(key) or [] for key in ("tournaments", "stages", "slots")} | {"raw": (revision.tags or {}).get("raw") or ""} if revision is not None and revision.tags else None,
             "stars": (slotted or plain).stars if (slotted or plain) is not None else None, "plain_stars": plain.stars if plain is not None else None,
             "mods": mods, "revision": digest, "settings": settings, "length": played.get("length_seconds"), "bpm": bpm,
             "model": _explain(model, features, effective.get("ar", 0.0), rock_cs, views)}
