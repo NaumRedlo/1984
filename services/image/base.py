@@ -334,15 +334,17 @@ class BaseCardRenderer:
         cap = bottom - top
         return self._subscriber_mark(img, right + round(cap * 0.65), cy, mark, cap * 1.05)
 
-    def _team_flag(self, img: Image.Image, x: float, cy: float, flag: Optional[Image.Image], height: int) -> int:
+    def _team_flag(self, img: Image.Image, x: float, cy: float, flag: Optional[Image.Image], height: int,
+                   outline: bool = False) -> int:
         if flag is None:
             return int(x)
         w = height * 2
         art = cover_center_crop(flag.convert("RGB"), w, height)
         x, y = int(round(x)), int(round(cy - height / 2))
         img.paste(art, (x, y), self._rounded_mask((w, height), max(2, height // 6)))
-        self._aa_rounded_outline(img, (x, y, x + w, y + height), radius=max(2, height // 6),
-                                 outline=(255, 255, 255, 40), width=1)
+        if outline:
+            self._aa_rounded_outline(img, (x, y, x + w, y + height), radius=max(2, height // 6),
+                                     outline=(255, 255, 255, 40), width=1)
         return x + w
 
     def _row_team(self, img: Image.Image, draw: ImageDraw.ImageDraw, x: float, cy: float, team: Optional[dict], font) -> float:

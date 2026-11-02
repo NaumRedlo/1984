@@ -21,7 +21,7 @@ _STRINGS = {
         "range": "{first}–{last} of {total}",
     },
     "ru": {
-        "team_rank": "Место команды", "performance": "PP", "ranked_score": "Ranked Score",
+        "team_rank": "Место команды", "performance": "PP", "ranked_score": "Рейтинговые очки",
         "play_count": "Игр", "members": "Участники", "roster": "Состав",
         "open": "Набор открыт", "closed": "Набор закрыт", "slots": "свободно {n}", "more": "ещё {n}",
         "player": "Игрок", "accuracy": "Точность", "world": "В мире", "plays": "Игр",
@@ -111,25 +111,9 @@ class TeamCardMixin:
             return
         draw = ImageDraw.Draw(img)
         value = f"#{_sp(rank)}"
-        w = max(self._text_size(draw, value, F["rank"])[0], self._text_size(draw, S["team_rank"], F["rank_lbl"])[0])
-        pad = 120
-        shade = Image.new("RGBA", (int(w) + 2 * pad + 80, 160 + 2 * pad), (0, 0, 0, 0))
-        ImageDraw.Draw(shade).ellipse((pad, pad, pad + int(w) + 80, pad + 160), fill=colors.CARD + (170,))
-        shade = shade.filter(ImageFilter.GaussianBlur(36))
-        self._tm_soft_paste(img, shade, int(cx - w / 2 - 40 - pad), int(cy - 80 - pad))
-        draw = ImageDraw.Draw(img)
         right = cx + self._text_size(draw, S["team_rank"], F["rank_lbl"])[0] / 2
         self._text_mid(draw, right, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="right")
         self._text_mid(draw, right, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="right")
-
-    @staticmethod
-    def _tm_soft_paste(img, layer, x, y):
-        left, top = max(0, -x), max(0, -y)
-        right, bottom = min(layer.width, img.width - x), min(layer.height, img.height - y)
-        if right <= left or bottom <= top:
-            return
-        part = layer.crop((left, top, right, bottom))
-        img.paste(part, (x + left, y + top), part)
 
     def _tm_recruiting(self, img, x, cy, team, S, F):
         if team.get("is_open") is None:
@@ -244,7 +228,7 @@ class TeamCardMixin:
         ImageDraw.Draw(glow).rounded_rectangle((40, 40, 40 + flag_h * 2, 40 + flag_h), radius=16, fill=(0, 0, 0, 170))
         glow = glow.filter(ImageFilter.GaussianBlur(14))
         img.paste(glow, (fx - 40, fy - 40 + 6), glow)
-        right = self._team_flag(img, fx, fy + flag_h / 2, pictures.get("flag"), flag_h)
+        right = self._team_flag(img, fx, fy + flag_h / 2, pictures.get("flag"), flag_h, outline=True)
         draw = ImageDraw.Draw(img)
         tx = right + 30
         name_right = self._text_mid(draw, tx, fy + 28, team.get("name") or "—", F["name"], colors.TEXT_PRIMARY)
@@ -283,7 +267,7 @@ class TeamCardMixin:
         self._aa_rounded_fill(img, card, radius=24, fill=colors.CARD)
 
         fy = M + 34
-        right = self._team_flag(img, M + 34, fy + 32, pictures.get("flag"), 64)
+        right = self._team_flag(img, M + 34, fy + 32, pictures.get("flag"), 64, outline=True)
         draw = ImageDraw.Draw(img)
         tx = right + 24
         name_right = self._text_mid(draw, tx, fy + 20, team.get("name") or "—", F["tag"], colors.TEXT_PRIMARY)
