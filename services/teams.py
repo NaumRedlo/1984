@@ -30,7 +30,8 @@ async def team_card_data(session, team: dict, chat_id: Optional[int], lang: str,
     for member in members:
         known = (statistics or {}).get(member["osu_user_id"])
         if known:
-            member.update(pp=round(known.get("pp") or 0), global_rank=known.get("global_rank"))
+            member.update(pp=round(known.get("pp") or 0), global_rank=known.get("global_rank"),
+                          accuracy=known.get("accuracy"), play_count=known.get("play_count"))
         if member["osu_user_id"] in here:
             pp, rank = here[member["osu_user_id"]]
             member["in_chat"] = True
@@ -52,5 +53,21 @@ async def team_card_data(session, team: dict, chat_id: Optional[int], lang: str,
             "member_count": len(members),
             "statistics": team.get("statistics") or {},
         },
-        "members": (leading + rest)[:40],
+        "members": leading + rest,
     }
+
+
+PAGE = 20
+
+
+def roster_page(data: dict, page: int) -> dict:
+    members = data["members"]
+    leading = [m for m in members if m.get("is_leader")]
+    rest = sorted((m for m in members if not m.get("is_leader")), key=lambda m: -(m.get("pp") or 0))
+    for place, member in enumerate(rest, start=1):
+        member["place"] = place
+    ordered = leading + rest
+    pages = max(1, -(-len(ordered) // PAGE))
+    page = max(0, min(page, pages - 1))
+    return dict(data, members=ordered[page * PAGE:(page + 1) * PAGE], page=page, pages=pages,
+                first=page * PAGE + 1, total=len(ordered))

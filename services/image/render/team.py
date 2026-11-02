@@ -17,11 +17,15 @@ _STRINGS = {
         "team_rank": "Team Ranking", "performance": "Performance", "ranked_score": "Ranked Score",
         "play_count": "Play Count", "members": "Members", "roster": "Roster",
         "open": "Open to applications", "closed": "Closed", "slots": "{n} free", "more": "+{n} more",
+        "player": "Player", "accuracy": "Accuracy", "world": "World", "plays": "Plays",
+        "range": "{first}–{last} of {total}",
     },
     "ru": {
         "team_rank": "Место команды", "performance": "PP", "ranked_score": "Ranked Score",
         "play_count": "Игр", "members": "Участники", "roster": "Состав",
         "open": "Набор открыт", "closed": "Набор закрыт", "slots": "свободно {n}", "more": "ещё {n}",
+        "player": "Игрок", "accuracy": "Точность", "world": "В мире", "plays": "Игр",
+        "range": "{first}–{last} из {total}",
     },
 }
 
@@ -55,7 +59,8 @@ class TeamCardMixin:
 
     async def generate_team_card_async(self, data: Dict) -> BytesIO:
         team = data.get("team") or {}
-        members = data.get("members") or []
+        members = (data.get("members") or [])[:12]
+        data = dict(data, members=members)
         tasks = [
             download_image(team["flag_url"]) if team.get("flag_url") else _none(),
             download_image(team["cover_url"]) if team.get("cover_url") else _none(),
@@ -112,8 +117,9 @@ class TeamCardMixin:
         shade = shade.filter(ImageFilter.GaussianBlur(30))
         img.paste(shade, (int(cx - w / 2 - 80), int(cy - 110)), shade)
         draw = ImageDraw.Draw(img)
-        self._text_mid(draw, cx, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="center")
-        self._text_mid(draw, cx, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="center")
+        right = cx + self._text_size(draw, S["team_rank"], F["rank_lbl"])[0] / 2
+        self._text_mid(draw, right, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="right")
+        self._text_mid(draw, right, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="right")
 
     def _tm_recruiting(self, img, x, cy, team, S, F):
         if team.get("is_open") is None:
@@ -157,23 +163,27 @@ class TeamCardMixin:
         members.sort(key=lambda m: (not m.get("is_leader"), not m.get("in_chat"), -(m.get("pp") or 0)))
         return members
 
+    def _tm_named(self, img, x, cy, member, font, ink, flag_h):
+        draw = ImageDraw.Draw(img)
+        name = member.get("username") or "—"
+        if member.get("is_leader"):
+            right = self._tm_crowned(img, draw, x, cy, name, font, ink)
+        else:
+            right = self._text_mid(draw, x, cy, name, font, ink)
+        flag = load_flag(member.get("country") or "", height=flag_h)
+        if flag:
+            right += 10
+            img.paste(flag, (int(right), int(cy - flag.height / 2)), flag)
+            right += flag.width
+        return right
+
     def _tm_member_row(self, img, member, x, y, F, here_ring):
         ring = here_ring if member.get("in_chat") else colors.PANEL_BORDER
         self._tm_face(img, member.get("picture"), x, y, 46, ring)
-        draw = ImageDraw.Draw(img)
         cy = y + 23
-        name = member.get("username") or "—"
-        if member.get("is_leader"):
-            self._tm_crowned(img, draw, x + 60, cy - 10, name, F["member"], colors.TEXT_PRIMARY)
-        else:
-            self._text_mid(draw, x + 60, cy - 10, name, F["member"], colors.TEXT_PRIMARY)
-        sx = x + 60
-        flag = load_flag(member.get("country") or "", height=14)
-        if flag:
-            img.paste(flag, (int(sx), int(cy + 13 - flag.height / 2)), flag)
-            sx += flag.width + 8
+        self._tm_named(img, x + 60, cy - 10, member, F["member"], colors.TEXT_PRIMARY, 15)
         if member.get("pp"):
-            self._text_mid(ImageDraw.Draw(img), sx, cy + 13, f"{_sp(member['pp'])}pp", F["member_sub"], colors.TEXT_MUTED)
+            self._text_mid(ImageDraw.Draw(img), x + 60, cy + 13, f"{_sp(member['pp'])}pp", F["member_sub"], colors.TEXT_MUTED)
 
     @staticmethod
     def _tm_roster_height(data):
@@ -239,3 +249,78 @@ class TeamCardMixin:
         self._tm_roster(img, data, pictures, (M + 24, ry, W - M - 24, H - M - 24), S, F)
         self._aa_rounded_outline(img, card, radius=24, outline=colors.CARD_BORDER, width=1)
         return img
+
+    async def generate_team_roster_async(self, data: Dict) -> BytesIO:
+        team = data.get("team") or {}
+        members = data.get("members") or []
+        tasks = [download_image(team["flag_url"]) if team.get("flag_url") else _none()]
+        tasks += [download_image(m["avatar_url"]) if m.get("avatar_url") else _none() for m in members]
+        got = await asyncio.gather(*tasks, return_exceptions=True)
+        got = [None if isinstance(r, Exception) else r for r in got]
+        return await asyncio.to_thread(self.generate_team_roster, data, {"flag": got[0], "avatars": got[1:]})
+
+    def generate_team_roster(self, data: Dict, pictures: Optional[Dict] = None) -> BytesIO:
+        pictures = pictures or {}
+        S, F = self._tm_strings(data), self._tm_fonts()
+        team = data.get("team") or {}
+        members = data.get("members") or []
+        avatars = pictures.get("avatars") or []
+        row_h, head_h = 52, 132
+        H = M + head_h + 44 + max(1, len(members)) * row_h + 24 + M
+        img = Image.new("RGB", (W, H), colors.BG)
+        card = (M, M, W - M, H - M)
+        self._aa_rounded_fill(img, card, radius=24, fill=colors.CARD)
+
+        fy = M + 34
+        right = self._team_flag(img, M + 34, fy + 32, pictures.get("flag"), 64)
+        draw = ImageDraw.Draw(img)
+        tx = right + 24
+        name_right = self._text_mid(draw, tx, fy + 20, team.get("name") or "—", F["tag"], colors.TEXT_PRIMARY)
+        if team.get("short_name"):
+            self._text_mid(draw, name_right + 12, fy + 20, team["short_name"], F["chip"], colors.TEXT_MUTED)
+        self._text_mid(draw, tx, fy + 50, S["members"], F["chip"], colors.TEXT_MUTED)
+        last = data.get("first", 1) + len(members) - 1
+        self._text_mid(draw, W - M - 36, fy + 32, S["range"].format(first=data.get("first", 1), last=last, total=data.get("total", len(members))),
+                       F["chip"], colors.TEXT_MUTED, align="right")
+
+        x0, x1 = M + 24, W - M - 24
+        cols = {"place": x0 + 34, "face": x0 + 70, "name": x0 + 120, "pp": x1 - 470,
+                "acc": x1 - 330, "world": x1 - 170, "plays": x1 - 24}
+        hy = M + head_h + 18
+        for key, label, align in (("place", "#", "center"), ("name", S["player"], "left"), ("pp", "PP", "right"),
+                                  ("acc", S["accuracy"], "right"), ("world", S["world"], "right"), ("plays", S["plays"], "right")):
+            self._text_mid(draw, cols[key], hy, label, F["stat_lbl"], colors.TEXT_MUTED, align=align)
+        here_ring = tint.tone((228, 76, 76))
+        top = M + head_h + 44
+        for i, member in enumerate(members):
+            y = top + i * row_h
+            box = (x0, y, x1, y + row_h - 6)
+            self._aa_rounded_fill(img, box, radius=12, fill=colors.PANEL if i % 2 == 0 else colors.CARD)
+            if member.get("in_chat"):
+                self._aa_rounded_outline(img, box, radius=12, outline=here_ring, width=1)
+            cy = y + (row_h - 6) / 2
+            draw = ImageDraw.Draw(img)
+            if member.get("is_leader"):
+                crown = load_icon("crown", 20, colour=(255, 204, 77))
+                if crown:
+                    img.paste(crown, (int(cols["place"] - crown.width / 2), int(cy - crown.height / 2)), crown)
+            else:
+                self._text_mid(draw, cols["place"], cy, str(member.get("place") or ""), F["member_sub"], colors.TEXT_MUTED, align="center")
+            picture = avatars[i] if i < len(avatars) else None
+            self._tm_face(img, picture, cols["face"], cy - 17, 34, here_ring if member.get("in_chat") else None)
+            plain = dict(member, is_leader=False)
+            self._tm_named(img, cols["name"], cy, plain, F["member"], colors.TEXT_PRIMARY, 15)
+            draw = ImageDraw.Draw(img)
+            ink = tint.Plain(colors.TEXT_PRIMARY)
+            self._text_mid(draw, cols["pp"], cy, f"{_sp(member.get('pp'))}pp" if member.get("pp") else "—", F["member"], ink, align="right")
+            acc = member.get("accuracy")
+            self._text_mid(draw, cols["acc"], cy, f"{acc:.2f}%" if acc else "—", F["member_sub"], colors.TEXT_PRIMARY, align="right")
+            rank = member.get("global_rank")
+            self._text_mid(draw, cols["world"], cy, f"#{_sp(rank)}" if rank else "—", F["member_sub"], colors.TEXT_PRIMARY, align="right")
+            plays = member.get("play_count")
+            self._text_mid(draw, cols["plays"], cy, _sp(plays) if plays else "—", F["member_sub"], colors.TEXT_MUTED, align="right")
+        self._aa_rounded_outline(img, card, radius=24, outline=colors.CARD_BORDER, width=1)
+        out = BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        out.seek(0)
+        return out

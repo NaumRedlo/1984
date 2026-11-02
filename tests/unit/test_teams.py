@@ -54,3 +54,23 @@ def test_the_team_card_draws_without_any_pictures():
     data = asyncio.run(team_card_data(_Session([(4, 8214, 9120)]), _team(), -1001, "en"))
     png = CardRenderer().generate_team_card(data, {}).getvalue()
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 5000
+
+
+def test_the_roster_keeps_the_leader_on_top_and_numbers_the_rest_by_pp():
+    from services.teams import roster_page
+
+    stats = {1: {"pp": 100}, 2: {"pp": 9000}, 3: {"pp": 300}, 4: {"pp": 5000}}
+    data = asyncio.run(team_card_data(_Session([]), _team(), -1001, "en", stats))
+    first = roster_page(data, 0)
+    assert [m["username"] for m in first["members"]] == ["lead", "far_away", "here_high", "here_low"]
+    assert [m.get("place") for m in first["members"]] == [None, 1, 2, 3]
+    assert first["pages"] == 1 and first["first"] == 1 and first["total"] == 4
+    assert roster_page(data, 7)["page"] == 0
+
+
+def test_the_roster_card_draws_a_page():
+    from services.teams import roster_page
+
+    data = asyncio.run(team_card_data(_Session([(4, 8214, 9120)]), _team(), -1001, "ru", {2: {"pp": 9000, "accuracy": 98.2}}))
+    png = CardRenderer().generate_team_roster(roster_page(data, 0), {}).getvalue()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"

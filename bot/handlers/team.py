@@ -1,20 +1,82 @@
-from aiogram import Router, types
-from aiogram.types import BufferedInputFile
+from aiogram import F, Router, types
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
 from bot.filters import TextTriggerFilter, TriggerArgs
 from bot.handlers.dm_tenant import ensure_dm_tenant
+from bot.utils.safe_edit import safe_edit_media
 from db.database import get_db_session
 from services.image import card_renderer
-from services.teams import team_card_data
+from services.teams import roster_page, team_card_data
 from utils.formatting.text import escape_html
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu import rulesets
 from utils.osu.resolve_user import get_registered_user
+from utils.ttl_cache import TTLCache
 
 logger = get_logger("handlers.team")
 router = Router(name="team")
+
+_teams = TTLCache(maxsize=64, ttl=300)
+
+
+async def _load(client, wanted, mode: str):
+    key = (str(wanted).lower(), mode)
+    kept = _teams.get(key)
+    if kept is not None:
+        return kept
+    team = await client.get_team(wanted, mode)
+    if team is None:
+        return None
+    ids = [(team.get("leader") or {}).get("id")] + [m.get("id") for m in team.get("members") or []]
+    loaded = (team, await client.get_users_statistics(ids, mode))
+    _teams[key] = loaded
+    _teams[(str(team["id"]), mode)] = loaded
+    return loaded
+
+
+def _card_keyboard(team_id: int, ruleset: int, count: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text=t("team.kb.members", lang, n=count), callback_data=f"tmm:{team_id}:{ruleset}:0")]])
+
+
+def _roster_keyboard(team_id: int, ruleset: int, page: int, pages: int, lang: str) -> InlineKeyboardMarkup:
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"tmm:{team_id}:{ruleset}:{page - 1}"))
+    if pages > 1:
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data=f"tmm:{team_id}:{ruleset}:{page}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"tmm:{team_id}:{ruleset}:{page + 1}"))
+    rows = [nav] if nav else []
+    rows.append([InlineKeyboardButton(text=t("team.kb.back", lang), callback_data=f"tmc:{team_id}:{ruleset}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _team_photo(client, wanted, ruleset: int, chat_id, lang: str):
+    loaded = await _load(client, wanted, rulesets.RULESETS.get(ruleset, "osu"))
+    if loaded is None:
+        return None
+    team, statistics = loaded
+    async with get_db_session() as session:
+        data = await team_card_data(session, team, chat_id, lang, statistics)
+    photo = await card_renderer.generate_team_card_async(data)
+    keyboard = _card_keyboard(team["id"], ruleset, data["team"]["member_count"], lang)
+    return BufferedInputFile(photo.read(), filename="team.png"), keyboard
+
+
+async def _roster_photo(client, team_id: int, ruleset: int, page: int, chat_id, lang: str):
+    loaded = await _load(client, team_id, rulesets.RULESETS.get(ruleset, "osu"))
+    if loaded is None:
+        return None
+    team, statistics = loaded
+    async with get_db_session() as session:
+        data = await team_card_data(session, team, chat_id, lang, statistics)
+    shown = roster_page(data, page)
+    photo = await card_renderer.generate_team_roster_async(shown)
+    keyboard = _roster_keyboard(team["id"], ruleset, shown["page"], shown["pages"], lang)
+    return BufferedInputFile(photo.read(), filename="team_members.png"), keyboard
 
 
 @router.message(TextTriggerFilter("team", "tm"))
@@ -25,36 +87,83 @@ async def cmd_team(message: types.Message, trigger_args: TriggerArgs = None, osu
     lang = (await get_language(message.from_user.id)).lower()
     raw = ((trigger_args.args if trigger_args else "") or "").strip()
     ruleset, rest = await rulesets.chosen(raw, message.from_user.id)
+    ruleset = ruleset or 0
     query = (rest or "").strip()
-    mode = rulesets.RULESETS.get(ruleset or 0, "osu")
     try:
-        async with get_db_session() as session:
-            if query:
-                wanted = int(query) if query.isdigit() else query
-            else:
+        if query:
+            wanted = int(query) if query.isdigit() else query
+        else:
+            async with get_db_session() as session:
                 viewer = await get_registered_user(session, message.from_user.id, tenant_chat_id)
-                if viewer is None:
-                    await message.answer(t("team.not_linked", lang))
-                    return
-                wanted = viewer.team_id
-                if wanted is None and viewer.osu_user_id:
-                    fresh = await osu_api_client.get_user_data(viewer.osu_user_id)
-                    wanted = ((fresh or {}).get("team") or {}).get("id")
-                if wanted is None:
-                    await message.answer(t("team.none", lang))
-                    return
-            team = await osu_api_client.get_team(wanted, mode)
-            if team is None:
-                await message.answer(t("team.not_found", lang, query=escape_html(str(query or wanted))))
+            if viewer is None:
+                await message.answer(t("team.not_linked", lang))
                 return
-            ids = [(team.get("leader") or {}).get("id")] + [m.get("id") for m in team.get("members") or []]
-            statistics = await osu_api_client.get_users_statistics(ids, mode)
-            data = await team_card_data(session, team, tenant_chat_id, lang, statistics)
-        photo = await card_renderer.generate_team_card_async(data)
-        await message.answer_photo(BufferedInputFile(photo.read(), filename="team.png"))
+            wanted = viewer.team_id
+            if wanted is None and viewer.osu_user_id:
+                fresh = await osu_api_client.get_user_data(viewer.osu_user_id)
+                wanted = ((fresh or {}).get("team") or {}).get("id")
+            if wanted is None:
+                await message.answer(t("team.none", lang))
+                return
+        made = await _team_photo(osu_api_client, wanted, ruleset, tenant_chat_id, lang)
+        if made is None:
+            await message.answer(t("team.not_found", lang, query=escape_html(str(query or wanted))))
+            return
+        photo, keyboard = made
+        await message.answer_photo(photo, reply_markup=keyboard)
     except Exception as exc:
         logger.error(f"team card failed for {raw!r}: {exc}", exc_info=True)
         await message.answer(t("team.error", lang))
+
+
+def _parsed(data: str, size: int):
+    try:
+        parts = [int(value) for value in data.split(":")[1:]]
+    except ValueError:
+        return None
+    if len(parts) != size or parts[1] not in rulesets.RULESETS:
+        return None
+    return parts
+
+
+@router.callback_query(F.data.startswith("tmm:"))
+async def team_members(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    parts = _parsed(callback.data, 3)
+    if parts is None:
+        await callback.answer()
+        return
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    team_id, ruleset, page = parts
+    lang = (await get_language(callback.from_user.id)).lower()
+    await callback.answer()
+    try:
+        made = await _roster_photo(osu_api_client, team_id, ruleset, max(0, page), tenant_chat_id, lang)
+        if made is not None:
+            photo, keyboard = made
+            await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=keyboard)
+    except Exception as exc:
+        logger.error(f"team {team_id} members page {page} failed: {exc}", exc_info=True)
+
+
+@router.callback_query(F.data.startswith("tmc:"))
+async def team_back(callback: CallbackQuery, osu_api_client=None, tenant_chat_id=None):
+    parts = _parsed(callback.data, 2)
+    if parts is None:
+        await callback.answer()
+        return
+    if not await ensure_dm_tenant(callback, tenant_chat_id):
+        return
+    team_id, ruleset = parts
+    lang = (await get_language(callback.from_user.id)).lower()
+    await callback.answer()
+    try:
+        made = await _team_photo(osu_api_client, team_id, ruleset, tenant_chat_id, lang)
+        if made is not None:
+            photo, keyboard = made
+            await safe_edit_media(callback.message, media=InputMediaPhoto(media=photo), reply_markup=keyboard)
+    except Exception as exc:
+        logger.error(f"team {team_id} card failed: {exc}", exc_info=True)
 
 
 __all__ = ["router"]

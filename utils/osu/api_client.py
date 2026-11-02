@@ -452,7 +452,12 @@ class OsuApiClient:
                 continue
             for user in reply.get("users") or []:
                 stats = ((user.get("statistics_rulesets") or {}).get(mode)) or {}
-                found[int(user["id"])] = {"pp": stats.get("pp") or 0, "global_rank": stats.get("global_rank")}
+                found[int(user["id"])] = {
+                    "pp": stats.get("pp") or 0,
+                    "global_rank": stats.get("global_rank"),
+                    "accuracy": stats.get("hit_accuracy") or 0.0,
+                    "play_count": stats.get("play_count") or 0,
+                }
         return found
 
     async def get_user_recent_scores(self, user_id: int, limit: int = 1, oauth_token: Optional[str] = None,
