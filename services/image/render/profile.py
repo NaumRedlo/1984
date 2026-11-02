@@ -271,9 +271,12 @@ class ProfileCardMixin:
                 f"https://assets.ppy.sh/beatmaps/{bsid}/covers/cover.jpg" if bsid else None
             )
 
+        team = data.get("team") or {}
+        flag_url = team.get("flag_url") if data.get("team_flag") is None else None
         tasks = [
             download_image(avatar_url) if avatar_url else _none_coro(),
             download_image(cover_url) if cover_url else _none_coro(),
+            download_image(flag_url) if flag_url else _none_coro(),
         ] + [download_image(u) if u else _none_coro() for u in cover_urls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -282,7 +285,9 @@ class ProfileCardMixin:
 
         avatar = _ok(results[0])
         cover = _ok(results[1])
-        top_bg_images = [_ok(r) for r in results[2:]]
+        if flag_url and _ok(results[2]) is not None:
+            data = dict(data, team_flag=_ok(results[2]))
+        top_bg_images = [_ok(r) for r in results[3:]]
 
         return await asyncio.to_thread(
             self.generate_profile_dashboard, data, avatar, cover, top_bg_images
@@ -352,8 +357,13 @@ class ProfileCardMixin:
         name = str(data.get("username", "???"))
         handle = data.get("handle")
         title = data.get("title")
+        team = data.get("team") if data.get("team_flag") is not None or (data.get("team") or {}).get("name") else None
         lines = [("name", 56)] + ([("handle", 42)] if handle else []) + ([("title", 46)] if title else [])
-        lines.append(("country", 0))
+        if team:
+            lines.append(("country", 40))
+            lines.append(("team", 0))
+        else:
+            lines.append(("country", 0))
         span = sum(step for _, step in lines)
         cy = ay + d / 2 - span / 2
         for kind, step in lines:
@@ -368,6 +378,8 @@ class ProfileCardMixin:
                 self._text_mid(draw, nx, cy, handle, fonts["handle"], tint.ground((188, 150, 152)))
             elif kind == "title":
                 self._pf_title(img, draw, nx, cy, title, fonts["atitle"], data)
+            elif kind == "team":
+                self._pf_team_line(img, team, data.get("team_flag"), nx, cy, fonts)
             else:
                 self._pf_country_line(img, data, nx, cy, fonts, S)
             draw = ImageDraw.Draw(img)
@@ -396,7 +408,17 @@ class ProfileCardMixin:
         )
         if not cname or cname in ("—", "__", "--"):
             cname = S["unknown_country"]
-        self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
+        return self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
+
+    def _pf_team_line(self, img, team, flag, x, cy, fonts):
+        cur = self._team_flag(img, x, cy, flag, 30)
+        cur = cur + 14 if cur != int(round(x)) else cur
+        draw = ImageDraw.Draw(img)
+        cur = self._text_mid(draw, cur, cy, team.get("name") or "", fonts["country"], COL_WHITE)
+        tag = team.get("short_name")
+        if tag and tag.lower() != (team.get("name") or "").lower():
+            cur = self._text_mid(draw, cur + 10, cy, tag, fonts["country"], tint.ground(COL_MUTED))
+        return cur
 
     def _pf_ruleset_badge(self, img, cx, cy, ruleset, side=64):
         k = 4

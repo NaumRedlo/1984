@@ -153,6 +153,7 @@ async def _build_page_data(
             if ext.get("total_score"):
                 base["total_score"] = ext["total_score"]
             base["country_name"] = ext.get("country_name")
+            base["team"] = ext.get("team")
             base["maximum_combo"] = ext.get("maximum_combo", 0)
             base["replays_watched"] = ext.get("replays_watched", 0)
             base["grade_counts"] = ext.get("grade_counts", {})

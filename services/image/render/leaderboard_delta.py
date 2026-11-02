@@ -154,9 +154,12 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
                                 row.get("title_color") or colors.TEXT_MUTED)
             else:
                 ny = cy - self._text_size(draw, name, self.font_label)[1] // 2 - 2
-            right = self._draw_text(draw, (name_x, ny), name, self.font_label, ink)
             top, bottom = draw.textbbox((0, 0), "H", font=self.font_label)[1::2]
-            self._name_mark(img, draw, right, ny + (top + bottom) / 2, self.font_label, row.get("mark"))
+            ncy = ny + (top + bottom) / 2
+            nx = self._row_team(img, draw, name_x, ncy, row.get("team"), self.font_label)
+            draw = ImageDraw.Draw(img)
+            right = self._draw_text(draw, (int(nx), ny), name, self.font_label, ink)
+            self._name_mark(img, draw, right, ncy, self.font_label, row.get("mark"))
         draw = ImageDraw.Draw(img)
 
         val_right = x1 - 20

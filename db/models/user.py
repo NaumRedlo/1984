@@ -31,6 +31,10 @@ class User(Base):
     is_supporter = Column(Boolean, nullable=True)
     was_supporter = Column(Boolean, default=False, nullable=True)
     support_level = Column(Integer, nullable=True)
+    team_id = Column(Integer, nullable=True)
+    team_name = Column(String(64), nullable=True)
+    team_tag = Column(String(8), nullable=True)
+    team_flag_url = Column(String(512), nullable=True)
 
     best_scores_baseline_at = Column(DateTime, nullable=True)
 

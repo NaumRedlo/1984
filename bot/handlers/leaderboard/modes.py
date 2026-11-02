@@ -9,7 +9,7 @@ from bot.utils.safe_edit import safe_edit_media
 from db.database import get_db_session
 from services.leaderboard import modes
 from services.leaderboard.delta_card import build_absolute_payload
-from services.leaderboard.marks import mark_rows
+from services.leaderboard.marks import mark_rows, team_rows
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
@@ -45,6 +45,7 @@ async def _card(chat_id: int, ruleset: int, page: int, viewer_tg_id: int, client
         entries = await modes.standings(session, chat_id, ruleset)
         board = modes.board(entries, page, viewer.id if viewer else None)
         await mark_rows(session, board.get("rows", []) + [board.get("self_row")])
+        await team_rows(session, board.get("rows", []) + [board.get("self_row")])
     payload = build_absolute_payload(board, lang)
     payload["title"] = t("rk.title", lang, mode=rulesets.TITLES[ruleset])
     payload["empty_label"] = t("rk.empty", lang)

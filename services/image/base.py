@@ -11,7 +11,7 @@ from services.image.constants import (
     SANS_BOLD, SANS_SEMI, SANS_REG, NUM_BOLD,
     MPLUS_BOLD, MPLUS_REG,
 )
-from services.image import legibility, tint
+from services.image import colors, legibility, tint
 from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
 from services.image.text_render import (
     draw_text_multifont, text_size_multifont,
@@ -333,6 +333,23 @@ class BaseCardRenderer:
         top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
         cap = bottom - top
         return self._subscriber_mark(img, right + round(cap * 0.65), cy, mark, cap * 1.05)
+
+    def _team_flag(self, img: Image.Image, x: float, cy: float, flag: Optional[Image.Image], height: int) -> int:
+        if flag is None:
+            return int(x)
+        w = height * 2
+        art = cover_center_crop(flag.convert("RGB"), w, height)
+        x, y = int(round(x)), int(round(cy - height / 2))
+        img.paste(art, (x, y), self._rounded_mask((w, height), max(2, height // 6)))
+        self._aa_rounded_outline(img, (x, y, x + w, y + height), radius=max(2, height // 6),
+                                 outline=(255, 255, 255, 40), width=1)
+        return x + w
+
+    def _row_team(self, img: Image.Image, draw: ImageDraw.ImageDraw, x: float, cy: float, team: Optional[dict], font) -> float:
+        if not team or team.get("flag") is None:
+            return x
+        top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
+        return self._team_flag(img, x, cy, team["flag"], round((bottom - top) * 1.25)) + round((bottom - top) * 0.6)
 
     def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
         self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)

@@ -21,6 +21,7 @@ from bot.handlers.common import router as common_router
 from bot.handlers.start import router as start_router
 from bot.handlers.dm_tenant import router as dm_tenant_router
 from bot.handlers.leaderboard import router as leaderboard_router
+from bot.handlers.team import router as team_router
 from bot.handlers.maplink import router as maplink_router
 from bot.handlers.scorelink import router as scorelink_router
 from bot.handlers.pagination import router as pagination_router
@@ -112,6 +113,7 @@ class App:
         self.dp.include_router(titles_router)
         self.dp.include_router(common_router)
         self.dp.include_router(leaderboard_router)
+        self.dp.include_router(team_router)
 
         self.dp.include_router(maplink_router)
 

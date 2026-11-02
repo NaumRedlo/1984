@@ -23,12 +23,13 @@ from services.image.render.compare import CompareCardMixin
 from services.image.render.map_card import MapCardMixin
 from services.image.render.map_leaderboard import MapLeaderboardCardMixin
 from services.image.render.update import UpdateCardMixin
+from services.image.render.team import TeamCardMixin
 
 logger = get_logger("services.image_gen")
 
 BaseCardRenderer = _BaseCardRenderer
 
-class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, CompareCardMixin, MapCardMixin, MapLeaderboardCardMixin, UpdateCardMixin, _BaseCardRenderer):
+class _CardRendererMixin(ProfileCardMixin, TitlesCardMixin, TopPlaysCardMixin, RecentCardMixin, CompareCardMixin, MapCardMixin, MapLeaderboardCardMixin, UpdateCardMixin, TeamCardMixin, _BaseCardRenderer):
     pass
 
 from services.image.leaderboard import LeaderboardCardGenerator

@@ -36,6 +36,17 @@ def _is_perfect(raw):
         return None
     return any(bool(v) for v in vals)
 
+def team_of(raw) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, Mapping) or not raw.get("id") or not raw.get("name"):
+        return None
+    return {
+        "id": int(raw["id"]),
+        "name": str(raw["name"]),
+        "short_name": str(raw.get("short_name") or ""),
+        "flag_url": raw.get("flag_url") or None,
+    }
+
+
 def _parse_played_at(raw):
     return _parse_iso_dt(raw.get("ended_at") or raw.get("created_at"))
 
@@ -375,6 +386,7 @@ class OsuApiClient:
             "level": (stats.get("level") or {}).get("current", 0),
             "join_date": data.get("join_date"),
             "grade_counts": stats.get("grade_counts", {}) or {},
+            "team": team_of(data.get("team")),
         }
 
     async def get_user_extended_data(self, user: Union[int, str], mode: str = "osu", oauth_token: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -421,7 +433,27 @@ class OsuApiClient:
             "country_rank": stats.get("country_rank"),
             "rank_history": data.get("rank_history", {}).get("data", []),
             "monthly_playcounts": data.get("monthly_playcounts", []),
+            "team": team_of(data.get("team")),
         }
+
+    async def get_team(self, team: Union[int, str], mode: str = "osu") -> Optional[Dict[str, Any]]:
+        key = str(team) if isinstance(team, int) else "@" + quote(str(team).lstrip("@"), safe="")
+        data = await self._make_request("GET", f"teams/{key}/{mode}")
+        return data if isinstance(data, dict) and data.get("id") else None
+
+    async def get_users_statistics(self, user_ids: List[int], mode: str = "osu") -> Dict[int, Dict[str, Any]]:
+        wanted = list(dict.fromkeys(int(i) for i in user_ids if i))
+        chunks = [wanted[i:i + 50] for i in range(0, len(wanted), 50)]
+        replies = await asyncio.gather(*(self._make_request("GET", "users", params=[("ids[]", i) for i in chunk])
+                                         for chunk in chunks), return_exceptions=True)
+        found: Dict[int, Dict[str, Any]] = {}
+        for reply in replies:
+            if not isinstance(reply, Mapping):
+                continue
+            for user in reply.get("users") or []:
+                stats = ((user.get("statistics_rulesets") or {}).get(mode)) or {}
+                found[int(user["id"])] = {"pp": stats.get("pp") or 0, "global_rank": stats.get("global_rank")}
+        return found
 
     async def get_user_recent_scores(self, user_id: int, limit: int = 1, oauth_token: Optional[str] = None,
                                      mode: Optional[str] = None) -> List[Dict]:
@@ -458,6 +490,11 @@ class OsuApiClient:
         user_model.total_score = int(stats.get("total_score", 0))
         user_model.is_supporter = bool(stats.get("is_supporter", False))
         user_model.support_level = int(stats.get("support_level") or 0)
+        team = stats.get("team") or {}
+        user_model.team_id = team.get("id")
+        user_model.team_name = (team.get("name") or "")[:64] or None
+        user_model.team_tag = (team.get("short_name") or "")[:8] or None
+        user_model.team_flag_url = team.get("flag_url")
 
         if user_model.is_supporter or bool(stats.get("has_supported", False)):
             user_model.was_supporter = True
