@@ -134,3 +134,23 @@ def test_mt_shows_only_your_team_and_tm_finds_a_players_team(monkeypatch):
     asyncio.run(handler._send_team(_Message(), _Client(), -1001, "", own_only=False))
     asyncio.run(handler._send_team(_Message(), _Client(), -1001, "", own_only=True))
     assert asked == [("team", 970), "Someone", ("team", 588), ("team", "TQ"), ("team", 23966), ("team", 970)]
+
+
+def test_a_teams_rank_is_found_by_halving_the_team_ranking():
+    from utils.osu.api_client import OsuApiClient
+
+    board = [{"team_id": 1000 + i, "performance": 500000 - i * 37} for i in range(4321)]
+    pages = []
+
+    async def request(self, method, endpoint, params=None, **kwargs):
+        page = int(params["cursor[page]"])
+        pages.append(page)
+        return {"ranking": board[(page - 1) * 50:page * 50], "total": len(board)}
+
+    client = OsuApiClient.__new__(OsuApiClient)
+    client._make_request = request.__get__(client)
+    target = board[2777]
+    assert asyncio.run(client.get_team_rank(target["team_id"], target["performance"])) == 2778
+    assert len(pages) <= 10
+    assert asyncio.run(client.get_team_rank(99, 0)) is None
+    assert asyncio.run(client.get_team_rank(99, 1)) is None

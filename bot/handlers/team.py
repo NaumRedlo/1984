@@ -31,6 +31,13 @@ async def _load(client, wanted, mode: str):
     if team is None:
         return None
     ids = [(team.get("leader") or {}).get("id")] + [m.get("id") for m in team.get("members") or []]
+    stats = team.get("statistics") or {}
+    team["statistics"] = stats
+    if not stats.get("rank"):
+        try:
+            stats["rank"] = await client.get_team_rank(team["id"], int(stats.get("performance") or 0), mode)
+        except Exception as exc:
+            logger.warning(f"team {team['id']} rank was not found: {exc}")
     loaded = (team, await client.get_users_statistics(ids, mode))
     _teams[key] = loaded
     _teams[(str(team["id"]), mode)] = loaded

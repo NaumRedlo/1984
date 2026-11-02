@@ -199,9 +199,10 @@ class TeamCardMixin:
         self._draw_text(draw, (x0 + 24, y0 + 18), S["roster"].upper(), F["section"], colors.TEXT_PRIMARY)
         shown = members[:12]
         col_w = (x1 - x0 - 48 - 48) / 3
+        rows = max(1, -(-len(shown) // 3))
         here_ring = tint.tone((228, 76, 76))
         for i, member in enumerate(shown):
-            self._tm_member_row(img, member, x0 + 24 + (i % 3) * (col_w + 24), y0 + 58 + (i // 3) * 62, F, here_ring)
+            self._tm_member_row(img, member, x0 + 24 + (i // rows) * (col_w + 24), y0 + 58 + (i % rows) * 62, F, here_ring)
         if total > len(shown):
             self._text_mid(ImageDraw.Draw(img), x1 - 24, y0 + 28, S["more"].format(n=_sp(total - len(shown))),
                            F["member_sub"], colors.TEXT_MUTED, align="right")

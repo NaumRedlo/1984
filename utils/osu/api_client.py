@@ -441,6 +441,33 @@ class OsuApiClient:
         data = await self._make_request("GET", f"teams/{key}/{mode}")
         return data if isinstance(data, dict) and data.get("id") else None
 
+    async def get_team_rank(self, team_id: int, performance: int, mode: str = "osu") -> Optional[int]:
+        if not performance:
+            return None
+        lo, hi = 1, 200
+        for _ in range(10):
+            if lo > hi:
+                return None
+            page = (lo + hi) // 2
+            reply = await self._make_request("GET", f"rankings/{mode}/team", params={"cursor[page]": page})
+            entries = (reply or {}).get("ranking") or [] if isinstance(reply, Mapping) else []
+            total = (reply or {}).get("total") if isinstance(reply, Mapping) else None
+            if total:
+                hi = min(hi, max(1, -(-int(total) // 50)))
+            if not entries:
+                hi = page - 1
+                continue
+            for place, entry in enumerate(entries, start=1):
+                if int(entry.get("team_id") or (entry.get("team") or {}).get("id") or 0) == int(team_id):
+                    return (page - 1) * 50 + place
+            if int(entries[-1].get("performance") or 0) > performance:
+                lo = page + 1
+            elif int(entries[0].get("performance") or 0) < performance:
+                hi = page - 1
+            else:
+                return None
+        return None
+
     async def get_users_statistics(self, user_ids: List[int], mode: str = "osu") -> Dict[int, Dict[str, Any]]:
         wanted = list(dict.fromkeys(int(i) for i in user_ids if i))
         chunks = [wanted[i:i + 50] for i in range(0, len(wanted), 50)]
