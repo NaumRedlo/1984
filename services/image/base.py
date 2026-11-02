@@ -313,15 +313,26 @@ class BaseCardRenderer:
         mask = mask.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(tint.strip(x1 - x0, y1 - y0, colour, diagonal=True), (x0, y0), mask)
 
-    def _subscriber_mark(self, img: Image.Image, x: int, cy: int, mark: Optional[dict], side: int) -> int:
+    MARK_INK = (38, 24, 136, 136)
+
+    def _subscriber_mark(self, img: Image.Image, x: float, cy: float, mark: Optional[dict], height: float) -> int:
         from services.image.utils import load_badge
         if not mark or mark.get("rank") is None:
-            return x
+            return int(x)
+        left, top, right, bottom = self.MARK_INK
+        side = max(1, round(height * 160 / (bottom - top)))
         badge = load_badge(mark.get("rank", 0), mark.get("stage", 1), side)
         if badge is None:
-            return x
-        img.paste(badge, (int(x), int(cy - side // 2)), badge)
-        return int(x) + side - side // 8
+            return int(x)
+        k = side / 160
+        img.paste(badge, (int(round(x - left * k)), int(round(cy - (top + bottom) / 2 * k))), badge)
+        return int(round(x + (right - left) * k))
+
+    def _name_mark(self, img: Image.Image, draw: ImageDraw.ImageDraw, right: float, cy: float, font,
+                   mark: Optional[dict]) -> int:
+        top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
+        cap = bottom - top
+        return self._subscriber_mark(img, right + round(cap * 0.65), cy, mark, cap * 1.05)
 
     def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
         self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)

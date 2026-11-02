@@ -360,7 +360,7 @@ class ProfileCardMixin:
                 nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE)
                 mark = data.get("dossier_mark")
                 if mark:
-                    nr = self._pf_dossier_mark(img, nr + 12, int(round(cy)), mark)
+                    nr = self._pf_dossier_mark(img, nr + 24, cy, mark)
                 if data.get("is_supporter"):
                     self._pf_supporter_badge(img, nr + 14, int(round(cy)), int(data.get("support_level") or 1))
             elif kind == "handle":
@@ -435,7 +435,7 @@ class ProfileCardMixin:
         img.paste(badge, (cx - side // 2, cy - side // 2), badge)
 
     def _pf_dossier_mark(self, img, x, cy, mark):
-        return self._subscriber_mark(img, x, cy, mark, 52)
+        return self._subscriber_mark(img, x, cy, mark, 36)
 
     def _pf_supporter_badge(self, img, x, cy, level=1):
         hearts = max(1, min(3, level))

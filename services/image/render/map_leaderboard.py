@@ -431,7 +431,7 @@ class MapLeaderboardCardMixin:
             right = self._text_mid(draw, cols["name"], ny,
                                    self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
                                    self.font_row, tint.name(TEXT))
-            self._subscriber_mark(img, right + 6, int(round(ny)), mark, 26)
+            self._name_mark(img, draw, right, ny, self.font_row, mark)
         draw = ImageDraw.Draw(img)
         if when:
             self._text_mid(draw, cols["name"], mid + 13, when, self.font_stat_label, MINE if is_viewer else MUTED)
