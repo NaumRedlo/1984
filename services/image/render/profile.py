@@ -561,7 +561,7 @@ class ProfileCardMixin:
         draw = ImageDraw.Draw(img)
         for cc, lx_, ly_, letter, color, cnt in letters:
             self._draw_text(draw, (lx_, ly_), letter, fonts["grade"], color)
-            self._text_center(draw, cc, circ_top + cd + 8, _sp(cnt), fonts["count"], COL_WHITE)
+            self._text_center(draw, cc, circ_top + cd, _sp(cnt), fonts["count"], tint.Plain(COL_WHITE))
 
         bar_y = circ_top + cd + 40
         segments = [(gcount(key), color) for (letter, key, color) in GRADES]

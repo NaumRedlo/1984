@@ -64,6 +64,10 @@ class Toned(tuple):
     pass
 
 
+class Plain(tuple):
+    pass
+
+
 def tone(colour):
     turned = _turned(colour)
     if turned is colour:
@@ -125,7 +129,7 @@ def stops(colour) -> list:
 
 def two_tone(fill, size: float):
     palette = worn()
-    if palette is None or _stage(palette) == 1:
+    if palette is None or _stage(palette) == 1 or isinstance(fill, Plain):
         return None
     if isinstance(fill, Toned):
         return stops(fill.source)
