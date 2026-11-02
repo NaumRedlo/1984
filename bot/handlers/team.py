@@ -135,7 +135,7 @@ async def cmd_my_team(message: types.Message, trigger_args: TriggerArgs = None, 
                      ((trigger_args.args if trigger_args else "") or "").strip(), own_only=True)
 
 
-@router.message(TextTriggerFilter("tm", "team"))
+@router.message(TextTriggerFilter("tm"))
 async def cmd_team(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None,
                    tenant_chat_id=None):
     if not await ensure_dm_tenant(message, tenant_chat_id):
