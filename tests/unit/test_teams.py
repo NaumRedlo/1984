@@ -119,9 +119,18 @@ def test_mt_shows_only_your_team_and_tm_finds_a_players_team(monkeypatch):
     monkeypatch.setattr(handler, "_team_photo", photo)
     monkeypatch.setattr(handler, "get_language", language)
     monkeypatch.setattr(handler, "get_registered_user", registered)
+    replied = []
+
+    async def reply_target(session, message, chat_id=None):
+        return replied[0] if replied else None
+
+    monkeypatch.setattr(handler, "get_reply_target_user", reply_target)
     monkeypatch.setattr(handler, "get_db_session", lambda: _Db())
     monkeypatch.setattr(handler.rulesets, "chosen", chosen)
     asyncio.run(handler._send_team(_Message(), _Client(), -1001, "Someone", own_only=True))
     asyncio.run(handler._send_team(_Message(), _Client(), -1001, "Someone", own_only=False))
     asyncio.run(handler._send_team(_Message(), _Client(), -1001, "@TQ", own_only=False))
-    assert asked == [("team", 970), "Someone", ("team", 588), ("team", "TQ")]
+    replied.append(SimpleNamespace(team_id=23966, osu_user_id=2, osu_username="Friend"))
+    asyncio.run(handler._send_team(_Message(), _Client(), -1001, "", own_only=False))
+    asyncio.run(handler._send_team(_Message(), _Client(), -1001, "", own_only=True))
+    assert asked == [("team", 970), "Someone", ("team", 588), ("team", "TQ"), ("team", 23966), ("team", 970)]

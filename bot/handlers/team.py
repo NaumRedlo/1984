@@ -13,7 +13,7 @@ from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
 from utils.osu import rulesets
-from utils.osu.resolve_user import get_registered_user
+from utils.osu.resolve_user import get_registered_user, get_reply_target_user
 from utils.ttl_cache import TTLCache
 
 logger = get_logger("handlers.team")
@@ -104,7 +104,8 @@ async def _send_team(message, osu_api_client, tenant_chat_id, raw: str, *, own_o
                 return
         else:
             async with get_db_session() as session:
-                viewer = await get_registered_user(session, message.from_user.id, tenant_chat_id)
+                target = None if own_only else await get_reply_target_user(session, message, chat_id=tenant_chat_id)
+                viewer = target or await get_registered_user(session, message.from_user.id, tenant_chat_id)
             if viewer is None:
                 await message.answer(t("team.not_linked", lang))
                 return
@@ -113,7 +114,10 @@ async def _send_team(message, osu_api_client, tenant_chat_id, raw: str, *, own_o
                 fresh = await osu_api_client.get_user_data(viewer.osu_user_id)
                 wanted = ((fresh or {}).get("team") or {}).get("id")
             if wanted is None:
-                await message.answer(t("team.none", lang))
+                if target is not None:
+                    await message.answer(t("team.player_none", lang, name=escape_html(target.osu_username or "")))
+                else:
+                    await message.answer(t("team.none", lang))
                 return
         made = await _team_photo(osu_api_client, wanted, ruleset, tenant_chat_id, lang)
         if made is None:
