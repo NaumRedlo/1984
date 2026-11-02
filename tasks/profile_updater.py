@@ -14,6 +14,7 @@ from services.refresh.orchestrator import apply_refresh, claim_refresh
 from services.refresh.policy import BACKGROUND_THRESHOLD, STATS_SWEEP_THRESHOLD
 from services.refresh.prepared import PreparedProfile
 from services.refresh.runtime import background_request
+from services.leaderboard import modes as mode_boards
 from services.leaderboard.snapshots import ensure_period_snapshot
 from utils.logger import get_logger
 from utils.timeutils import utcnow
@@ -43,6 +44,7 @@ class ProfileUpdater:
     ACTIVE_WINDOW = timedelta(days=1)
     RETRY_BASE = 60
     RETRY_MAX = 3600
+    MODE_SWEEP_SECONDS = 600
 
     def __init__(self, api_client):
         self.api_client = api_client
@@ -60,6 +62,18 @@ class ProfileUpdater:
         self.last_schedule = None
         self.active = {}
         self.commit_seconds = 0.0
+
+    async def _sweep_modes(self):
+        marker = background_request.set(True)
+        try:
+            async with asyncio.timeout(120):
+                async with AsyncSessionFactory() as session:
+                    if await mode_boards.sweep(session, self.api_client):
+                        await session.commit()
+        except Exception:
+            logger.exception("Mode standings sweep failed")
+        finally:
+            background_request.reset(marker)
 
     def health(self):
         now = time.monotonic()
@@ -285,6 +299,8 @@ class ProfileUpdater:
         workers = [asyncio.create_task(self._worker(mode), name=f"profile-{mode}-{i}")
                    for i, mode in enumerate(("stats_only", "stats_only", "background_full"))]
         next_snapshot = 0.0
+        next_mode_sweep = 0.0
+        mode_sweep = None
         next_report = 0.0
         errors_told = {}
         next_trouble = 0.0
@@ -308,6 +324,9 @@ class ProfileUpdater:
                             next_snapshot = time.monotonic() + 300
                 except Exception:
                     logger.exception("Profile scheduling failed")
+                if time.monotonic() >= next_mode_sweep and (mode_sweep is None or mode_sweep.done()):
+                    next_mode_sweep = time.monotonic() + self.MODE_SWEEP_SECONDS
+                    mode_sweep = asyncio.create_task(self._sweep_modes(), name="mode-standings")
                 health = self.health()
                 troubled, said = self.health_said(health, errors_told)
                 if time.monotonic() >= next_report or (troubled and time.monotonic() >= next_trouble):
@@ -321,6 +340,8 @@ class ProfileUpdater:
                 except TimeoutError:
                     pass
         finally:
+            if mode_sweep is not None:
+                mode_sweep.cancel()
             for worker in workers:
                 worker.cancel()
             await asyncio.gather(*workers, return_exceptions=True)

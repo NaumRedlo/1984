@@ -1,5 +1,5 @@
 """The chat's players ranked by pp in one mode: osu!standard from the user rows, the others from
-user_mode_stats, fetched from osu! when older than STALE."""
+user_mode_stats, fetched from osu! when older than STALE and swept in the background when older than SWEEP_AGE."""
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -14,7 +14,9 @@ from utils.osu import rulesets
 
 logger = get_logger("services.leaderboard.modes")
 
-STALE = timedelta(hours=6)
+STALE = timedelta(minutes=15)
+SWEEP_AGE = timedelta(hours=1)
+SWEEP_LIMIT = 40
 FETCHING_AT_ONCE = 4
 FETCH_BUDGET_SECONDS = 25.0
 
@@ -36,6 +38,13 @@ async def refresh(session, client, chat_id: int, ruleset: int) -> int:
     if not stale:
         return 0
 
+    fetched, missed = await _fetch(client, stale, ruleset, kept, session, now)
+    if missed:
+        logger.info(f"{rulesets.RULESETS[ruleset]} board: {missed} standings did not arrive in time")
+    return fetched
+
+
+async def _fetch(client, ids, ruleset: int, kept: dict, session, now) -> tuple[int, int]:
     gate = asyncio.Semaphore(FETCHING_AT_ONCE)
 
     async def one(osu_id):
@@ -46,7 +55,7 @@ async def refresh(session, client, chat_id: int, ruleset: int) -> int:
                 logger.debug(f"{rulesets.RULESETS[ruleset]} stats of {osu_id}: {exc}")
                 return osu_id, None
 
-    tasks = [asyncio.ensure_future(one(i)) for i in stale]
+    tasks = [asyncio.ensure_future(one(i)) for i in ids]
     done, pending = await asyncio.wait(tasks, timeout=FETCH_BUDGET_SECONDS)
     for task in pending:
         task.cancel()
@@ -59,6 +68,7 @@ async def refresh(session, client, chat_id: int, ruleset: int) -> int:
         if row is None:
             row = UserModeStats(osu_user_id=osu_id, ruleset=ruleset)
             session.add(row)
+            kept[osu_id] = row
         row.pp = float(data.get("pp") or 0)
         row.global_rank = data.get("global_rank")
         row.country_rank = data.get("country_rank")
@@ -66,8 +76,24 @@ async def refresh(session, client, chat_id: int, ruleset: int) -> int:
         row.play_count = int(data.get("play_count") or 0)
         row.updated_at = now
         fetched += 1
-    if pending:
-        logger.info(f"{rulesets.RULESETS[ruleset]} board: {len(pending)} standings did not arrive in time")
+    return fetched, len(pending)
+
+
+async def sweep(session, client) -> int:
+    """Refresh the oldest standings of players who have pp in taiko, catch or mania."""
+    if client is None:
+        return 0
+    now = datetime.now(timezone.utc)
+    rows = (await session.execute(
+        select(UserModeStats)
+        .where(UserModeStats.pp > 0, UserModeStats.updated_at < (now - SWEEP_AGE).replace(tzinfo=None))
+        .order_by(UserModeStats.updated_at)
+        .limit(SWEEP_LIMIT))).scalars().all()
+    fetched = 0
+    for ruleset in sorted({row.ruleset for row in rows}):
+        kept = {row.osu_user_id: row for row in rows if row.ruleset == ruleset}
+        got, _ = await _fetch(client, list(kept), ruleset, kept, session, now)
+        fetched += got
     return fetched
 
 

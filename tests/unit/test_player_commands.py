@@ -128,9 +128,24 @@ async def test_other_modes_are_fetched_once_until_stale_and_nobody_without_pp_is
         assert {mode for _, mode in osu.asked} == {"mania"} and len(osu.asked) == 3
 
         row = (await session.execute(select(UserModeStats).where(UserModeStats.osu_user_id == 1))).scalar_one()
-        row.updated_at = datetime.now(timezone.utc) - timedelta(hours=7)
+        row.updated_at = datetime.now(timezone.utc) - timedelta(minutes=20)
         await session.commit()
         assert await modes.refresh(session, osu, -1, 3) == 1
+
+
+async def test_the_background_sweep_refreshes_only_old_standings_of_players_with_pp(factory):
+    await _players(factory)
+    osu = _Osu()
+    async with factory() as session:
+        await modes.refresh(session, osu, -1, 3)
+        await session.commit()
+        assert await modes.sweep(session, osu) == 0
+        for row in (await session.execute(select(UserModeStats))).scalars():
+            row.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        await session.commit()
+        osu.asked.clear()
+        assert await modes.sweep(session, osu) == 2
+        assert sorted(osu.asked) == [(1, "mania"), (3, "mania")]
 
 
 async def test_a_board_page_marks_the_viewer(factory):
