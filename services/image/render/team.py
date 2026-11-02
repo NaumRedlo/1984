@@ -100,7 +100,7 @@ class TeamCardMixin:
             self._draw_text(draw, (int(x), y0 + 42), value, F["stat"], ink)
             x += unit * weight
 
-    def _tm_rank(self, img, right, cy, team, S, F):
+    def _tm_rank(self, img, cx, cy, team, S, F):
         rank = (team.get("statistics") or {}).get("rank")
         if not rank:
             return
@@ -110,10 +110,10 @@ class TeamCardMixin:
         shade = Image.new("RGBA", (w + 160, 220), (0, 0, 0, 0))
         ImageDraw.Draw(shade).ellipse((20, 30, w + 140, 190), fill=colors.CARD + (190,))
         shade = shade.filter(ImageFilter.GaussianBlur(30))
-        img.paste(shade, (int(right - w - 80), int(cy - 110)), shade)
+        img.paste(shade, (int(cx - w / 2 - 80), int(cy - 110)), shade)
         draw = ImageDraw.Draw(img)
-        self._text_mid(draw, right, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="right")
-        self._text_mid(draw, right, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="right")
+        self._text_mid(draw, cx, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="center")
+        self._text_mid(draw, cx, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="center")
 
     def _tm_recruiting(self, img, x, cy, team, S, F):
         if team.get("is_open") is None:
@@ -172,13 +172,8 @@ class TeamCardMixin:
         if flag:
             img.paste(flag, (int(sx), int(cy + 13 - flag.height / 2)), flag)
             sx += flag.width + 8
-        parts = []
-        if member.get("global_rank"):
-            parts.append(f"#{_sp(member['global_rank'])}")
         if member.get("pp"):
-            parts.append(f"{_sp(member['pp'])}pp")
-        if parts:
-            self._text_mid(ImageDraw.Draw(img), sx, cy + 13, "   ".join(parts), F["member_sub"], colors.TEXT_MUTED)
+            self._text_mid(ImageDraw.Draw(img), sx, cy + 13, f"{_sp(member['pp'])}pp", F["member_sub"], colors.TEXT_MUTED)
 
     @staticmethod
     def _tm_roster_height(data):
@@ -236,7 +231,7 @@ class TeamCardMixin:
         if tag:
             self._text_mid(draw, name_right + 16, fy + 32, tag, F["tag"], colors.TEXT_MUTED)
         self._tm_recruiting(img, tx, fy + 82, team, S, F)
-        self._tm_rank(img, W - M - 48, M + bh / 2, team, S, F)
+        self._tm_rank(img, W - M - 230, M + bh / 2, team, S, F)
 
         sy = M + bh + 24
         self._tm_stats(img, data, (M + 24, sy, W - M - 24, sy + 96), S, F)
