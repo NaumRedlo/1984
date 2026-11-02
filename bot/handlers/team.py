@@ -1,3 +1,4 @@
+import aiohttp
 from aiogram import F, Router, types
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 
@@ -79,19 +80,28 @@ async def _roster_photo(client, team_id: int, ruleset: int, page: int, chat_id, 
     return BufferedInputFile(photo.read(), filename="team_members.png"), keyboard
 
 
-@router.message(TextTriggerFilter("team", "tm"))
-async def cmd_team(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None,
-                   tenant_chat_id=None):
-    if not await ensure_dm_tenant(message, tenant_chat_id):
-        return
+async def _send_team(message, osu_api_client, tenant_chat_id, raw: str, *, own_only: bool):
     lang = (await get_language(message.from_user.id)).lower()
-    raw = ((trigger_args.args if trigger_args else "") or "").strip()
     ruleset, rest = await rulesets.chosen(raw, message.from_user.id)
     ruleset = ruleset or 0
-    query = (rest or "").strip()
+    query = "" if own_only else (rest or "").strip()
     try:
-        if query:
-            wanted = int(query) if query.isdigit() else query
+        if query.startswith("@") and len(query) > 1:
+            wanted = query[1:]
+        elif query:
+            try:
+                player = await osu_api_client.get_user_data(query)
+            except aiohttp.ClientResponseError as missing:
+                if missing.status != 404:
+                    raise
+                player = None
+            if player is None:
+                await message.answer(t("team.no_player", lang, name=escape_html(query)))
+                return
+            wanted = (player.get("team") or {}).get("id")
+            if wanted is None:
+                await message.answer(t("team.player_none", lang, name=escape_html(player.get("username") or query)))
+                return
         else:
             async with get_db_session() as session:
                 viewer = await get_registered_user(session, message.from_user.id, tenant_chat_id)
@@ -114,6 +124,24 @@ async def cmd_team(message: types.Message, trigger_args: TriggerArgs = None, osu
     except Exception as exc:
         logger.error(f"team card failed for {raw!r}: {exc}", exc_info=True)
         await message.answer(t("team.error", lang))
+
+
+@router.message(TextTriggerFilter("mt"))
+async def cmd_my_team(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None,
+                      tenant_chat_id=None):
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
+    await _send_team(message, osu_api_client, tenant_chat_id,
+                     ((trigger_args.args if trigger_args else "") or "").strip(), own_only=True)
+
+
+@router.message(TextTriggerFilter("tm", "team"))
+async def cmd_team(message: types.Message, trigger_args: TriggerArgs = None, osu_api_client=None,
+                   tenant_chat_id=None):
+    if not await ensure_dm_tenant(message, tenant_chat_id):
+        return
+    await _send_team(message, osu_api_client, tenant_chat_id,
+                     ((trigger_args.args if trigger_args else "") or "").strip(), own_only=False)
 
 
 def _parsed(data: str, size: int):

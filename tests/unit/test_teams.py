@@ -74,3 +74,54 @@ def test_the_roster_card_draws_a_page():
     data = asyncio.run(team_card_data(_Session([(4, 8214, 9120)]), _team(), -1001, "ru", {2: {"pp": 9000, "accuracy": 98.2}}))
     png = CardRenderer().generate_team_roster(roster_page(data, 0), {}).getvalue()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_mt_shows_only_your_team_and_tm_finds_a_players_team(monkeypatch):
+    from types import SimpleNamespace
+
+    from bot.handlers import team as handler
+
+    asked = []
+
+    class _Client:
+        async def get_user_data(self, name):
+            asked.append(name)
+            return {"username": "Someone", "team": {"id": 588}}
+
+    async def photo(client, wanted, ruleset, chat_id, lang):
+        asked.append(("team", wanted))
+        return None
+
+    async def language(user_id):
+        return "en"
+
+    async def registered(session, user_id, chat_id):
+        return SimpleNamespace(team_id=970, osu_user_id=1)
+
+    class _Db:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def chosen(raw, user_id):
+        return None, raw
+
+    sent = []
+
+    class _Message:
+        from_user = SimpleNamespace(id=5)
+
+        async def answer(self, text, **kwargs):
+            sent.append(text)
+
+    monkeypatch.setattr(handler, "_team_photo", photo)
+    monkeypatch.setattr(handler, "get_language", language)
+    monkeypatch.setattr(handler, "get_registered_user", registered)
+    monkeypatch.setattr(handler, "get_db_session", lambda: _Db())
+    monkeypatch.setattr(handler.rulesets, "chosen", chosen)
+    asyncio.run(handler._send_team(_Message(), _Client(), -1001, "Someone", own_only=True))
+    asyncio.run(handler._send_team(_Message(), _Client(), -1001, "Someone", own_only=False))
+    asyncio.run(handler._send_team(_Message(), _Client(), -1001, "@TQ", own_only=False))
+    assert asked == [("team", 970), "Someone", ("team", 588), ("team", "TQ")]

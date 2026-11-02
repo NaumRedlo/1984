@@ -57,7 +57,7 @@ async def team_card_data(session, team: dict, chat_id: Optional[int], lang: str,
     }
 
 
-PAGE = 20
+PAGE = 10
 
 
 def roster_page(data: dict, page: int) -> dict:
