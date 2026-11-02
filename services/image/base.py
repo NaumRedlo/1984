@@ -11,7 +11,7 @@ from services.image.constants import (
     SANS_BOLD, SANS_SEMI, SANS_REG, NUM_BOLD,
     MPLUS_BOLD, MPLUS_REG,
 )
-from services.image import legibility
+from services.image import legibility, tint
 from services.image.utils import _find_font, load_mod_icon, cover_center_crop, mod_ink
 from services.image.text_render import (
     draw_text_multifont, text_size_multifont,
@@ -139,8 +139,27 @@ class BaseCardRenderer:
     ) -> int:
         fb = self._font_fallback(font)
         cyfb = self._font_cyrillic_fallback(font)
+        line = tint.two_tone(fill, getattr(font, "size", 0)) if text else None
+        image = getattr(draw, "_image", None)
+        if line is not None and image is not None:
+            return self._two_tone_text(image, xy, text, font, fb, cyfb, fill, line)
         fill = self._readable(draw, xy, text, font, fill)
         return draw_text_multifont(draw, xy, text, font, fb, fill, cyrillic_fallback=cyfb)
+
+    def _two_tone_text(self, image, xy, text, font, fb, cyfb, fill, line) -> int:
+        pad = int(getattr(font, "size", 16))
+        w, h = self._text_size(ImageDraw.Draw(image), text, font)
+        mask = Image.new("L", (w + pad * 2, h + pad * 2), 0)
+        right = draw_text_multifont(ImageDraw.Draw(mask), (pad, pad), text, font, fb, 255, cyrillic_fallback=cyfb)
+        box = mask.getbbox()
+        if box is None:
+            return xy[0] + right - pad
+        mask = mask.crop(box)
+        if len(fill) > 3 and fill[3] < 255:
+            mask = mask.point(lambda v: v * fill[3] // 255)
+        at = (int(xy[0]) - pad + box[0], int(xy[1]) - pad + box[1])
+        image.paste(tint.paint(mask.width, mask.height, line), at, mask)
+        return int(xy[0]) + right - pad
 
     def _readable(self, draw: ImageDraw.Draw, xy: tuple, text: str, font, fill):
         image = getattr(draw, "_image", None)
@@ -279,7 +298,6 @@ class BaseCardRenderer:
         img.paste(layer, (x0, y0), layer)
 
     def _tinted_ring(self, img: Image.Image, box: tuple[int, int, int, int], colour, width: int) -> None:
-        from services.image import tint
         if not tint.shimmers():
             self._aa_ellipse_outline(img, box, outline=tint.tone(colour), width=width)
             return
@@ -407,7 +425,6 @@ class BaseCardRenderer:
         self, img: Image.Image, avatar: Optional[Image.Image], x: int, y: int, size: int,
         *, ring=MAPPER_RING, width: int = 2, glow: int = 6,
     ) -> ImageDraw.ImageDraw:
-        from services.image import tint
         ring = tint.tone(ring)
         ss = 4
         pad = width + glow * 2

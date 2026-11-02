@@ -45,8 +45,17 @@ def _turned(colour, turn: float = 0.0):
     return tuple(round(v * 255) for v in (r, g, b)) + tuple(colour[3:])
 
 
+class Toned(tuple):
+    pass
+
+
 def tone(colour):
-    return _turned(colour)
+    turned = _turned(colour)
+    if turned is colour:
+        return colour
+    toned = Toned(turned)
+    toned.source = colour
+    return toned
 
 
 def tone_for(palette: Optional[dict], colour):
@@ -82,19 +91,45 @@ def _lit(colour, k: float):
     return tuple(round(c + (255 - c) * k) for c in colour[:3])
 
 
+PAIR = {2: 14.0, 3: 22.0, 4: 30.0}
+PALE = {3: 0.6, 4: 0.5}
+
+
 def stops(colour) -> list:
     palette = worn()
     if palette is None or not _warm(colour):
         return [(0.0, tuple(colour[:3])), (1.0, tuple(colour[:3]))]
-    base = _turned(colour)[:3]
     stage = _stage(palette)
     if stage == 1:
+        base = _turned(colour)[:3]
         return [(0.0, base), (1.0, base)]
-    if stage == 2:
-        return [(0.0, _turned(colour, -18)[:3]), (0.5, base), (1.0, _turned(colour, 22)[:3])]
-    if stage == 3:
-        return [(0.0, _turned(colour, -32)[:3]), (0.35, _lit(base, 0.22)), (0.55, base), (1.0, _turned(colour, 36)[:3])]
-    return [(0.0, _turned(colour, -46)[:3]), (0.26, _lit(base, 0.55)), (0.48, base), (0.7, _lit(_turned(colour, 44), 0.4)), (1.0, _turned(colour, 52)[:3])]
+    spread = PAIR[stage]
+    end = _turned(colour, spread)[:3]
+    return [(0.0, _turned(colour, -spread)[:3]), (1.0, end)]
+
+
+def two_tone(fill, size: float):
+    palette = worn()
+    if palette is None or _stage(palette) == 1:
+        return None
+    if isinstance(fill, Toned):
+        return stops(fill.source)
+    stage = _stage(palette)
+    if stage >= 3 and size >= 20 and min(fill[:3]) >= 225:
+        return [(at, _lit(c, PALE[stage])) for at, c in stops((226, 72, 72))]
+    return None
+
+
+def paint(w: int, h: int, line: list):
+    from PIL import Image
+
+    picture = Image.new("RGB", (max(1, w), max(1, h)), line[0][1])
+    reach = w * 0.866 + h * 0.5
+    pixels = picture.load()
+    for y in range(h):
+        for x in range(w):
+            pixels[x, y] = _along(line, (x * 0.866 + y * 0.5) / reach)
+    return picture
 
 
 def _along(line: list, at: float):
