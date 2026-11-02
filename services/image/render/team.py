@@ -112,14 +112,24 @@ class TeamCardMixin:
         draw = ImageDraw.Draw(img)
         value = f"#{_sp(rank)}"
         w = max(self._text_size(draw, value, F["rank"])[0], self._text_size(draw, S["team_rank"], F["rank_lbl"])[0])
-        shade = Image.new("RGBA", (w + 160, 220), (0, 0, 0, 0))
-        ImageDraw.Draw(shade).ellipse((20, 30, w + 140, 190), fill=colors.CARD + (190,))
-        shade = shade.filter(ImageFilter.GaussianBlur(30))
-        img.paste(shade, (int(cx - w / 2 - 80), int(cy - 110)), shade)
+        pad = 120
+        shade = Image.new("RGBA", (int(w) + 2 * pad + 80, 160 + 2 * pad), (0, 0, 0, 0))
+        ImageDraw.Draw(shade).ellipse((pad, pad, pad + int(w) + 80, pad + 160), fill=colors.CARD + (170,))
+        shade = shade.filter(ImageFilter.GaussianBlur(36))
+        self._tm_soft_paste(img, shade, int(cx - w / 2 - 40 - pad), int(cy - 80 - pad))
         draw = ImageDraw.Draw(img)
         right = cx + self._text_size(draw, S["team_rank"], F["rank_lbl"])[0] / 2
         self._text_mid(draw, right, cy - 30, S["team_rank"], F["rank_lbl"], colors.TEXT_PRIMARY, align="right")
         self._text_mid(draw, right, cy + 14, value, F["rank"], tint.tone(colors.ACCENT_PP), align="right")
+
+    @staticmethod
+    def _tm_soft_paste(img, layer, x, y):
+        left, top = max(0, -x), max(0, -y)
+        right, bottom = min(layer.width, img.width - x), min(layer.height, img.height - y)
+        if right <= left or bottom <= top:
+            return
+        part = layer.crop((left, top, right, bottom))
+        img.paste(part, (x + left, y + top), part)
 
     def _tm_recruiting(self, img, x, cy, team, S, F):
         if team.get("is_open") is None:
