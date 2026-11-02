@@ -243,10 +243,10 @@ class ProfileCardMixin:
     def _profile_dashboard(self, data, avatar, cover, top_bg_images) -> BytesIO:
         W, H = DASH_W, DASH_H
         img, draw = self._create_canvas(W, H)
-        draw.rectangle([(0, 0), (W, H)], fill=COL_BG)
+        draw.rectangle([(0, 0), (W, H)], fill=tint.ground(COL_BG))
 
         self._pf_panel(img, (CARD_M, CARD_M, W - CARD_M, H - CARD_M),
-                       radius=24, fill=COL_CARD, border=COL_CARD_BORDER)
+                       radius=24, fill=tint.ground(COL_CARD), border=tint.ground(COL_CARD_BORDER))
         draw = ImageDraw.Draw(img)
         fonts = self._pf_fonts()
 
@@ -256,7 +256,7 @@ class ProfileCardMixin:
         self._pf_right_panel(img, data, fonts)
 
         self._aa_rounded_outline(img, (CARD_M, CARD_M, W - CARD_M, H - CARD_M),
-                                 radius=24, outline=COL_CARD_BORDER, width=1)
+                                 radius=24, outline=tint.ground(COL_CARD_BORDER), width=1)
 
         return self._save(img)
 
@@ -289,6 +289,7 @@ class ProfileCardMixin:
         )
 
     def _pf_panel(self, img, box, *, radius=16, fill=COL_PANEL, border=COL_PANEL_BORDER):
+        fill, border = tint.ground(fill), tint.ground(border) if border else border
         self._aa_rounded_fill(img, box, radius=radius, fill=fill)
         if border:
             self._aa_rounded_outline(img, box, radius=radius, outline=border, width=1)
@@ -364,7 +365,7 @@ class ProfileCardMixin:
                 if data.get("is_supporter"):
                     self._pf_supporter_badge(img, nr + 14, int(round(cy)), int(data.get("support_level") or 1))
             elif kind == "handle":
-                self._text_mid(draw, nx, cy, handle, fonts["handle"], (188, 150, 152))
+                self._text_mid(draw, nx, cy, handle, fonts["handle"], tint.ground((188, 150, 152)))
             elif kind == "title":
                 self._pf_title(img, draw, nx, cy, title, fonts["atitle"], data)
             else:
@@ -375,9 +376,9 @@ class ProfileCardMixin:
         rank_x = 872
         gr = data.get("global_rank", 0) or 0
         cr = data.get("country_rank", 0) or 0
-        self._draw_text(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], COL_MUTED)
+        self._draw_text(draw, (rank_x, 56), S["global_ranking"], fonts["rank_lbl"], tint.ground(COL_MUTED))
         self._draw_text(draw, (rank_x, 80), f"#{_sp(gr)}" if gr else "—", fonts["rank_val"], COL_WHITE)
-        self._draw_text(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], COL_MUTED)
+        self._draw_text(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], tint.ground(COL_MUTED))
         self._draw_text(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], tint.tone(COL_CORAL))
 
     def _pf_country_line(self, img, data, x, cy, fonts, S):
@@ -402,7 +403,7 @@ class ProfileCardMixin:
         big = side * k
         badge = Image.new("RGBA", (big, big), (0, 0, 0, 0))
         g = ImageDraw.Draw(badge)
-        g.ellipse((0, 0, big - 1, big - 1), fill=COL_PANEL)
+        g.ellipse((0, 0, big - 1, big - 1), fill=tint.ground(COL_PANEL))
         edge = max(2 * k, round(big * 0.07))
         g.ellipse((edge, edge, big - 1 - edge, big - 1 - edge), fill=tint.tone((228, 76, 76)))
         white = (255, 255, 255, 255)
@@ -472,13 +473,13 @@ class ProfileCardMixin:
             (496, S["play_count"], _sp(data.get("play_count", 0) or 0), COL_WHITE),
         ]
         for x, label, value, vcol in cols:
-            self._draw_text(draw, (x, y_lbl), label, fonts["stat_lbl"], COL_MUTED)
+            self._draw_text(draw, (x, y_lbl), label, fonts["stat_lbl"], tint.ground(COL_MUTED))
             self._draw_text(draw, (x, y_val), value, fonts["stat_val"], vcol)
 
         lx = 700
         level = data.get("level", 0) or 0
         prog = data.get("level_progress", 0) or 0
-        self._draw_text(draw, (lx, y_lbl), S["level"], fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (lx, y_lbl), S["level"], fonts["stat_lbl"], tint.ground(COL_MUTED))
         lvl_str = str(level)
         lvw, lvh = self._text_size(draw, lvl_str, fonts["stat_val"])
         self._draw_text(draw, (lx, y_val), lvl_str, fonts["stat_val"], tint.tone(COL_CORAL))
@@ -510,15 +511,15 @@ class ProfileCardMixin:
         ink_top = lines[0] + draw.textbbox((0, 0), "H", font=fonts["stat_lbl"])[1]
         ink_bottom = lines[3] + draw.textbbox((0, 0), "0", font=fonts["ps_val"])[3]
         jy = STATS_Y0 + int(round((STATS_Y1 - STATS_Y0 - ink_top - ink_bottom) / 2))
-        self._draw_text(draw, (jx, jy + lines[0]), S["join_date"], fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (jx, jy + lines[0]), S["join_date"], fonts["stat_lbl"], tint.ground(COL_MUTED))
         self._draw_text(draw, (jx, jy + lines[1]), _fmt_date(data.get("join_date")), fonts["ps_val"], COL_WHITE)
-        self._draw_text(draw, (jx, jy + lines[2]), S["last_seen"], fonts["stat_lbl"], COL_MUTED)
+        self._draw_text(draw, (jx, jy + lines[2]), S["last_seen"], fonts["stat_lbl"], tint.ground(COL_MUTED))
         lang = data.get("lang") or "en"
         if data.get("is_online"):
             seen_text, seen_col = S["online"], COL_GREEN
         else:
             seen_text = _fmt_last_seen(data.get("last_visit"), lang)
-            seen_col = COL_MUTED if seen_text == S["hidden"] else COL_WHITE
+            seen_col = tint.ground(COL_MUTED) if seen_text == S["hidden"] else COL_WHITE
         self._draw_text(draw, (jx, jy + lines[3]), seen_text, fonts["ps_val"], seen_col)
 
     def _pf_left_panel(self, img, data, top_bg_images, fonts):
@@ -580,12 +581,12 @@ class ProfileCardMixin:
                 a, b = 0, self._text_size(draw, text, font)[1]
             return int(cy - (a + b) / 2)
 
-        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], COL_MUTED)
+        self._draw_text(draw, (cx0, _vtop(label, fonts["total"], cy_label)), label, fonts["total"], tint.ground(COL_MUTED))
         lw, _ = self._text_size(draw, label, fonts["total"])
         self._draw_text(draw, (cx0 + lw + 10, _vtop(val, fonts["ps_val"], cy_val)), val, fonts["ps_val"], COL_WHITE)
 
         div_y = bar_y + 62
-        draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
+        draw.line([(cx0, div_y), (cx1, div_y)], fill=tint.ground(COL_DIVIDER), width=1)
         self._pf_section_title(draw, cx0, div_y + 14, S["top_plays"], fonts)
 
         scores = (data.get("top_scores", []) or [])[:5]
@@ -617,7 +618,7 @@ class ProfileCardMixin:
         crop = Image.composite(Image.new("RGBA", (w, h), (12, 7, 9, 255)), crop, grad)
         mask = self._rounded_mask((w, h), 12)
         img.paste(crop.convert("RGB"), (x, y), mask)
-        self._aa_rounded_outline(img, (x, y, x + w, y + h), radius=12, outline=COL_PANEL_BORDER, width=1)
+        self._aa_rounded_outline(img, (x, y, x + w, y + h), radius=12, outline=tint.ground(COL_PANEL_BORDER), width=1)
         draw = ImageDraw.Draw(img)
 
         if not sc:
@@ -686,7 +687,7 @@ class ProfileCardMixin:
             ry += step
 
         div_y = MID_Y0 + 56 + len(rows) * step + 6
-        draw.line([(cx0, div_y), (cx1, div_y)], fill=COL_DIVIDER, width=1)
+        draw.line([(cx0, div_y), (cx1, div_y)], fill=tint.ground(COL_DIVIDER), width=1)
         self._text_center(draw, (cx0 + cx1) // 2, div_y + 14, S["rank_history"], fonts["title"], COL_WHITE)
 
         rank_history = [r for r in (data.get("rank_history") or []) if r]
@@ -702,7 +703,7 @@ class ProfileCardMixin:
         else:
             draw = ImageDraw.Draw(img)
             self._text_center(draw, (gx0 + gx1) // 2, (gy0 + gy1) // 2 - 10,
-                              S["not_enough_data"], fonts["ps_lbl"], COL_MUTED)
+                              S["not_enough_data"], fonts["ps_lbl"], tint.ground(COL_MUTED))
 
     def _pf_graph(self, img, vals, x, y, w, h, fonts, *, is_rank, label_w=None, S=None):
         S = S or _PF_STRINGS["en"]
@@ -740,7 +741,7 @@ class ProfileCardMixin:
         for gi in range(4):
             gy = y + int(h * gi / 3)
             draw.line([(x, gy), (x + w, gy)], fill=(46, 38, 40), width=1)
-            self._text_right(draw, x - 10, gy - 8, axis_labels[gi], axis_font, COL_MUTED)
+            self._text_right(draw, x - 10, gy - 8, axis_labels[gi], axis_font, tint.ground(COL_MUTED))
 
         step = w / (len(vals) - 1)
         coords = [(int(x + i * step), _y(v)) for i, v in enumerate(vals)]
@@ -756,11 +757,11 @@ class ProfileCardMixin:
         for i, lbl in enumerate(labels):
             lx = x + int(w * i / 3)
             if i == 0:
-                self._draw_text(draw, (lx, y + h + 8), lbl, fonts["axis"], COL_MUTED)
+                self._draw_text(draw, (lx, y + h + 8), lbl, fonts["axis"], tint.ground(COL_MUTED))
             elif i == 3:
-                self._text_right(draw, x + w, y + h + 8, lbl, fonts["axis"], COL_MUTED)
+                self._text_right(draw, x + w, y + h + 8, lbl, fonts["axis"], tint.ground(COL_MUTED))
             else:
-                self._text_center(draw, lx, y + h + 8, lbl, fonts["axis"], COL_MUTED)
+                self._text_center(draw, lx, y + h + 8, lbl, fonts["axis"], tint.ground(COL_MUTED))
 
     def _pf_hgrad(self, img, x, y, w, h, c0, c1, *, radius=0):
         if w <= 0:

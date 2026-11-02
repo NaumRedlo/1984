@@ -34,6 +34,20 @@ def wearing(palette: Optional[dict]):
         wear(held)
 
 
+GROUND = {1: 1.15, 2: 1.3, 3: 1.45, 4: 1.6}
+
+
+def ground(colour):
+    palette = worn()
+    if palette is None:
+        return colour
+    tier = TINTS[max(0, min(len(TINTS) - 1, int(palette["rank"])))]
+    tier_hue = colorsys.rgb_to_hls(*(v / 255 for v in tier))[0]
+    _, light, sat = colorsys.rgb_to_hls(*(v / 255 for v in colour[:3]))
+    r, g, b = colorsys.hls_to_rgb(tier_hue, light, min(1.0, sat * GROUND[_stage(palette)]))
+    return Plain(tuple(round(v * 255) for v in (r, g, b)) + tuple(colour[3:]))
+
+
 def name(fill):
     return tone((255, 170, 162)) if worn() is not None else fill
 
