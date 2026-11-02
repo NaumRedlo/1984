@@ -411,7 +411,7 @@ class RecentCardMixin:
             elif fw > 0:
                 draw.rounded_rectangle((bx0, by, bx0 + fw, by + 6), radius=3, fill=color)
 
-        pp_color = (110, 110, 122) if not is_passed else TEXT_PRIMARY
+        pp_color = (110, 110, 122) if not is_passed else tint.Plain(TEXT_PRIMARY)
 
         self._text_mid(draw, centers[0], lbl_cy, "PP", f_lbl, TEXT_SECONDARY, align="center")
         self._text_mid(draw, centers[0], val_cy, f"{pp:.0f}" if pp else "—", f_val, pp_color, align="center")
@@ -459,7 +459,7 @@ class RecentCardMixin:
             col = tuple(col)
             c = hit_centers[i]
             self._text_mid(draw, c, lbl_cy, lbl, f_lbl, col, align="center")
-            self._text_mid(draw, c, val_cy, str(val), f_val2, TEXT_PRIMARY, align="center")
+            self._text_mid(draw, c, val_cy, str(val), f_val2, tint.Plain(TEXT_PRIMARY), align="center")
 
         mod_list = self._normalize_mods(data.get("mods", ""))
         if mod_list:
