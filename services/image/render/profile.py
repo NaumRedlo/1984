@@ -403,7 +403,7 @@ class ProfileCardMixin:
             self._aa_rounded_outline(img, (x, fy, x + flag.width, fy + flag.height),
                                      radius=4, outline=(82, 58, 60), width=1)
             img.paste(flag, (x, fy), flag)
-            cur = x + (48 + 12 if small else flag.width + 14)
+            cur = x + flag.width + (12 if small else 14)
         raw_cc = str(data.get("country", "") or "").strip()
         cname = data.get("country_name") or (
             raw_cc.upper() if raw_cc and raw_cc not in ("—", "__", "--") else ""
