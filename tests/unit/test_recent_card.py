@@ -79,13 +79,15 @@ def test_the_score_keeps_its_right_edge_by_the_grade_however_long_it_is():
     assert abs(long[2] - short[2]) <= 2
 
 
-def test_mods_hang_under_the_hit_counts_and_the_overflow_is_counted():
+def test_mods_sit_under_the_score_in_line_with_the_chips_and_the_overflow_is_counted():
     plain = _picture(dict(_sample(), mods=""))
     left, top, right, bottom = _changed(plain, _picture(_sample()))
-    assert 840 <= left and right <= 1232
-    assert 340 <= top and bottom <= 374
+    assert 900 <= left and right <= 1060
+    assert 200 <= top and bottom <= 240
+    scored = dict(_sample(), total_score=1087654321)
+    assert _changed(_picture(dict(scored, mods="")), _picture(scored)) == (left, top, right, bottom)
     many = _changed(plain, _picture(dict(_sample(), mods="HDHRDTFLNFSDEZPFSOTDBLCLMR")))
-    assert 840 <= many[0] and many[2] <= 1232 and many[3] <= 374
+    assert 700 <= many[0] and many[2] <= 1060 and 200 <= many[1] and many[3] <= 240
 
 
 def test_the_place_among_the_best_sits_in_the_top_right_corner_of_the_player_panel():
