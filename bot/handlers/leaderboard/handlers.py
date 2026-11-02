@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 from db.database import get_db_session
 from services.image import card_renderer
+from services.leaderboard.marks import mark_rows
 from services.leaderboard import (
     CATEGORIES,
     build_absolute_card,
@@ -206,9 +207,10 @@ async def _send_map_leaderboard(message: types.Message, beatmap_id: int, osu_api
                 viewer_row = next(
                     (r for r in rows if r.get("username") == viewer.osu_username),
                     {"username": viewer.osu_username, "avatar_url": viewer.avatar_url,
-                     "osu_user_id": viewer.osu_user_id},
+                     "osu_user_id": viewer.osu_user_id, "player_id": viewer.player_id},
                 )
             data["viewer"] = viewer_row
+            await mark_rows(session, rows + [viewer_row])
 
             title = data.get("map_title") or ""
             artist, _, name = title.partition(" - ")

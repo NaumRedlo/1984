@@ -81,6 +81,24 @@ async def worn_mark(player_id, osu_id=None) -> dict | None:
     return {"rank": int(made["rank"]), "stage": int(made["stage"])}
 
 
+async def marks_of(players: dict) -> dict:
+    wanted = {int(player) for player, osu_id in players.items() if player and osu_id not in CREATORS}
+    try:
+        prices = await shared_catalogue().prices()
+    except LavaError:
+        prices = ()
+    shown = await subscriptions.badges(wanted, prices) if wanted else {}
+    marks = {}
+    for player, osu_id in players.items():
+        if osu_id in CREATORS:
+            marks[player] = dict(CREATOR_MARK)
+            continue
+        made = shown.get(int(player)) if player else None
+        if made and made.get("rank") is not None:
+            marks[player] = {"rank": int(made["rank"]), "stage": int(made["stage"])}
+    return marks
+
+
 async def _prices():
     try:
         return await shared_catalogue().prices()
