@@ -173,6 +173,7 @@ class ProfileCardMixin:
             "name": mk(b, 58, self.font_big),
             "handle": mk(r, 28, self.font_subtitle),
             "country": mk(s, 23, self.font_subtitle),
+            "country_sm": mk(s, 20, self.font_subtitle),
             "atitle": mk(b, 33, self.font_big),
             "rank_val": mk(m, 48, self.font_big),
             "rank_lbl": mk(s, 20, self.font_label),
@@ -209,6 +210,7 @@ class ProfileCardMixin:
             fb_map[id(f["name"])] = mfb(mpb, 58)
             fb_map[id(f["handle"])] = mfb(mpr, 28)
             fb_map[id(f["country"])] = mfb(mpr, 23)
+            fb_map[id(f["country_sm"])] = mfb(mpr, 20)
 
         pxb = _find_font(SANS_BOLD)
         pxs = _find_font(SANS_SEMI) or pxb
@@ -216,7 +218,7 @@ class ProfileCardMixin:
         fb_cy_map = getattr(self, "_fb_cyrillic_map", None)
         if isinstance(fb_cy_map, dict):
             cy_sizes = {
-                "name": (pxb, 58), "handle": (pxr, 28), "country": (pxs, 23),
+                "name": (pxb, 58), "handle": (pxr, 28), "country": (pxs, 23), "country_sm": (pxs, 20),
                 "atitle": (pxb, 33), "rank_lbl": (pxs, 20), "title": (pxs, 18),
                 "stat_lbl": (pxs, 16), "ps_lbl": (pxr, 19), "ps_val": (pxb, 19),
                 "axis": (pxr, 14), "total": (pxs, 17),
@@ -358,11 +360,11 @@ class ProfileCardMixin:
         handle = data.get("handle")
         title = data.get("title")
         team = data.get("team") if data.get("team_flag") is not None or (data.get("team") or {}).get("name") else None
-        lines = [("name", 56)] + ([("handle", 42)] if handle else []) + ([("title", 46)] if title else [])
         if team:
-            lines.append(("country", 40))
-            lines.append(("team", 0))
+            lines = [("name", 52)] + ([("handle", 38)] if handle else []) + ([("title", 42)] if title else [])
+            lines += [("country", 32), ("team", 0)]
         else:
+            lines = [("name", 56)] + ([("handle", 42)] if handle else []) + ([("title", 46)] if title else [])
             lines.append(("country", 0))
         span = sum(step for _, step in lines)
         cy = ay + d / 2 - span / 2
@@ -381,7 +383,7 @@ class ProfileCardMixin:
             elif kind == "team":
                 self._pf_team_line(img, team, data.get("team_flag"), nx, cy, fonts)
             else:
-                self._pf_country_line(img, data, nx, cy, fonts, S)
+                self._pf_country_line(img, data, nx, cy, fonts, S, small=bool(team))
             draw = ImageDraw.Draw(img)
             cy += step
 
@@ -393,31 +395,31 @@ class ProfileCardMixin:
         self._draw_text(draw, (rank_x, 182), S["country_ranking"], fonts["rank_lbl"], tint.ground(COL_MUTED))
         self._draw_text(draw, (rank_x, 206), f"#{_sp(cr)}" if cr else "—", fonts["country_val"], tint.tone(COL_CORAL))
 
-    def _pf_country_line(self, img, data, x, cy, fonts, S):
-        flag = load_flag(str(data.get("country", "") or ""), height=30)
+    def _pf_country_line(self, img, data, x, cy, fonts, S, small=False):
+        flag = load_flag(str(data.get("country", "") or ""), height=24 if small else 30)
         cur = x
         if flag:
             fy = int(round(cy - flag.height / 2))
             self._aa_rounded_outline(img, (x, fy, x + flag.width, fy + flag.height),
                                      radius=4, outline=(82, 58, 60), width=1)
             img.paste(flag, (x, fy), flag)
-            cur = x + flag.width + 14
+            cur = x + (48 + 12 if small else flag.width + 14)
         raw_cc = str(data.get("country", "") or "").strip()
         cname = data.get("country_name") or (
             raw_cc.upper() if raw_cc and raw_cc not in ("—", "__", "--") else ""
         )
         if not cname or cname in ("—", "__", "--"):
             cname = S["unknown_country"]
-        return self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country"], COL_WHITE)
+        return self._text_mid(ImageDraw.Draw(img), cur, cy, cname, fonts["country_sm" if small else "country"], COL_WHITE)
 
     def _pf_team_line(self, img, team, flag, x, cy, fonts):
-        cur = self._team_flag(img, x, cy, flag, 30)
-        cur = cur + 14 if cur != int(round(x)) else cur
+        cur = self._team_flag(img, x, cy, flag, 24)
+        cur = cur + 12 if cur != int(round(x)) else cur
         draw = ImageDraw.Draw(img)
-        cur = self._text_mid(draw, cur, cy, team.get("name") or "", fonts["country"], COL_WHITE)
+        cur = self._text_mid(draw, cur, cy, team.get("name") or "", fonts["country_sm"], COL_WHITE)
         tag = team.get("short_name")
         if tag and tag.lower() != (team.get("name") or "").lower():
-            cur = self._text_mid(draw, cur + 10, cy, tag, fonts["country"], tint.ground(COL_MUTED))
+            cur = self._text_mid(draw, cur + 10, cy, tag, fonts["country_sm"], tint.ground(COL_MUTED))
         return cur
 
     def _pf_ruleset_badge(self, img, cx, cy, ruleset, side=64):
