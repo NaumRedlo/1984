@@ -1,5 +1,6 @@
 import colorsys
 import threading
+from contextlib import contextmanager
 from typing import Optional
 
 TINTS = (
@@ -21,6 +22,20 @@ def wear(palette: Optional[dict]) -> None:
 
 def worn() -> Optional[dict]:
     return getattr(_held, "palette", None)
+
+
+@contextmanager
+def wearing(palette: Optional[dict]):
+    held = worn()
+    wear(palette)
+    try:
+        yield worn()
+    finally:
+        wear(held)
+
+
+def name(fill):
+    return tone((255, 170, 162)) if worn() is not None else fill
 
 
 def _stage(palette: dict) -> int:
@@ -115,7 +130,7 @@ def two_tone(fill, size: float):
     if isinstance(fill, Toned):
         return stops(fill.source)
     stage = _stage(palette)
-    if stage >= 3 and size >= 20 and min(fill[:3]) >= 225:
+    if stage >= 3 and size >= 20 and min(fill[:3]) >= 215 and max(fill[:3]) - min(fill[:3]) <= 12:
         return [(at, _lit(c, PALE[stage])) for at, c in stops((226, 72, 72))]
     return None
 

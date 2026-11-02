@@ -435,13 +435,7 @@ class ProfileCardMixin:
         img.paste(badge, (cx - side // 2, cy - side // 2), badge)
 
     def _pf_dossier_mark(self, img, x, cy, mark):
-        from services.image.utils import load_badge
-        side = 52
-        badge = load_badge(mark.get("rank", 0), mark.get("stage", 1), side)
-        if badge is None:
-            return x
-        img.paste(badge, (x, cy - side // 2), badge)
-        return x + side - 6
+        return self._subscriber_mark(img, x, cy, mark, 52)
 
     def _pf_supporter_badge(self, img, x, cy, level=1):
         hearts = max(1, min(3, level))

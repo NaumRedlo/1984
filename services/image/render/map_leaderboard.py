@@ -11,7 +11,7 @@ from services.image.constants import (
     GRADE_COLORS, MOD_ACRONYMS, NUM_BOLD, RECENT_ACCENT, RECENT_BG, RECENT_LINE, RECENT_PANEL, RECENT_PILL,
     RECENT_TRACK, TEXT_PRIMARY, TEXT_SECONDARY, TOP_COLORS, status_colours, status_name,
 )
-from services.image import legibility
+from services.image import legibility, tint
 from services.image.utils import (
     _find_font, _none_coro, cover_center_crop, download_image, load_icon,
 )
@@ -421,13 +421,18 @@ class MapLeaderboardCardMixin:
         self._text_mid(draw, x0 + self.RANK_W / 2, mid, str(place), self.font_label,
                        TOP_COLORS.get(place, MUTED), align="center")
 
-        self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, int(mid), 36)
-
-        name_limit = cols["grade"] - 22 - cols["name"]
+        mark = row.get("mark")
+        name_limit = cols["grade"] - 22 - cols["name"] - (30 if mark else 0)
         when = _when(row.get("at"), lang)
-        self._text_mid(draw, cols["name"], mid - 9 if when else mid,
-                       self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
-                       self.font_row, TEXT)
+        with tint.wearing(row.get("palette")):
+            self._mlb_avatar(img, draw, row.get("avatar"), x0 + self.RANK_W + 8, int(mid), 36)
+            draw = ImageDraw.Draw(img)
+            ny = mid - 9 if when else mid
+            right = self._text_mid(draw, cols["name"], ny,
+                                   self._fit(draw, row.get("username") or "—", self.font_row, name_limit),
+                                   self.font_row, tint.name(TEXT))
+            self._subscriber_mark(img, right + 6, int(round(ny)), mark, 26)
+        draw = ImageDraw.Draw(img)
         if when:
             self._text_mid(draw, cols["name"], mid + 13, when, self.font_stat_label, MINE if is_viewer else MUTED)
 
@@ -472,7 +477,7 @@ class MapLeaderboardCardMixin:
         pad = 10
         glow = Image.new("RGBA", (d + pad * 2, d + pad * 2), (0, 0, 0, 0))
         ImageDraw.Draw(glow).ellipse((pad - 3, pad - 3, pad + d + 3, pad + d + 3),
-                                     fill=(228, 72, 72, 130))
+                                     fill=tint.tone((228, 72, 72, 130)))
         glow = glow.filter(ImageFilter.GaussianBlur(5))
         img.paste(glow, (x - pad, mid - d // 2 - pad), glow)
         if isinstance(avatar, Image.Image):
@@ -482,13 +487,15 @@ class MapLeaderboardCardMixin:
             img.paste(av, (x, mid - d // 2), mask)
         else:
             draw.ellipse((x, mid - d // 2, x + d, mid + d // 2), fill=RECENT_TRACK)
-        draw.ellipse((x, mid - d // 2, x + d, mid + d // 2), outline=(228, 76, 76), width=2)
+        self._tinted_ring(img, (x, mid - d // 2, x + d, mid - d // 2 + d), (228, 76, 76), 2)
 
     def _mlb_viewer(self, img, draw, box, viewer, S, lang="en"):
         x0, y0, x1, y1 = box
         draw.rounded_rectangle(box, radius=RADIUS, fill=MINE_BG, outline=MINE_DIM, width=2)
         mid = (y0 + y1) // 2
-        self._mlb_avatar(img, draw, viewer.get("avatar"), x0 + 20, mid, 44)
+        with tint.wearing(viewer.get("palette")):
+            self._mlb_avatar(img, draw, viewer.get("avatar"), x0 + 20, mid, 44)
+        draw = ImageDraw.Draw(img)
         tx = x0 + 80
         self._text_mid(draw, tx, mid - 12, S["yours"], self.font_stat_label, MINE)
         place = viewer.get("position")

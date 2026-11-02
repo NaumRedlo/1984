@@ -141,6 +141,11 @@ class BaseCardRenderer:
         cyfb = self._font_cyrillic_fallback(font)
         line = tint.two_tone(fill, getattr(font, "size", 0)) if text else None
         image = getattr(draw, "_image", None)
+        if line is not None and image is not None and not isinstance(fill, tint.Toned):
+            w, h = self._text_size(draw, text, font)
+            top = draw.textbbox((0, 0), "H", font=font)[1]
+            under = legibility.backdrop(image, (xy[0], xy[1] + top, xy[0] + w, xy[1] + max(h, top + 1)))
+            line = line if under is not None and under < 0.06 else None
         if line is not None and image is not None:
             return self._two_tone_text(image, xy, text, font, fb, cyfb, fill, line)
         fill = self._readable(draw, xy, text, font, fill)
@@ -307,6 +312,16 @@ class BaseCardRenderer:
         ImageDraw.Draw(mask).ellipse((0, 0, mask.width - 1, mask.height - 1), outline=255, width=width * ss)
         mask = mask.resize((x1 - x0, y1 - y0), Image.LANCZOS)
         img.paste(tint.strip(x1 - x0, y1 - y0, colour, diagonal=True), (x0, y0), mask)
+
+    def _subscriber_mark(self, img: Image.Image, x: int, cy: int, mark: Optional[dict], side: int) -> int:
+        from services.image.utils import load_badge
+        if not mark or mark.get("rank") is None:
+            return x
+        badge = load_badge(mark.get("rank", 0), mark.get("stage", 1), side)
+        if badge is None:
+            return x
+        img.paste(badge, (int(x), int(cy - side // 2)), badge)
+        return int(x) + side - side // 8
 
     def _aa_rounded_fill(self, img: Image.Image, box: tuple[int, int, int, int], *, radius: int, fill) -> None:
         self._aa_rounded_outline(img, box, radius=radius, outline=None, fill=fill)

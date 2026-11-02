@@ -3,7 +3,7 @@ from io import BytesIO
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from services.image.base import BaseCardRenderer
-from services.image import legibility
+from services.image import legibility, tint
 from services.image import colors
 from services.image.constants import TOP_COLORS
 from services.image.utils import cover_center_crop, load_icon
@@ -34,14 +34,14 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         sq.putalpha(mask)
         return sq.resize((size, size), Image.LANCZOS)
 
-    def _avatar_glow(self, img: Image.Image, boxes: list[tuple[int, int, int]]) -> Image.Image:
+    def _avatar_glow(self, img: Image.Image, boxes: list[tuple]) -> Image.Image:
         if not boxes:
             return img
         glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        for x, y, size in boxes:
+        for x, y, size, palette in boxes:
             gd.ellipse((x - 3, y - 3, x + size + 3, y + size + 3),
-                       outline=_RING + (255,), width=4)
+                       outline=tint.tone_for(palette, _RING) + (255,), width=4)
         glow = glow.filter(ImageFilter.GaussianBlur(5))
         return Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
 
@@ -62,8 +62,7 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             self._draw_text(d, (x + (size - tw) // 2, y + (size - th) // 2 - 1),
                             initials, self.font_small, colors.TEXT_MUTED)
 
-        self._aa_ellipse_outline(img, (x - 1, y - 1, x + size + 1, y + size + 1),
-                                 outline=_RING, width=2)
+        self._tinted_ring(img, (x - 1, y - 1, x + size + 1, y + size + 1), _RING, 2)
 
     def _frame_color(self, position, is_self: bool):
         if is_self:
@@ -140,22 +139,26 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         draw = ImageDraw.Draw(img)
 
         av_x, av_y = x0 + _POS_COL_X + _POS_COL_W + 10, cy - _AVATAR // 2
-        self._avatar(img, av_x, av_y, _AVATAR, row.get("avatar_data"), row.get("username", ""))
-        draw = ImageDraw.Draw(img)
-
         name_x = av_x + _AVATAR + 14
         name = str(row.get("username") or "???")
         subtitle = row.get("title_label") or ""
         if row.get("gap_label"):
             subtitle = f"{subtitle} · {row['gap_label']}" if subtitle else row["gap_label"]
-        if subtitle:
-            self._draw_text(draw, (name_x, cy - 18), name, self.font_label, colors.TEXT_PRIMARY)
-            self._draw_text(draw, (name_x, cy + 3), subtitle, self.font_small,
-                            row.get("title_color") or colors.TEXT_MUTED)
-        else:
-            _, nh = self._text_size(draw, name, self.font_label)
-            self._draw_text(draw, (name_x, cy - nh // 2 - 2), name, self.font_label,
-                            colors.TEXT_PRIMARY)
+        with tint.wearing(row.get("palette")):
+            self._avatar(img, av_x, av_y, _AVATAR, row.get("avatar_data"), row.get("username", ""))
+            draw = ImageDraw.Draw(img)
+            ink = tint.name(colors.TEXT_PRIMARY)
+            if subtitle:
+                right = self._draw_text(draw, (name_x, cy - 18), name, self.font_label, ink)
+                ny = cy - 18 + draw.textbbox((0, 0), "H", font=self.font_label)[3] // 2 + 3
+                self._draw_text(draw, (name_x, cy + 3), subtitle, self.font_small,
+                                row.get("title_color") or colors.TEXT_MUTED)
+            else:
+                _, nh = self._text_size(draw, name, self.font_label)
+                right = self._draw_text(draw, (name_x, cy - nh // 2 - 2), name, self.font_label, ink)
+                ny = cy
+            self._subscriber_mark(img, right + 6, ny, row.get("mark"), 26)
+        draw = ImageDraw.Draw(img)
 
         val_right = x1 - 20
         if show_movement:
@@ -196,7 +199,7 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
         else:
             self._draw_text(draw, (val_right - dw, cy - dh // 2 - 2), main, self.font_label, value_color)
 
-        return av_x, av_y, _AVATAR
+        return av_x, av_y, _AVATAR, row.get("palette")
 
     def render(self, data: dict) -> BytesIO:
         rows = list(data.get("rows") or [])
@@ -271,8 +274,9 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
 
         img = self._avatar_glow(img, avatar_boxes)
 
-        for row, (ax, ay, size) in zip(rows + ([pinned] if pinned else []), avatar_boxes):
-            self._avatar(img, ax, ay, size, row.get("avatar_data"), row.get("username", ""))
+        for row, (ax, ay, size, palette) in zip(rows + ([pinned] if pinned else []), avatar_boxes):
+            with tint.wearing(palette):
+                self._avatar(img, ax, ay, size, row.get("avatar_data"), row.get("username", ""))
 
         fr = data.get("footer_right", "")
         if fr:
