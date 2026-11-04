@@ -6,5 +6,5 @@ asyncpg==0.32.0
 python-dotenv==1.2.4
 SQLAlchemy[asyncio]==2.1.6
 Pillow>=13.0.0
-fonttools>=4.67.0
+fonttools>=4.68.0
 cryptography>=50.0.2
