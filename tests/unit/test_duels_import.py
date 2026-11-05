@@ -95,10 +95,6 @@ async def test_a_failing_mirror_rests_and_the_next_one_answers():
         asked.append(address)
         if "osu.direct" in address:
             raise OSError("down")
-        if "catboy.best/osu/" in address:
-            return b"<html>blocked</html>"
-        if "catboy.best/d/" in address:
-            return None
         return _archive({"a.osu": raw})
 
     assert await mirrors.fetch_osu(fetch, 70, 7, hashlib.md5(raw).hexdigest(), clock=lambda: 0.0) == ("beatconnect.io", raw)
@@ -121,11 +117,11 @@ async def test_an_old_map_without_its_id_is_checked_by_the_mirror_checksum():
             return json.dumps({"id": 58970, "beatmapset_id": 16457, "checksum": hashlib.md5(old).hexdigest()}).encode()
         if "osu.direct/api/osu/58970" in address:
             return other
-        if "catboy.best/osu/58970" in address:
-            return old
+        if "beatconnect.io/b/16457" in address:
+            return _archive({"other.osu": other, "old.osu": old})
         return None
 
-    assert await mirrors.fetch_osu(fetch, 0, 58970, None, clock=lambda: mirrors.REST * 10) == ("catboy.best", old)
+    assert await mirrors.fetch_osu(fetch, 0, 58970, None, clock=lambda: mirrors.REST * 10) == ("beatconnect.io", old)
 
     async def gone(address):
         if "api/v2/b/" in address:
@@ -491,20 +487,20 @@ async def test_reviewers_map_owc_cells_and_their_own_pools_and_training_follows(
     assert actions == ["add_tournament", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label", "corpus_label"]
 
 
-async def test_mirror_search_sends_star_filter_and_tries_fallback_after_empty():
+async def test_mirror_search_sends_the_star_filter_and_keeps_an_empty_answer():
     from urllib.parse import urlparse, parse_qs
     requested = []
     raw = _map(1)
+    answers = [b"[]", json.dumps({"beatmapsets": [_set(10, [(1, 7.7, "osu", 120, raw), (2, 8.0, "osu", 120, raw)])]}).encode()]
     async def fetch(url):
         requested.append(url)
-        if "osu.direct" in url:
-            query = parse_qs(urlparse(url).query)["q"][0]
-            assert query == "[beatmaps.difficulty_rating >= 7.5 AND beatmaps.difficulty_rating < 8]"
-            return b"[]"
-        return json.dumps({"beatmapsets": [_set(10, [(1, 7.7, "osu", 120, raw), (2, 8.0, "osu", 120, raw)])]}).encode()
+        query = parse_qs(urlparse(url).query)["q"][0]
+        assert query == "[beatmaps.difficulty_rating >= 7.5 AND beatmaps.difficulty_rating < 8]"
+        return answers.pop(0)
+    assert await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0) == ("osu.direct", [], 0)
     name, entries, count = await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0)
-    assert name == "catboy.best" and len(requested) == 2
-    assert count == 1 and [e["beatmap_id"] for e in entries] == [1]
+    assert name == "osu.direct" and count == 1 and [e["beatmap_id"] for e in entries] == [1]
+    assert all("osu.direct" in url for url in requested) and len(requested) == 2
 
 
 async def test_error_json_is_not_a_successful_empty_search():
@@ -513,7 +509,7 @@ async def test_error_json_is_not_a_successful_empty_search():
         requested.append(url)
         return b'{"error":"maintenance"}'
     assert await mirrors.search(fetch, "ranked", 0, 50, 7.5, 8.0) is None
-    assert len(requested) == 2
+    assert len(requested) == len(mirrors.SEARCHES)
 
 
 async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_whole_or_map_by_map(factory, monkeypatch):

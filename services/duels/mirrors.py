@@ -12,22 +12,18 @@ from services.duels.osu_file import FILE_MOST
 USER_AGENT = "project1984-duels/1.0 (+https://github.com/NaumRedlo/1984)"
 FILES = (
     ("osu.direct", "https://osu.direct/api/osu/{beatmap_id}"),
-    ("catboy.best", "https://catboy.best/osu/{beatmap_id}"),
 )
 MIRRORS = (
     ("osu.direct", "https://osu.direct/api/d/{set_id}?noVideo=1"),
-    ("catboy.best", "https://catboy.best/d/{set_id}n"),
     ("beatconnect.io", "https://beatconnect.io/b/{set_id}/"),
     ("nekoha.moe", "https://mirror.nekoha.moe/api4/download/{set_id}"),
     ("sayobot.cn", "https://dl.sayobot.cn/beatmaps/download/novideo/{set_id}"),
 )
 LOOKUPS = (
     ("osu.direct", "https://osu.direct/api/v2/b/{beatmap_id}"),
-    ("catboy.best", "https://catboy.best/api/v2/b/{beatmap_id}"),
 )
 SEARCHES = (
     ("osu.direct", "https://osu.direct/api/v2/search?q={query}&status={status}&mode=0&amount={amount}&offset={offset}"),
-    ("catboy.best", "https://catboy.best/api/v2/search?query=&status={status}&mode=0&limit={amount}&offset={offset}"),
 )
 STATUSES = {"ranked": 1, "approved": 2, "loved": 4}
 ARCHIVE_MOST = 200 * 1024 * 1024

@@ -129,10 +129,10 @@ async def test_maps_come_from_mirror_archives_and_never_from_osu_ppy_sh(tmp_path
         return _archive({"a [Other].osu": other, "a [Wanted].osu": wanted, "bg.jpg": b"x"})
 
     source, raw = await mirrors.fetch_osu(fetch, 77, 658127, None)
-    assert (source, raw) == ("catboy.best", wanted)
-    assert await mirrors.fetch_osu(fetch, 77, None, hashlib.md5(other).hexdigest()) == ("catboy.best", other)
+    assert (source, raw) == ("beatconnect.io", wanted)
+    assert await mirrors.fetch_osu(fetch, 77, None, hashlib.md5(other).hexdigest()) == ("beatconnect.io", other)
     assert await mirrors.fetch_osu(fetch, 77, 999, None) is None
-    assert all("osu.ppy.sh" not in address for address in asked)
+    assert all("osu.ppy.sh" not in address and "catboy.best" not in address for address in asked)
     digest = mirrors.store(str(tmp_path), wanted)
     assert (tmp_path / f"{digest}.osu").read_bytes() == wanted and digest == hashlib.md5(wanted).hexdigest()
     assert mirrors.store(str(tmp_path), wanted) == digest
