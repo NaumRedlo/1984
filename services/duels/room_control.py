@@ -5,6 +5,7 @@ from services.duels.bancho_text import Said, Settings, invite_lines, match_chann
 
 SETTINGS_WAIT = 10.0
 REPLY_WAIT = 10.0
+HALT_WAIT = 3.0
 
 class RoomControl:
     def __init__(self, gateway, match_id: int):
@@ -76,6 +77,10 @@ class RoomControl:
 
     async def abort(self) -> bool:
         return await self._expect("aborted", "!mp abort") is not None
+
+    async def halt(self) -> None:
+        await self.gateway.say(self.channel, "!mp aborttimer")
+        await self._expect("aborted", "!mp abort", HALT_WAIT)
 
     async def close(self) -> bool:
         return await self._expect("closed", "!mp close") is not None

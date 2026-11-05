@@ -260,3 +260,105 @@ async def test_a_new_analyser_keeps_maps_in_the_catalogue_until_they_are_measure
         await session.commit()
     async with factory() as session:
         assert next(c for c in await catalogue(session) if c.beatmap_id == 1).stars == 6.1
+
+
+async def _due(factory):
+    from db.models.duel import DuelCommand
+
+    async with factory() as session:
+        for command in (await session.scalars(select(DuelCommand).where(DuelCommand.status == "pending"))).all():
+            command.next_attempt_at = utcnow() - timedelta(seconds=1)
+        await session.commit()
+
+
+async def _to_ready(factory, bancho):
+    duel = await service.invite(factory, 1, 2, "invite-verify")
+    await service.accept(factory, duel["id"], 2, "accept-verify")
+    await outbox.sweep(factory)
+    await outbox.sweep(factory)
+    for line in ("one joined in slot 1.", "two joined in slot 2."):
+        await bancho.emit("#mp_500", line)
+    async with factory() as session:
+        shown = await series.view(session, await session.get(Duel, duel["id"]), 1)
+    for player in (1, 2):
+        await series.pool_ack(factory, duel["id"], player, shown["pool"]["manifest"], f"ack-{player}-verify")
+    side = {p["side"]: p["player"] for p in shown["participants"]}
+    free = [s for s in SLOTS if s != "TB"]
+    for turn, who in enumerate(series.BANS):
+        await series.draft(factory, duel["id"], side[who], free[turn], f"ban-{turn}-verify")
+    await series.draft(factory, duel["id"], side["B"], free[4], "pick-verify")
+    await outbox.sweep(factory)
+    assert await _state(factory, duel["id"]) == states.WAITING_READY
+    return duel["id"], free[4]
+
+
+def _game(game_id, beatmap, mods, start, scores):
+    return {"id": game_id, "detail": {"type": "other"}, "game": {
+        "id": game_id, "beatmap_id": beatmap, "mode": "osu", "mode_int": 0, "scoring_type": "scorev2", "team_type": "head-to-head",
+        "start_time": start, "end_time": start, "mods": mods,
+        "scores": [{"user_id": user, "score": score, "mods": []} for user, score in scores]}}
+
+
+async def test_a_round_is_judged_on_its_own_game_and_waits_for_late_scores(factory, monkeypatch):
+    monkeypatch.setattr(outbox, "HANDLERS", {})
+    bancho, osu = FakeBancho(), FakeOsu()
+    coordinator = Coordinator(factory, bancho, osu, profiles=_fives, budget=Budget(per_minute=1000))
+    coordinator.install()
+    duel_id, picked = await _to_ready(factory, bancho)
+
+    await bancho.emit("#mp_500", "two left the game.")
+    assert await _state(factory, duel_id) == states.PAUSED
+    coordinator.present = lambda player_id: player_id != 2
+    await bancho.emit("#mp_500", "two joined in slot 2.")
+    assert await _state(factory, duel_id) == states.PAUSED, "the room alone is not enough while the app is away"
+    coordinator.present = lambda player_id: True
+    await bancho.emit("#mp_500", "two left the game.")
+    await bancho.emit("#mp_500", "two joined in slot 2.")
+    assert await _state(factory, duel_id) == states.WAITING_READY
+
+    version = (await service.read(factory, duel_id, 1))["version"]
+    for player in (1, 2):
+        await series.ready(factory, duel_id, player, f"ready-{player}-verify", expected_version=version)
+    await outbox.sweep(factory)
+    assert await _state(factory, duel_id) == states.PLAYING
+    await bancho.emit("#mp_500", "The match has finished!")
+    mods = list(SLOT_MODS[picked])
+    earlier = (utcnow() - timedelta(hours=1)).isoformat() + "Z"
+    osu.events = [_game(8000, bancho.map, mods, earlier, [(101, 500000), (102, 400000)])]
+    await outbox.sweep(factory)
+    assert await _state(factory, duel_id) == states.VERIFYING, "an older game on the same map is not this round"
+
+    start = (utcnow() + timedelta(seconds=1)).isoformat() + "Z"
+    osu.events.append(_game(9001, bancho.map, mods, start, [(101, 700000)]))
+    await _due(factory)
+    await outbox.sweep(factory)
+    from db.models.duel import DuelCommand
+    async with factory() as session:
+        waiting = await session.scalar(select(DuelCommand).where(DuelCommand.kind == "verify_round"))
+        assert waiting.last_error == "NotYet: scores_missing"
+    assert await _state(factory, duel_id) == states.VERIFYING
+
+    osu.events[-1] = _game(9001, bancho.map, mods, start, [(101, 700000), (102, 650000)])
+    await _due(factory)
+    await outbox.sweep(factory)
+    async with factory() as session:
+        after = await series.view(session, await session.get(Duel, duel_id), 1)
+    assert after["state"] == states.SELECTING and after["rounds"][0]["winner"] == 1
+
+
+async def test_a_drop_during_the_countdown_stops_it_in_the_room(factory, monkeypatch):
+    monkeypatch.setattr(outbox, "HANDLERS", {})
+    bancho, osu = FakeBancho(), FakeOsu()
+    coordinator = Coordinator(factory, bancho, osu, profiles=_fives, budget=Budget(per_minute=1000))
+    coordinator.install()
+    duel_id, _ = await _to_ready(factory, bancho)
+    version = (await service.read(factory, duel_id, 1))["version"]
+    for player in (1, 2):
+        await series.ready(factory, duel_id, player, f"ready-{player}-halt", expected_version=version)
+    assert await _state(factory, duel_id) == states.STARTING
+    await series.player_lost(factory, duel_id, 2)
+    before = len(bancho.said)
+    await outbox.sweep(factory)
+    assert "!mp start 5" not in bancho.said[before:]
+    assert bancho.said[before:][:2] == ["!mp aborttimer", "!mp abort"]
+    assert await _state(factory, duel_id) == states.PAUSED

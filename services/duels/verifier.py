@@ -26,6 +26,12 @@ def _moment(value: Optional[str]) -> Optional[datetime]:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
 
+def started_at(game: dict[str, Any]) -> Optional[datetime]:
+    return _moment(game.get("start_time"))
+
+def ended_at(game: dict[str, Any]) -> Optional[datetime]:
+    return _moment(game.get("end_time"))
+
 def _mods(raw: Any) -> set[str]:
     found = set()
     for mod in raw or ():

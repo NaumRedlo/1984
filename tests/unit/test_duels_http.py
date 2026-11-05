@@ -188,6 +188,55 @@ async def test_presence_loses_a_silent_player_once_and_brings_them_back(factory)
     await hub.watch_presence(factory, lose, back)
     assert calls == [("lost", 2), ("back", 2)]
 
+async def test_a_drop_during_a_map_is_remembered_through_the_abort_and_forgotten_once_play_resumes(factory):
+    now = [0.0]
+    hub = live.Hub(clock=lambda: now[0])
+    duel = await service.invite(factory, 1, 2, "invite-abort-presence")
+    await service.accept(factory, duel["id"], 2, "accept-abort-presence")
+
+    async def put(state):
+        async with factory() as session:
+            from db.models.duel import Duel
+            row = await session.get(Duel, duel["id"])
+            row.state = state
+            await session.commit()
+
+    calls = []
+
+    async def lose(made, duel_id, player_id):
+        calls.append(("lost", player_id))
+        await put(states.ABORTING)
+
+    async def back(made, duel_id, player_id):
+        calls.append(("back", player_id))
+
+    await put(states.PLAYING)
+    hub.heard(1)
+    hub.heard(2)
+    now[0] = 25.0
+    hub.heard(1)
+    await hub.watch_presence(factory, lose, back)
+    assert calls == [("lost", 2)]
+    hub.heard(2)
+    await hub.watch_presence(factory, lose, back)
+    assert calls == [("lost", 2)], "the abort is not yet confirmed, so nothing resumes"
+    await put(states.PAUSED)
+    await hub.watch_presence(factory, lose, back)
+    assert calls == [("lost", 2), ("back", 2)]
+
+    calls.clear()
+    hub.lost.add((duel["id"], 2))
+    await put(states.WAITING_READY)
+    await hub.watch_presence(factory, lose, back)
+    assert calls == [] and (duel["id"], 2) not in hub.lost, "a room return already resumed the duel"
+    now[0] = 60.0
+    hub.heard(1)
+    await hub.watch_presence(factory, lose, back)
+    assert calls == [("lost", 2)], "a later drop is still noticed"
+    await put(states.COMPLETED)
+    await hub.watch_presence(factory, lose, back)
+    assert hub.lost == set()
+
 async def test_my_duel_profile_and_the_history_are_served(client):
     mine = await (await client.get("/render/duels/profile/me", headers=_as(1))).json()
     assert mine["rating"]["calibrating"] and mine["rating"]["needed"] == 5
@@ -220,6 +269,9 @@ async def test_the_live_list_my_roles_and_the_balance_desk_are_served(client, fa
     assert catalogue["totals"]["playable"] == 0 and len(catalogue["grid"]["NM1"]) == len(catalogue["bands"])
     assert (await client.get("/render/admin/duels/catalog/XX1/0", headers=_as(1))).status == 400
     assert await (await client.get("/render/admin/duels/stuck", headers=_as(1))).json() == {"duels": []}
+    everything = (await (await client.get("/render/admin/duels/stuck?all=1", headers=_as(1))).json())["duels"]
+    assert [(found["id"], found["stuck"], found["watching"]) for found in everything] == [(duel["id"], False, 0)]
+    assert [seat["side"] for seat in everything[0]["players"]] == ["A", "B"] and everything[0]["round"] is None
     people = await (await client.get("/render/admin/duels/people", headers=_as(1))).json()
     assert people == {"people": [{"player": 1, "name": "one", "osu_id": 101, "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]}
     assert await (await client.get("/render/admin/duels/models", headers=_as(1))).json() == {"models": []}

@@ -188,11 +188,14 @@ async def _new_attempt(step: Step, duel: Duel, made: DuelRound) -> DuelAttempt:
     attempt = DuelAttempt(round_id=made.id, attempt_no=(last.attempt_no + 1) if last else 1, expected_mods=list(SLOT_MODS[made.slot]))
     step.session.add(attempt)
     await step.session.flush()
+    await _set_up(step, duel, made, attempt)
+    return attempt
+
+async def _set_up(step: Step, duel: Duel, made: DuelRound, attempt: DuelAttempt) -> None:
     if duel.state != states.ROUND_SETUP:
         await step.move(duel, states.ROUND_SETUP)
     step.deadline(duel, "round_setup", 60)
     step.command(duel, "setup_round", {"duel": duel.id, "round": made.id, "attempt": attempt.id, "slot": made.slot})
-    return attempt
 
 async def _act(factory, duel_id: str, actor_id: int, operation_id: str, kind: str, expected_version: Optional[int],
                body: Callable[[Step, Duel, DuelParticipant, list[DuelParticipant]], Awaitable[None]], now: Optional[datetime]):
@@ -503,6 +506,8 @@ async def player_lost(factory, duel_id: str, player_id: int, now: Optional[datet
             step.command(duel, "abort_round", {"duel": duel.id})
             step.deadline(duel, "aborting", PARAMETERS["recovery_seconds"])
             return
+        if duel.state == states.STARTING:
+            step.command(duel, "halt_start", {"duel": duel.id})
         duel.paused_from = duel.state
         duel.pause_reason = "disconnect"
         await step.move(duel, states.PAUSED, "disconnect")
@@ -517,7 +522,7 @@ async def aborted(factory, duel_id: str, now: Optional[datetime] = None) -> Opti
         attempt = await _attempt(step.session, current.id)
         attempt.validity = "aborted"
         attempt.end_at = step.now
-        duel.paused_from = states.ROUND_SETUP
+        duel.paused_from = states.PLAYING
         duel.pause_reason = "disconnect"
         await step.move(duel, states.PAUSED, "disconnect")
         step.deadline(duel, "reconnect", PARAMETERS["reconnect_seconds"])
@@ -534,8 +539,21 @@ async def player_back(factory, duel_id: str, player_id: int, now: Optional[datet
         duel.paused_from = None
         duel.pause_reason = None
         rounds = await _rounds(step.session, duel.id)
-        if resume in (states.ROUND_SETUP, states.WAITING_READY, states.STARTING, states.PLAYING) and rounds:
-            await _new_attempt(step, duel, rounds[-1])
+        current = rounds[-1] if rounds else None
+        attempt = await _attempt(step.session, current.id) if current is not None else None
+        if resume == states.PLAYING and current is not None:
+            await _new_attempt(step, duel, current)
+            return
+        if resume == states.ROUND_SETUP and attempt is not None:
+            await _set_up(step, duel, current, attempt)
+            return
+        if resume in (states.WAITING_READY, states.STARTING) and attempt is not None:
+            if resume == states.STARTING:
+                attempt.commanded_at = None
+                for person in people:
+                    person.connection_state = "present"
+            await step.move(duel, states.WAITING_READY)
+            step.deadline(duel, "ready", PARAMETERS["ready_seconds"])
             return
         await step.move(duel, resume)
         if resume in (states.DRAFTING, states.SELECTING):

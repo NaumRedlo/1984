@@ -4,8 +4,8 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy import func, select
 
-from db.models.duel import (Duel, DuelAudit, DuelBalanceReview, DuelDeadline, DuelEvent, DuelFeedback, DuelModelVersion, DuelParticipant, DuelPool,
-                            DuelPoolEntry, DuelRole, DuelRoom, DuelRound)
+from db.models.duel import (Duel, DuelAttempt, DuelAudit, DuelBalanceReview, DuelDeadline, DuelEvent, DuelFeedback, DuelModelVersion, DuelParticipant,
+                            DuelPool, DuelPoolEntry, DuelRole, DuelRoom, DuelRound)
 from db.models.duel_catalog import DuelMapAnalysis, DuelMapAssignment, DuelMapRevision
 from db.models.player import Player
 from services.duels import balance, catalog, importer, states
@@ -431,37 +431,49 @@ async def _stuck_detail(session, duel: Duel) -> dict[str, Any]:
             beatmap = int(entry.beatmap_id)
             revision = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.hash == entry.revision_hash).limit(1))
             title = revision.title if revision is not None else None
+    attempt = None if played is None else await session.scalar(select(DuelAttempt.attempt_no).where(DuelAttempt.round_id == played.id)
+                                                               .order_by(DuelAttempt.attempt_no.desc()).limit(1))
     events = (await session.scalars(select(DuelEvent).where(DuelEvent.duel_id == duel.id)
                                     .order_by(DuelEvent.sequence.desc()).limit(8))).all()
     deadline = await session.scalar(select(DuelDeadline).where(DuelDeadline.duel_id == duel.id, DuelDeadline.processed_at.is_(None))
                                     .order_by(DuelDeadline.expires_at).limit(1))
     return {
         "room": {"match_id": room.match_id, "name": room.room_name, "status": room.status} if room is not None else None,
-        "round": {"ordinal": played.ordinal, "slot": played.slot, "state": played.state, "beatmap_id": beatmap, "title": title}
+        "round": {"ordinal": played.ordinal, "slot": played.slot, "state": played.state, "beatmap_id": beatmap, "title": title,
+                  "attempt": attempt or 1, "ties": played.tie_count}
                  if played is not None else None,
         "events": [{"type": event.type, "reason": (event.payload or {}).get("reason") or (event.payload or {}).get("to"),
                     "at": _stamp(event.occurred_at)} for event in events],
         "deadline": {"kind": deadline.kind, "at": _stamp(deadline.expires_at)} if deadline is not None else None,
     }
 
+def is_stuck(duel: Duel, now: datetime) -> bool:
+    return duel.state in WAITING_STATES and duel.updated_at is not None and duel.updated_at <= now - STUCK_AFTER
+
 async def stuck(factory, actor: int, owners: tuple[int, ...] = (), now: Optional[datetime] = None,
-                present: Optional[Callable[[int], bool]] = None) -> list[dict[str, Any]]:
+                present: Optional[Callable[[int], bool]] = None, everything: bool = False,
+                watchers: Optional[Callable[[str], int]] = None) -> list[dict[str, Any]]:
     now = now or utcnow()
     async with factory() as session:
         await balance._allowed(session, actor, balance.TECHNICAL_OPERATOR, owners)
-        rows = (await session.scalars(select(Duel).where(Duel.state.in_(WAITING_STATES), Duel.updated_at <= now - STUCK_AFTER)
-                                      .order_by(Duel.updated_at))).all()
+        if everything:
+            query = select(Duel).where(Duel.state.not_in(states.TERMINAL | states.UNCOMMITTED))
+        else:
+            query = select(Duel).where(Duel.state.in_(WAITING_STATES), Duel.updated_at <= now - STUCK_AFTER)
+        rows = (await session.scalars(query.order_by(Duel.updated_at))).all()
         found = []
         for duel in rows:
-            people = (await session.scalars(select(DuelParticipant).where(DuelParticipant.duel_id == duel.id))).all()
+            people = sorted((await session.scalars(select(DuelParticipant).where(DuelParticipant.duel_id == duel.id))).all(),
+                            key=lambda person: person.side or "")
             names = await _names(session, [person.player_id for person in people])
             found.append({"id": duel.id, "state": duel.state, "reason": duel.pause_reason or duel.state.lower(), "since": _stamp(duel.updated_at),
+                          "stuck": is_stuck(duel, now), "watching": watchers(duel.id) if watchers is not None else 0,
                           "wins": {"A": duel.wins_a, "B": duel.wins_b}, "mode": duel.mode,
                           "players": [{"player": person.player_id, "side": person.side, "name": names.get(person.player_id),
                                        "osu_id": int(person.osu_user_id) if person.osu_user_id else None,
                                        "present": present(person.player_id) if present is not None else None} for person in people],
                           **await _stuck_detail(session, duel)})
-        return found
+        return sorted(found, key=lambda item: not item["stuck"])
 
 async def journal(factory, actor: int, owners: tuple[int, ...] = (), before: Optional[int] = None, limit: int = 50) -> list[dict[str, Any]]:
     async with factory() as session:
@@ -508,7 +520,7 @@ async def live(factory, now: Optional[datetime] = None, watchers: Optional[Calla
     now = now or utcnow()
     hidden = states.TERMINAL | states.UNCOMMITTED
     async with factory() as session:
-        running = (await session.scalars(select(Duel).where(Duel.state.not_in(hidden)).order_by(Duel.created_at.desc()).limit(30))).all()
+        running = (await session.scalars(select(Duel).where(Duel.state.not_in(hidden)).order_by(Duel.created_at.desc()))).all()
         done = (await session.scalars(select(Duel).where(Duel.state == states.COMPLETED, Duel.finalized_at >= now - RECENT)
                                       .order_by(Duel.finalized_at.desc()).limit(20))).all()
         people = (await session.scalars(select(DuelParticipant).where(DuelParticipant.duel_id.in_([duel.id for duel in running + done] or [""])))).all()

@@ -20,6 +20,7 @@ logger = get_logger("duels.coordinator")
 
 CATALOG_VERSION = "mixed-v2"
 CLOCK_SLACK = 10
+SCORES_GRACE = 90
 FOUND_IN_POOL = 2
 
 class NotYet(Exception):
@@ -94,6 +95,7 @@ class Coordinator:
             "setup_round": self.setup_round,
             "start_round": self.start_round,
             "abort_round": self.abort_round,
+            "halt_start": self.halt_start,
             "verify_round": self.verify_round,
             "close_room": self.close_room,
             "bonus_round": self.bonus_round,
@@ -199,6 +201,8 @@ class Coordinator:
             seated.add(who.player_id)
             if duel.state == states.WAITING_PLAYERS and len(seated) == len(people) and all(self.present(p.player_id) for p, _ in people):
                 await series.players_present(self.factory, duel.id)
+            elif duel.state == states.PAUSED and duel.pause_reason == "disconnect" and self.present(who.player_id):
+                await series.player_back(self.factory, duel.id, who.player_id)
         elif event.kind == "left" and who is not None:
             seated.discard(who.player_id)
             if duel.state not in states.TERMINAL:
@@ -270,6 +274,11 @@ class Coordinator:
         if not await self._control(room.match_id).abort():
             raise NotYet("abort_unconfirmed")
 
+    async def halt_start(self, command: dict[str, Any]) -> None:
+        room = await self._room(command["payload"]["duel"])
+        if room is not None:
+            await self._control(room.match_id).halt()
+
     async def close_room(self, command: dict[str, Any]) -> None:
         room = await self._room(command["payload"]["duel"])
         if room is None:
@@ -285,7 +294,18 @@ class Coordinator:
         current, entry, people = await self._round(duel_id)
         async with self.factory() as session:
             attempt = await session.get(DuelAttempt, command["payload"]["attempt"])
+        mods = frozenset(SLOT_MODS[current.slot])
+        commanded = attempt.commanded_at or attempt.start_at or self.now()
+        expected = verifier.Expected(int(entry.beatmap_id), frozenset(int(p.osu_user_id) for p, _ in people), mods, current.slot == "TB",
+                                     commanded - timedelta(seconds=CLOCK_SLACK))
+
+        def ours(game: dict[str, Any]) -> bool:
+            return game.get("beatmap_id") == int(entry.beatmap_id) and (verifier.started_at(game) or datetime.min) >= expected.started_after
+
         events, cursor = await verifier.history(self.osu, int(attempt.match_id), attempt.last_event_id, self.budget)
+        watched = [int(event["id"]) for event in events if isinstance(event.get("game"), dict) and ours(event["game"])]
+        if watched:
+            cursor = min(watched) - 1
         async with self.factory() as session:
             async with session.begin():
                 kept = {}
@@ -297,17 +317,16 @@ class Coordinator:
                 if cursor is not None:
                     row.last_event_id = cursor
         games = verifier.games(events)
-        mods = frozenset(SLOT_MODS[current.slot])
-        commanded = attempt.commanded_at or attempt.start_at or self.now()
-        expected = verifier.Expected(int(entry.beatmap_id), frozenset(int(p.osu_user_id) for p, _ in people), mods, current.slot == "TB",
-                                     commanded - timedelta(seconds=CLOCK_SLACK))
-        candidates = [game for game in games.values() if game.get("beatmap_id") == int(entry.beatmap_id)]
+        candidates = [game for game in games.values() if ours(game)]
         if not candidates:
             raise NotYet("no_game_yet")
         game = max(candidates, key=lambda found: int(found["id"]))
         verdict = verifier.judge(game, expected)
         if verdict.state == "pending":
             raise NotYet("game_unfinished")
+        ended = verifier.ended_at(game)
+        if verdict.state == "incomplete" and (ended is None or self.now() - ended < timedelta(seconds=SCORES_GRACE)):
+            raise NotYet("scores_missing")
         async with self.factory() as session:
             async with session.begin():
                 if not await verifier.bind(session, attempt.id, int(game["id"])):

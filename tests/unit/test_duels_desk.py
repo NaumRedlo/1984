@@ -183,6 +183,8 @@ async def test_stuck_duels_the_journal_the_people_and_the_live_list(factory):
     assert (detail["round"]["ordinal"], detail["round"]["slot"], detail["round"]["beatmap_id"]) == (2, "HR2", None)
     assert [(e["type"], e["reason"]) for e in detail["events"]] == [("state", "absence")]
     assert detail["deadline"]["kind"] == "reconnect" and [p["present"] for p in detail["players"]] == [True, False]
+    assert detail["stuck"] is True and (detail["round"]["attempt"], detail["round"]["ties"]) == (1, 0)
+    assert [found["id"] for found in await desk.stuck(factory, 1, everything=True, watchers=lambda duel_id: 2)] == ["stuck-1"]
     entries = await desk.journal(factory, 1)
     assert [(e["name"], e["action"]) for e in entries] == [("one", "map_approve")]
     assert await desk.people(factory, 1) == [{"player": 1, "name": "one", "osu_id": 101, "roles": ["BALANCE_REVIEWER", "TECHNICAL_OPERATOR"]}]

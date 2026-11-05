@@ -102,17 +102,21 @@ class Hub:
         async with factory() as session:
             rows = (await session.execute(
                 select(Duel.id, Duel.state, DuelParticipant.player_id).join(DuelParticipant, DuelParticipant.duel_id == Duel.id)
-                .where(Duel.state.in_(LIVE + (states.PAUSED,)))
+                .where(Duel.state.not_in(states.TERMINAL))
             )).all()
+        held = set()
         for duel_id, state, player_id in rows:
             key = (duel_id, player_id)
+            held.add(key)
             if state in LIVE and state != states.WAITING_PLAYERS and player_id in self.seen and not self.present(player_id):
                 if key not in self.lost:
                     self.lost.add(key)
                     await lose(factory, duel_id, player_id)
-            elif state == states.PAUSED and key in self.lost and self.present(player_id):
+            elif key in self.lost and self.present(player_id) and state in LIVE + (states.PAUSED,):
                 self.lost.discard(key)
-                await back(factory, duel_id, player_id)
+                if state == states.PAUSED:
+                    await back(factory, duel_id, player_id)
+        self.lost &= held
 
     async def run(self, factory, shutdown: asyncio.Event) -> None:
         while not shutdown.is_set():

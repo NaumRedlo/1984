@@ -247,6 +247,79 @@ async def test_a_lost_player_stops_the_map_returns_for_a_replay_and_loses_after_
     assert (final["state"], final["outcome"], final["winner"]) == (states.COMPLETED, "disconnect", 1)
     assert final["wins"] == {"A": 1, "B": 0}
 
+async def _picked(factory, clock, duel_id):
+    duel = await _view(factory, duel_id, 1)
+    _, side = series.turn_side(len(duel["draft"]))
+    free = [e["slot"] for e in duel["pool"]["entries"] if e["slot"] != "TB" and not e["banned_by"] and not e["used"]]
+    await series.draft(factory, duel_id, _player(duel, side), free[0], clock.op(), now=clock.tick())
+
+async def _attempts(factory):
+    async with factory() as session:
+        return (await session.scalars(select(DuelAttempt).order_by(DuelAttempt.id))).all()
+
+async def _commands(factory):
+    async with factory() as session:
+        return (await session.scalars(select(DuelCommand).order_by(DuelCommand.id))).all()
+
+async def test_a_drop_before_the_map_starts_returns_to_the_same_round_without_a_replay(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _picked(factory, clock, duel_id)
+    first = (await _attempts(factory))[-1]
+    assert (await series.player_lost(factory, duel_id, 2, clock.tick()))["state"] == states.PAUSED
+    back = await series.player_back(factory, duel_id, 2, clock.tick())
+    assert back["state"] == states.ROUND_SETUP
+    assert [attempt.id for attempt in await _attempts(factory)] == [first.id], "the unplayed attempt is set up again"
+    setups = [command for command in await _commands(factory) if command.kind == "setup_round"]
+    assert len(setups) == 2 and setups[-1].payload["attempt"] == first.id
+
+    await series.round_configured(factory, duel_id, clock.tick())
+    version = (await _view(factory, duel_id, 1))["version"]
+    await series.ready(factory, duel_id, 1, clock.op(), expected_version=version, now=clock.tick())
+    assert (await series.player_lost(factory, duel_id, 2, clock.tick()))["state"] == states.PAUSED
+    back = await series.player_back(factory, duel_id, 2, clock.tick())
+    assert back["state"] == states.WAITING_READY and "ready" in (await _view(factory, duel_id, 2))["actions"]
+    assert {p["player"]: p["connection"] for p in back["participants"]} == {1: "ready", 2: "present"}
+    assert len(await _attempts(factory)) == 1
+    assert [command.kind for command in await _commands(factory)].count("setup_round") == 2
+
+async def test_a_drop_during_the_countdown_halts_it_and_asks_both_to_get_ready_again(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _picked(factory, clock, duel_id)
+    await series.round_configured(factory, duel_id, clock.tick())
+    version = (await _view(factory, duel_id, 1))["version"]
+    for player in (1, 2):
+        await series.ready(factory, duel_id, player, clock.op(), expected_version=version, now=clock.tick())
+    assert (await _view(factory, duel_id, 1))["state"] == states.STARTING
+    assert (await series.player_lost(factory, duel_id, 2, clock.tick()))["state"] == states.PAUSED
+    assert "halt_start" in [command.kind for command in await _commands(factory)]
+    assert await series.round_started(factory, duel_id, 777, clock.tick()) is None
+    back = await series.player_back(factory, duel_id, 2, clock.tick())
+    assert back["state"] == states.WAITING_READY
+    assert {p["connection"] for p in back["participants"]} == {"present"}
+    attempts = await _attempts(factory)
+    assert len(attempts) == 1 and attempts[0].commanded_at is None and attempts[0].start_at is None
+    version = back["version"]
+    for player in (1, 2):
+        await series.ready(factory, duel_id, player, clock.op(), expected_version=version, now=clock.tick())
+    assert (await series.round_started(factory, duel_id, 778, clock.tick()))["state"] == states.PLAYING
+
+async def test_an_aborted_map_is_played_again_as_a_new_attempt(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _into_play(factory, clock, duel_id)
+    await series.player_lost(factory, duel_id, 2, clock.tick())
+    await series.aborted(factory, duel_id, clock.tick())
+    back = await series.player_back(factory, duel_id, 2, clock.tick())
+    assert back["state"] == states.ROUND_SETUP
+    attempts = await _attempts(factory)
+    assert [(attempt.attempt_no, attempt.validity) for attempt in attempts] == [(1, "aborted"), (2, "pending")]
+    assert (await _commands(factory))[-1].payload["attempt"] == attempts[-1].id
+
 async def test_giving_up_after_the_first_map_hands_the_series_to_the_other(factory):
     clock = Clock()
     duel_id = await _drafting(factory, clock)
