@@ -364,7 +364,7 @@ def due(row, at: datetime) -> bool:
     if row.state == "pending":
         return waited is None or waited > POLL_EVERY
     if row.state in PAID:
-        if row.paid_until is not None and row.paid_until <= at:
+        if row.paid_until is None or row.paid_until <= at:
             return waited is None or waited > WATCH_EVERY
         return waited is None or waited > RECHECK_EVERY
     return False

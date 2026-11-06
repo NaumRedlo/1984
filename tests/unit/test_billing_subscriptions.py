@@ -549,6 +549,15 @@ def test_a_renewing_subscription_shows_its_next_payment_and_not_the_carried_end(
     assert not subscriptions.has_access(held_row(at, state="pending"), at)
 
 
+def test_a_paid_plan_without_a_date_is_asked_about_again_within_a_minute():
+    at = datetime(2026, 11, 6, 12, 0)
+    undated = held_row(at, state="active", paid_until=None, checked_at=at - timedelta(minutes=2))
+    dated = held_row(at, state="active", paid_until=at + timedelta(days=5), checked_at=at - timedelta(minutes=2))
+    assert subscriptions.due(undated, at)
+    assert not subscriptions.due(dated, at)
+    assert not subscriptions.due(held_row(at, state="active", paid_until=None, checked_at=at - timedelta(seconds=30)), at)
+
+
 def test_a_replaced_subscription_stays_replaced_whatever_the_provider_says():
     at = datetime(2026, 10, 9, 12, 0)
     row = held_row(at, state="replaced", paid_until=at + timedelta(days=9))
