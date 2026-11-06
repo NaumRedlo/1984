@@ -48,3 +48,13 @@ async def test_someone_elses_player_with_the_same_osu_account_is_not_borrowed(fa
         await session.commit()
     player_id, held = await billing.held_for(77, None, 111)
     assert player_id is None and held is None
+
+@pytest.mark.asyncio
+async def test_an_osu_account_proven_by_oauth_brings_its_subscription_whatever_telegram_the_player_names(factory):
+    async with factory() as session:
+        session.add(Player(id=3, osu_user_id=111, osu_username="three", telegram_id=55))
+        await session.flush()
+        session.add(paid(3))
+        await session.commit()
+    player_id, held = await billing.held_for(77, None, 111, owns_osu=True)
+    assert player_id == 3 and held["active"]

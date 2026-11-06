@@ -126,7 +126,7 @@ async def held_of(player_id, osu_id=None) -> dict | None:
     }
 
 
-async def players_for(telegram_id, player_id=None, osu_id=None) -> list[int]:
+async def players_for(telegram_id, player_id=None, osu_id=None, owns_osu: bool = False) -> list[int]:
     from sqlalchemy import or_, select
 
     from db.models.player import Player
@@ -138,13 +138,15 @@ async def players_for(telegram_id, player_id=None, osu_id=None) -> list[int]:
         if player_id:
             found.append(int(player_id))
         if osu_id:
-            mine = or_(Player.telegram_id.is_(None), Player.telegram_id == int(telegram_id)) if telegram_id else Player.telegram_id.is_(None)
-            found += (await session.execute(select(Player.id).where(Player.osu_user_id == int(osu_id), mine))).scalars().all()
+            wanted = select(Player.id).where(Player.osu_user_id == int(osu_id)).order_by(Player.id)
+            if not owns_osu:
+                wanted = wanted.where(or_(Player.telegram_id.is_(None), Player.telegram_id == int(telegram_id)) if telegram_id else Player.telegram_id.is_(None))
+            found += (await session.execute(wanted)).scalars().all()
     return list(dict.fromkeys(found))
 
 
-async def held_for(telegram_id, player_id=None, osu_id=None) -> tuple[int | None, dict | None]:
-    candidates = await players_for(telegram_id, player_id, osu_id)
+async def held_for(telegram_id, player_id=None, osu_id=None, owns_osu: bool = False) -> tuple[int | None, dict | None]:
+    candidates = await players_for(telegram_id, player_id, osu_id, owns_osu)
     first = None
     for candidate in candidates:
         held = await held_of(candidate, osu_id)

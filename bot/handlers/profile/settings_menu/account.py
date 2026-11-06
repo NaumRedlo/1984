@@ -23,7 +23,7 @@ async def _account_view(tg_id: int, lang: str = "en"):
         osu_id = user.osu_user_id if user else None
     oauth = await has_oauth(tg_id) if linked else False
     try:
-        held = (await held_for(tg_id, player_id, osu_id))[1] if linked else None
+        held = (await held_for(tg_id, player_id, osu_id, owns_osu=oauth))[1] if linked else None
     except Exception as exc:
         from services import incidents
 
@@ -77,7 +77,9 @@ async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, la
         user = await get_registered_identity_user(session, callback.from_user.id)
         player_id = getattr(user, "player_id", None) if user else None
         osu_id = user.osu_user_id if user else None
-    player_id, held = await held_for(callback.from_user.id, player_id, osu_id) if user else (None, None)
+    from services.oauth.token_manager import has_oauth
+    owns = await has_oauth(callback.from_user.id) if user else False
+    player_id, held = await held_for(callback.from_user.id, player_id, osu_id, owns_osu=owns) if user else (None, None)
     if held is None or not held["active"] or not player_id:
         await callback.answer()
         return
