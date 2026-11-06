@@ -296,6 +296,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         wait = min(float(wait), CLAIM_WAIT_MOST) if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0 else 0.0
         until = asyncio.get_running_loop().time() + wait
         while True:
+            if request.transport is None or request.transport.is_closing():
+                return web.Response(status=204)
             arrival = line.arrival()
             job = line.claim(key, _worker(request)[:128], rulesets=rulesets)
             left = until - asyncio.get_running_loop().time()
