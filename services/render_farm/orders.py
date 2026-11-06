@@ -12,6 +12,7 @@ from sqlalchemy import select
 from config import settings
 from db.database import AsyncSessionFactory
 from db.models.player import Player
+from services import incidents
 from services.render_farm import app_storage, invites, members, skins
 from services.render_farm.queue import RIVALS, STANDARD, Job, State, chat_rivals_of, queue, rivals_of
 from services.render_farm.roster import roster
@@ -116,40 +117,64 @@ async def rivals_for(osu_api_client, beatmap: Optional[dict], head: Header, tele
         logger.info("no leaderboard for %s: %s", head.beatmap_md5, exc)
         return []
 
+def _chat_of(message) -> Optional[int]:
+    return getattr(getattr(message, "chat", None), "id", None)
+
+def _with_code(text: str, code: str, lang: str) -> str:
+    return text + t("farm.code", lang, code=code)
+
+async def refuse(message, person, lang: str, key: str, stage: str, reason: str, *, detail: Optional[dict] = None,
+                 error: Optional[BaseException] = None, shown: bool = True, **words) -> str:
+    code = await incidents.note("farm", stage, reason, telegram_id=getattr(person, "id", None), chat_id=_chat_of(message),
+                                detail=detail, error=error)
+    text = t(key, lang, **words)
+    await message.reply(_with_code(text, code, lang) if shown else text)
+    return code
+
+def _described(document) -> dict[str, Any]:
+    return {"file": getattr(document, "file_name", None), "size": getattr(document, "file_size", None)}
+
 async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None) -> None:
     person = message.from_user
     document = message.document
     if person is None or document is None:
         return
     if document.file_size and document.file_size > settings.RENDER_REPLAY_MOST:
-        await message.reply(t("farm.too_big", lang))
+        await refuse(message, person, lang, "farm.too_big", "intake", "too big", detail=_described(document), shown=False)
         return
 
     async def fetch(path: str) -> bool:
-        try:
-            await bot.download(document, destination=path)
-            return True
-        except Exception as exc:
-            logger.warning("could not take a replay from %s: %s", person.id, exc)
-            return False
+        await bot.download(document, destination=path)
+        return True
 
-    await order(bot, message, person, fetch, lang, osu_api_client)
+    await order(bot, message, person, fetch, lang, osu_api_client, detail=_described(document))
 
-async def order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable") -> None:
+async def order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable",
+                detail: Optional[dict[str, Any]] = None) -> None:
     if queue.open_for(person.id) + _receiving[person.id] >= settings.RENDER_ORDERS_EACH:
-        await message.reply(t("farm.too_many", lang, n=settings.RENDER_ORDERS_EACH))
+        await refuse(message, person, lang, "farm.too_many", "intake", "too many in the queue", detail=detail, shown=False,
+                     n=settings.RENDER_ORDERS_EACH)
         return
     _receiving[person.id] += 1
     try:
-        await _order(bot, message, person, fetch, lang, osu_api_client, missing)
+        await _order(bot, message, person, fetch, lang, osu_api_client, missing, dict(detail or {}))
+    except Exception as exc:
+        logger.exception("an order from %s broke", person.id)
+        try:
+            await refuse(message, person, lang, "farm.broken", "order", f"{type(exc).__name__}: {exc}", detail=detail, error=exc)
+        except Exception as again:
+            logger.warning("could not tell %s that the order broke: %s", person.id, again)
     finally:
         _receiving[person.id] -= 1
         if not _receiving[person.id]:
             del _receiving[person.id]
 
-async def _order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable") -> None:
+async def _order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable",
+                 detail: Optional[dict[str, Any]] = None) -> None:
+    detail = detail if detail is not None else {}
+    detail["chat_type"] = message.chat.type
     if message.chat.type == "private" and not await members.shares_a_group(bot, person.id):
-        await message.reply(t("farm.members_only", lang))
+        await refuse(message, person, lang, "farm.members_only", "intake", "shares no group with the bot", detail=detail)
         return
     async with AsyncSessionFactory() as session:
         player = (await session.execute(select(Player.id).where(Player.telegram_id == person.id))).scalar_one_or_none()
@@ -160,20 +185,28 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
     try:
         path = os.path.join(workdir, "replay.osr")
         try:
-            if not await fetch(path):
-                await message.reply(t(missing, lang))
-                return
-            with open(path, "rb") as source:
-                head = header(source.read())
+            fetched = await fetch(path)
         except Exception as exc:
-            logger.warning("could not read a replay from %s: %s", person.id, exc)
-            await message.reply(t("farm.unreadable", lang))
+            logger.warning("could not take a replay from %s: %s", person.id, exc)
+            await refuse(message, person, lang, missing, "download", f"{type(exc).__name__}: {exc}", detail=detail, error=exc)
             return
+        if not fetched:
+            await refuse(message, person, lang, missing, "download", "nothing was fetched", detail=detail)
+            return
+        try:
+            with open(path, "rb") as source:
+                data = source.read()
+        except OSError as exc:
+            await refuse(message, person, lang, "farm.unreadable", "read", f"{type(exc).__name__}: {exc}", detail=detail, error=exc)
+            return
+        head = header(data)
         if head is None:
-            await message.reply(t("farm.unreadable", lang))
+            detail.update({"bytes": len(data), "start": data[:24].hex()})
+            await refuse(message, person, lang, "farm.unreadable", "header", "the replay header could not be read", detail=detail)
             return
+        detail.update({"player": head.player, "mode": head.mode, "version": head.version, "map": head.beatmap_md5})
         if head.mode not in (0, 3):
-            await message.reply(t("farm.standard_only", lang))
+            await refuse(message, person, lang, "farm.standard_only", "intake", f"ruleset {head.mode}", detail=detail, shown=False)
             return
         beatmap = None
         if osu_api_client is not None:
@@ -229,14 +262,23 @@ async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message
                 pass
         if job.withdrawn or not job.payload:
             key = "farm.nobody" if job.reason in ("nobody", "expired") else "farm.failed"
+            code = await incidents.note("farm", "queue" if key == "farm.nobody" else "render", job.reason or "?",
+                                        telegram_id=job.requester or None, chat_id=job.chat_id or None, detail=_story(job))
             try:
-                await status.edit_text(t(key, lang, title=job.title, reason=job.reason or "?"))
+                await status.edit_text(_with_code(t(key, lang, title=job.title, reason=job.reason or "?"), code, lang))
             except Exception:
                 pass
             return
         await deliver(bot, job, asked, status, lang)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+def _story(job: Job) -> dict[str, Any]:
+    return {
+        "job": job.id, "title": job.title, "map": job.beatmap_md5, "set": job.beatmapset_id, "ruleset": job.ruleset,
+        "attempts": job.attempts, "worker": job.worker_name or None, "in_app": job.in_app, "troubles": list(job.troubles),
+        "bytes": (job.payload or {}).get("bytes"),
+    }
 
 def _telegram_most() -> int:
     return 2000 * 1024 * 1024 if settings.TELEGRAM_BOT_API_URL else 48 * 1024 * 1024
@@ -274,8 +316,13 @@ async def deliver(bot: Bot, job: Job, asked: types.Message, status: types.Messag
         logger.info("job %s delivered to %s%s", job.id, job.chat_id, " and the app" if job.in_app else "")
     except Exception as exc:
         logger.warning("could not deliver job %s: %s", job.id, exc)
+        story = _story(job)
+        story["path"] = path
+        code = await incidents.note("farm", "deliver", f"{type(exc).__name__}: {exc}", telegram_id=job.requester or None,
+                                    chat_id=job.chat_id or None, detail=story, error=exc)
         try:
-            await status.edit_text(t("farm.in_app" if job.in_app else "farm.undelivered", lang, title=job.title))
+            text = t("farm.in_app" if job.in_app else "farm.undelivered", lang, title=job.title)
+            await status.edit_text(text if job.in_app else _with_code(text, code, lang))
         except Exception:
             pass
     finally:

@@ -66,3 +66,12 @@ def fresh_render_memories():
     http.forget_memories()
     yield
     http.forget_memories()
+
+@pytest.fixture(autouse=True)
+def incidents_in_memory(monkeypatch):
+    from services import incidents
+
+    monkeypatch.setattr(incidents, "saving", False)
+    incidents.forget()
+    yield
+    incidents.forget()

@@ -196,6 +196,15 @@ chat's rows in step with who is really there:
 The admin command `members` shows what a sweep would change without changing
 anything; `members sync` applies it at once.
 
+### Incidents
+
+Every refused or broken replay, every worker that hands a render back or goes
+quiet, every video that could not be stored or sent, and every unhandled error
+in a handler is written to the `incidents` table with a six-letter code, the
+stage it broke at, the details and the traceback. The player sees the code in
+the bot's answer. Admins list recent ones with `incidents [farm|bot] [N]` and
+read one in full with `incident <code>`. Rows older than 30 days are dropped.
+
 ### Commands
 
 Gameplay commands are deliberately short and take no slash. Case does not

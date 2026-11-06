@@ -10,6 +10,7 @@ from aiogram.exceptions import (
 )
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
+from services import incidents
 from utils.i18n import t
 from utils.language import get_language
 from utils.logger import get_logger
@@ -85,6 +86,35 @@ async def on_error(event: ErrorEvent) -> bool:
         return True
 
     logger.error(f"Unhandled exception [{where}]: {exc}", exc_info=True)
+    await _note(event, exc, where)
     return False
+
+def _asked(message: Message) -> bool:
+    return message.chat.type == "private" or message.document is not None or (message.text or "").lstrip().startswith("/")
+
+async def _note(event: ErrorEvent, exc: BaseException, where: str) -> None:
+    upd = event.update
+    message = upd.message if upd is not None and isinstance(upd.message, Message) else None
+    callback = upd.callback_query if upd is not None and isinstance(upd.callback_query, CallbackQuery) else None
+    person = (message.from_user if message is not None else callback.from_user if callback is not None else None)
+    chat = message.chat.id if message is not None else None
+    detail = {"where": where}
+    if message is not None and message.document is not None:
+        detail["file"] = message.document.file_name
+        detail["size"] = message.document.file_size
+    try:
+        code = await incidents.note("bot", "handler", f"{type(exc).__name__}: {exc}", telegram_id=person.id if person else None,
+                                    chat_id=chat, detail=detail, error=exc)
+    except Exception as again:
+        logger.warning(f"the incident was not noted [{where}]: {again}")
+        return
+    try:
+        lang = (await get_language(person.id)).lower() if person else "en"
+        if callback is not None:
+            await callback.answer(t("common.broken_code", lang, code=code), show_alert=True)
+        elif message is not None and _asked(message):
+            await message.reply(t("common.broken_code", lang, code=code))
+    except Exception as again:
+        logger.info(f"could not tell about incident {code} [{where}]: {again}")
 
 __all__ = ["router"]

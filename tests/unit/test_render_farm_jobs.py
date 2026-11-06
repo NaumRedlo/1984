@@ -369,8 +369,10 @@ async def test_failed_download_frees_reservation_and_removes_temporary_file(repl
 async def test_failed_status_message_withdraws_job_and_cleans_up(replay_sender):
     bot, message, line, paths = replay_sender
     message.reply.side_effect = RuntimeError("Telegram unavailable")
-    with pytest.raises(RuntimeError):
-        await orders.take(bot, message, "ru")
+    await orders.take(bot, message, "ru")
+    from services import incidents
+    noted, = await incidents.recent("farm")
+    assert noted.stage == "order" and "Telegram unavailable" in noted.trace
     assert not orders._receiving and line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
     orders.follow.assert_not_awaited()
@@ -379,8 +381,11 @@ async def test_failed_status_message_withdraws_job_and_cleans_up(replay_sender):
 async def test_failure_after_download_frees_reservation_and_cleans_up(replay_sender, monkeypatch):
     bot, message, line, paths = replay_sender
     monkeypatch.setattr(skins, "chosen_for", AsyncMock(side_effect=RuntimeError("skin unavailable")))
-    with pytest.raises(RuntimeError):
-        await orders.take(bot, message, "ru")
+    await orders.take(bot, message, "ru")
+    from services import incidents
+    noted, = await incidents.recent("farm")
+    assert "skin unavailable" in noted.reason
+    assert noted.code in message.reply.await_args.args[0]
     assert not orders._receiving and line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
 

@@ -401,6 +401,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 if os.path.exists(path):
                     os.unlink(path)
                 logger.warning("app video result could not be stored: %s", exc)
+                from services import incidents
+
+                await incidents.note("farm", "store", f"{type(exc).__name__}: {exc}", telegram_id=job.requester or None,
+                                     chat_id=job.chat_id or None, detail={"job": job.id, "title": job.title, "bytes": written}, error=exc)
                 return web.json_response({"error": "video storage failed"}, status=500)
             if not line.finish(job_id, key, {"bytes": written, "video": video.id}):
                 return web.json_response({"error": "not yours"}, status=409)

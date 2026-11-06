@@ -18,6 +18,8 @@ STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0,
 
 RIVALS = 50
 
+_noting: set[asyncio.Task] = set()
+
 
 def _picture(url: Any) -> str:
     said = str(url or "").strip()
@@ -105,6 +107,7 @@ class Job:
     video_meta: Optional[dict[str, Any]] = None
     ruleset: int = 0
     leaderboard: list[dict[str, Any]] = field(default_factory=list)
+    troubles: list[str] = field(default_factory=list)
 
     def handed(self) -> dict[str, Any]:
         skin = None
@@ -120,6 +123,21 @@ class Job:
             "lease_seconds": LEASE_SECONDS,
             "leaderboard": list(self.leaderboard),
         }
+
+def _trouble(job: Job, worker: str, reason: str) -> None:
+    job.troubles.append(f"{worker or '?'}: {reason}")
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    from services import incidents
+
+    task = loop.create_task(incidents.note("farm", "worker", reason, telegram_id=job.requester or None, chat_id=job.chat_id or None, detail={
+        "job": job.id, "title": job.title, "worker": worker, "attempt": job.attempts, "map": job.beatmap_md5,
+        "ruleset": job.ruleset, "in_app": job.in_app,
+    }))
+    _noting.add(task)
+    task.add_done_callback(_noting.discard)
 
 class RenderQueue:
     def __init__(self) -> None:
@@ -212,6 +230,7 @@ class RenderQueue:
             return False
         job.attempts += 1
         logger.info("job %s given back by %s (attempt %d): %s", job_id, job.worker_name or worker[:8], job.attempts, reason)
+        _trouble(job, job.worker_name or worker[:8], reason)
         self._back_in_line(job, reason)
         return True
 
@@ -221,6 +240,7 @@ class RenderQueue:
             if job.state is State.CLAIMED and now >= job.lease_until:
                 logger.warning("job %s lost its worker %s", job.id, job.worker_name or job.worker)
                 job.attempts += 1
+                _trouble(job, job.worker_name or (job.worker or "")[:8], "the worker went quiet")
                 self._back_in_line(job, "the worker went quiet")
             if job.id in self._jobs and now - job.created > MAX_AGE_SECONDS:
                 logger.warning("job %s expired unrendered", job.id)

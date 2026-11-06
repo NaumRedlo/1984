@@ -40,6 +40,12 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("members", "Состав бесед",
                     "Сверить игроков каждой беседы с Telegram; «members sync» применяет изменения.", args="[sync]"),
     )),
+    Category("incidents", "🧯", "Сбои", (
+        CommandSpec("incidents", "Последние сбои",
+                    "Отказы и ошибки с кодами; «incidents farm» только рендер.", args="[farm|bot] [N]"),
+        CommandSpec("incident", "Сбой по коду",
+                    "Причина, данные и трассировка сбоя.", args="<код>"),
+    )),
 )
 
 def find_category(key: str) -> Optional[Category]:

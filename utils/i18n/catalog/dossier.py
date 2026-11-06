@@ -116,6 +116,14 @@ CATALOG = {
         "en": "I could not open that replay.",
         "ru": "Не получилось открыть этот реплей.",
     },
+    "farm.broken": {
+        "en": "Something broke while I was taking that replay. Send it again a bit later.",
+        "ru": "Что-то сломалось, пока я принимал реплей. Отправь его ещё раз чуть позже.",
+    },
+    "farm.code": {
+        "en": "\nError code: {code}",
+        "ru": "\nКод ошибки: {code}",
+    },
     "farm.standard_only": {
         "en": "For now I only render osu! and osu!mania replays.",
         "ru": "Пока я рендерю только реплеи osu! и osu!mania.",

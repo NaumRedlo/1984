@@ -50,6 +50,10 @@ CATALOG = {
         "ru": "Эта команда работает только в беседе.",
     },
     "common.stale_repeat": {"en": "Expired — repeat the action.", "ru": "Устарело — повторите действие."},
+    "common.broken_code": {
+        "en": "Something went wrong. Try again a bit later.\nError code: {code}",
+        "ru": "Что-то пошло не так. Попробуй ещё раз чуть позже.\nКод ошибки: {code}",
+    },
     "common.something_wrong": {
         "en": "Something went wrong. Try again.",
         "ru": "Что-то пошло не так. Попробуй ещё раз.",
