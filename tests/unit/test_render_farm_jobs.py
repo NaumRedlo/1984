@@ -478,7 +478,9 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
     from db.database import Base
     from db.models.chat_member import ChatMember
     from db.models.player import Player
+    from db.models.user import User
     from services.render_farm import orders
+    from sqlalchemy import select
 
     async def go():
         engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -489,8 +491,9 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
         async with made() as session:
             session.add(Player(id=1, osu_user_id=11, osu_username="a", telegram_id=7, pinned_chat_id=-500))
             session.add(Player(id=2, osu_user_id=12, osu_username="b", telegram_id=8, pinned_chat_id=-500))
-            session.add(ChatMember(chat_id=-500, player_id=1, user_id=1))
+            session.add(User(id=1, chat_id=-500, telegram_id=7, osu_user_id=11, osu_username="a"))
             await session.commit()
+            assert await session.scalar(select(ChatMember.player_id).where(ChatMember.chat_id == -500)) == 1
         found = [await orders.board_chat(7, 42), await orders.board_chat(7, -100), await orders.board_chat(8, -100), await orders.board_chat(0, -100)]
         await engine.dispose()
         return found
