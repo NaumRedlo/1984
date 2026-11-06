@@ -62,7 +62,11 @@ how far along it is. A paired application with its worker on claims the oldest
 job (`POST /render/claim`), fetches the replay and the chosen skin
 (`/render/job/<id>/replay`, `/skin`), finds or downloads the map itself,
 reports progress (`/heartbeat`) and uploads the video (`/result`) or hands the
-job back (`/give-back`); `/render/farm` lists who is online. A job is leased for
+job back (`/give-back`); `/render/farm` lists who is online. Only trusted
+workers take other people's jobs: the shared `RENDER_WORKER_TOKEN`, devices of
+`ADMIN_IDS` and devices of the Telegram ids in `RENDER_TRUSTED_OWNERS`. Any
+other paired device renders only its own owner's jobs, and `/render/hello`
+tells it so with `"trusted": false`. A job is leased for
 90 seconds at a time and goes back in line when its worker goes quiet; after
 three tries, or when nobody takes it within `RENDER_GIVE_UP` seconds (900), the
 person is told. Every video is 1920×1080 at 60 FPS with normalised loudness; the

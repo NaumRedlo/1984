@@ -552,3 +552,39 @@ def test_the_house_skin_plays_the_maps_hitsounds_and_every_other_skin_its_own():
     picked = orders.render_settings({"name": "Rafis"})
     assert picked["play"]["map_sounds"] is False and picked["play"]["storyboard"] is True and picked["width"] == 1920
     assert STANDARD["play"]["map_sounds"] is False
+
+def test_a_limited_worker_is_offered_only_its_owners_jobs():
+    line = RenderQueue()
+    chat = line.offer("a.osr", "chat", beatmap_md5=HASH, requester=1, chat_id=-5, now=0.0)
+    app_only = line.offer("b.osr", "app", beatmap_md5=HASH, requester=0, requester_player=31, now=1.0)
+    stranger = line.offer("c.osr", "other app", beatmap_md5=HASH, requester=0, requester_player=32, now=2.0)
+    assert line.claim("w9", only_for=(-1, None), now=3.0) is None
+    assert line.claim("w0", only_for=(0, None), now=3.0) is None
+    assert line.claim("w31", only_for=(0, 31), now=3.0) is app_only
+    assert line.claim("w2", only_for=(2, None), now=3.0) is None
+    assert line.claim("w1", only_for=(1, 7), now=3.0) is chat
+    assert line.claim("trusted", now=3.0) is stranger
+
+@pytest.mark.asyncio
+async def test_a_paired_device_without_trust_cannot_take_a_chat_render(farm, monkeypatch):
+    client, line, who, job = farm
+    invites.remember("tester-app", invites.Owner(77, "Tester", 5))
+    invites.remember("stranger-app", invites.Owner(88, "Stranger", 6))
+    monkeypatch.setattr(farm_http, "RENDER_TRUSTED_OWNERS", frozenset({77}))
+    monkeypatch.setattr(farm_http, "ADMIN_IDS", [])
+    try:
+        stranger = {"Authorization": "Bearer stranger-app", "X-Render-Worker": "Laptop"}
+        hello = await (await client.get("/render/hello", headers=stranger)).json()
+        assert hello["trusted"] is False and hello["agree"] is True
+        assert (await client.post("/render/claim", json={}, headers=stranger)).status == 204
+        assert job.state is State.WAITING
+        own = line.offer("own.osr", "own", beatmap_md5=HASH, requester=88)
+        taken = await client.post("/render/claim", json={}, headers=stranger)
+        assert taken.status == 200 and (await taken.json())["id"] == own.id
+        tester = {"Authorization": "Bearer tester-app", "X-Render-Worker": "Tower"}
+        assert (await (await client.get("/render/hello", headers=tester)).json())["trusted"] is True
+        given = await client.post("/render/claim", json={}, headers=tester)
+        assert given.status == 200 and (await given.json())["id"] == job.id
+    finally:
+        invites.forget(invites.digest("tester-app"))
+        invites.forget(invites.digest("stranger-app"))

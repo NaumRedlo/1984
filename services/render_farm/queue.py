@@ -109,6 +109,12 @@ class Job:
     ruleset: int = 0
     leaderboard: list[dict[str, Any]] = field(default_factory=list)
     troubles: list[str] = field(default_factory=list)
+    requester_player: Optional[int] = None
+
+    def belongs_to(self, telegram_id: int, player_id: Optional[int]) -> bool:
+        if telegram_id:
+            return self.requester == telegram_id
+        return player_id is not None and self.requester == 0 and self.requester_player == player_id
 
     def handed(self) -> dict[str, Any]:
         skin = None
@@ -157,7 +163,8 @@ class RenderQueue:
               now: Optional[float] = None, video_id: Optional[int] = None,
               settings: Optional[dict[str, Any]] = None, in_app: bool = False,
               video_meta: Optional[dict[str, Any]] = None, ruleset: int = 0,
-              leaderboard: Optional[list[dict[str, Any]]] = None) -> Job:
+              leaderboard: Optional[list[dict[str, Any]]] = None,
+              requester_player: Optional[int] = None) -> Job:
         job = Job(
             id=uuid.uuid4().hex[:16],
             replay_path=replay_path,
@@ -174,6 +181,7 @@ class RenderQueue:
             video_meta=dict(video_meta) if video_meta else None,
             ruleset=ruleset,
             leaderboard=list(leaderboard or []),
+            requester_player=requester_player,
         )
         self._jobs[job.id] = job
         logger.info("job %s offered: %s", job.id, title)
@@ -199,10 +207,13 @@ class RenderQueue:
         return sum(1 for j in self._jobs.values() if j.requester == requester)
 
     def claim(self, worker: str, name: str = "", *, now: Optional[float] = None,
-              rulesets: frozenset[int] = frozenset({0})) -> Optional[Job]:
+              rulesets: frozenset[int] = frozenset({0}),
+              only_for: Optional[tuple[int, Optional[int]]] = None) -> Optional[Job]:
         now = now if now is not None else monotonic()
         self.sweep(now=now)
-        pending = sorted((j for j in self._jobs.values() if j.state is State.WAITING and j.ruleset in rulesets), key=lambda j: j.created)
+        pending = sorted((j for j in self._jobs.values()
+                          if j.state is State.WAITING and j.ruleset in rulesets and (only_for is None or j.belongs_to(*only_for))),
+                         key=lambda j: j.created)
         if not pending:
             return None
         job = pending[0]

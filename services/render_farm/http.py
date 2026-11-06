@@ -12,7 +12,7 @@ from urllib.parse import unquote
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
+from config.settings import ADMIN_IDS, APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_TRUSTED_OWNERS, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
 from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, videos
 from services.render_farm.queue import STANDARD, RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
@@ -81,6 +81,17 @@ def _authorised(request: web.Request) -> bool:
     if RENDER_WORKER_TOKEN and secrets.compare_digest(offered, RENDER_WORKER_TOKEN):
         return True
     return invites.known(offered)
+
+def _limited_to(request: web.Request) -> Optional[tuple[int, Optional[int]]]:
+    offered = _token(request)
+    if RENDER_WORKER_TOKEN and secrets.compare_digest(offered, RENDER_WORKER_TOKEN):
+        return None
+    owner = invites.owner(offered)
+    if owner is None:
+        return (-1, None)
+    if owner.telegram_id and (owner.telegram_id in ADMIN_IDS or owner.telegram_id in RENDER_TRUSTED_OWNERS):
+        return None
+    return (owner.telegram_id, owner.player_id)
 
 CARD_KEEP = 300.0
 CLAIM_WAIT_MOST = 25.0
@@ -277,7 +288,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes()})
+        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes(),
+                                  "trusted": _limited_to(request) is None})
 
     async def claim(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -294,12 +306,13 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         rulesets = frozenset({0} | {r for r in told if isinstance(r, int) and not isinstance(r, bool) and 0 <= r <= 3}) if isinstance(told, list) else frozenset({0})
         wait = said.get("wait")
         wait = min(float(wait), CLAIM_WAIT_MOST) if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0 else 0.0
+        only_for = _limited_to(request)
         until = asyncio.get_running_loop().time() + wait
         while True:
             if request.transport is None or request.transport.is_closing():
                 return web.Response(status=204)
             arrival = line.arrival()
-            job = line.claim(key, _worker(request)[:128], rulesets=rulesets)
+            job = line.claim(key, _worker(request)[:128], rulesets=rulesets, only_for=only_for)
             left = until - asyncio.get_running_loop().time()
             if job is not None or left <= 0:
                 break
@@ -1481,7 +1494,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if skin is not None and skin.get("hash") != video.skin_hash:
             skin = None
         line.offer(str(replay_path), videos.caption(video, None) or "Shared video", beatmap_md5=video.map_hash,
-                   skin=skin, requester=video.owner, video_id=video.id, settings=settings)
+                   skin=skin, requester=video.owner, video_id=video.id, settings=settings,
+                   requester_player=video.owner_player_id)
         return web.json_response({"state": "rendering"}, status=202)
 
     async def inbox_thumb(request: web.Request) -> web.Response:
