@@ -495,3 +495,48 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
         return found
 
     assert asyncio.run(go()) == [-500, -500, -100, -100]
+
+
+def test_a_slow_refresh_of_chat_scores_holds_a_render_back_only_briefly(monkeypatch):
+    from services.render_farm import orders
+
+    finished = []
+
+    async def slow(_api, _beatmap, _chat):
+        await asyncio.sleep(0.3)
+        finished.append(True)
+
+    monkeypatch.setattr(orders, "_sync_scores", slow)
+
+    async def go():
+        started = asyncio.get_running_loop().time()
+        await orders._fresh_scores(object(), 5, -100, wait=0.05)
+        waited = asyncio.get_running_loop().time() - started
+        again = orders._refreshing.get((5, -100))
+        await asyncio.sleep(0.4)
+        return waited, again, finished
+
+    waited, again, done = asyncio.run(go())
+    assert waited < 0.2 and again is not None and done == [True]
+    assert (5, -100) not in orders._refreshing
+
+
+@pytest.mark.asyncio
+async def test_a_waiting_worker_gets_a_new_job_as_soon_as_it_is_offered(farm, tmp_path):
+    client, line, who, job = farm
+    first = await client.post("/render/claim", json={"take": True, "wait": 5}, headers=_as("MacBook"))
+    assert (await first.json())["id"] == job.id
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    empty = await client.post("/render/claim", json={"take": True, "wait": 0.2}, headers=_as("PC"))
+    assert empty.status == 204 and loop.time() - started >= 0.2
+    plain = await client.post("/render/claim", json={"take": True}, headers=_as("PC"))
+    assert plain.status == 204
+    asked = asyncio.ensure_future(client.post("/render/claim", json={"take": True, "wait": 5}, headers=_as("PC")))
+    await asyncio.sleep(0.1)
+    replay = tmp_path / "second.osr"
+    replay.write_bytes(REPLAY)
+    second = line.offer(str(replay), "second", beatmap_md5=HASH, requester=2, chat_id=-5)
+    started = loop.time()
+    taken = await asked
+    assert (await taken.json())["id"] == second.id and loop.time() - started < 1.0

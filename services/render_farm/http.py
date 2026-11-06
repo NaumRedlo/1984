@@ -83,6 +83,7 @@ def _authorised(request: web.Request) -> bool:
     return invites.known(offered)
 
 CARD_KEEP = 300.0
+CLAIM_WAIT_MOST = 25.0
 _card_cache = TTLCache(maxsize=500, ttl=CARD_KEEP)
 
 def _plain(value):
@@ -291,7 +292,19 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.Response(status=204)
         told = said.get("rulesets")
         rulesets = frozenset({0} | {r for r in told if isinstance(r, int) and not isinstance(r, bool) and 0 <= r <= 3}) if isinstance(told, list) else frozenset({0})
-        job = line.claim(key, _worker(request)[:128], rulesets=rulesets)
+        wait = said.get("wait")
+        wait = min(float(wait), CLAIM_WAIT_MOST) if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0 else 0.0
+        until = asyncio.get_running_loop().time() + wait
+        while True:
+            arrival = line.arrival()
+            job = line.claim(key, _worker(request)[:128], rulesets=rulesets)
+            left = until - asyncio.get_running_loop().time()
+            if job is not None or left <= 0:
+                break
+            try:
+                await asyncio.wait_for(arrival.wait(), left)
+            except asyncio.TimeoutError:
+                pass
         if job is None:
             return web.Response(status=204)
         handed = job.handed()

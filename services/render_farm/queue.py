@@ -142,6 +142,14 @@ def _trouble(job: Job, worker: str, reason: str) -> None:
 class RenderQueue:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
+        self._arrived = asyncio.Event()
+
+    def arrival(self) -> asyncio.Event:
+        return self._arrived
+
+    def _announce(self) -> None:
+        told, self._arrived = self._arrived, asyncio.Event()
+        told.set()
 
     def offer(self, replay_path: str, title: str, *, beatmap_md5: str, beatmapset_id: Optional[int] = None,
               skin: Optional[dict[str, Any]] = None, requester: int = 0, chat_id: int = 0,
@@ -168,6 +176,7 @@ class RenderQueue:
         )
         self._jobs[job.id] = job
         logger.info("job %s offered: %s", job.id, title)
+        self._announce()
         return job
 
     def withdraw(self, job_id: str, reason: str = "") -> None:
@@ -265,6 +274,8 @@ class RenderQueue:
         job.reason = reason
         if job.attempts >= MAX_ATTEMPTS:
             self.withdraw(job.id, reason)
+        else:
+            self._announce()
 
     def _held_by(self, job_id: str, worker: str) -> Optional[Job]:
         job = self._jobs.get(job_id)
