@@ -1741,30 +1741,35 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/job/{job_id}/result", job_result),
         web.post("/render/job/{job_id}/give-back", job_give_back),
         web.get("/render/farm", farm),
-    ] + _duel_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+    ] + _duel_routes(guard) + _story_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+
+def _sessions():
+    from db.database import AsyncSessionFactory
+
+    return AsyncSessionFactory
+
+async def _linked(request):
+    owner = await _who(request)
+    if owner is None or owner.player_id is not None or not owner.telegram_id:
+        return owner
+    from sqlalchemy import select
+    from db.models.player import Player
+
+    async with _sessions()() as session:
+        player = await session.scalar(select(Player).where(Player.telegram_id == owner.telegram_id))
+        if player is None:
+            return owner
+        return invites.Owner(int(player.telegram_id), player.osu_username or owner.name, player.id)
 
 def _duel_routes(guard) -> list[web.RouteDef]:
     from services.duels import http as duel_http
 
-    def factory():
-        from db.database import AsyncSessionFactory
+    return duel_http.routes(guard, _linked, _sessions, lambda: _osu)
 
-        return AsyncSessionFactory
+def _story_routes(guard) -> list[web.RouteDef]:
+    from services.story import http as story_http
 
-    async def who(request):
-        owner = await _who(request)
-        if owner is None or owner.player_id is not None or not owner.telegram_id:
-            return owner
-        from sqlalchemy import select
-        from db.models.player import Player
-
-        async with factory()() as session:
-            player = await session.scalar(select(Player).where(Player.telegram_id == owner.telegram_id))
-            if player is None:
-                return owner
-            return invites.Owner(int(player.telegram_id), player.osu_username or owner.name, player.id)
-
-    return duel_http.routes(guard, who, factory, lambda: _osu)
+    return story_http.routes(guard, _linked, _sessions, lambda: _osu)
 
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:

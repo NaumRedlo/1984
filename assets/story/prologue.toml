@@ -1,0 +1,58 @@
+id = "prologue"
+start = "welcome"
+title = { ru = "Пролог", en = "Prologue" }
+
+[speakers.archivist]
+ru = "Архивариус"
+en = "Archivist"
+
+[[steps]]
+id = "welcome"
+kind = "scene"
+next = "check"
+lines = [
+  { who = "archivist", ru = "Гражданин, добро пожаловать в Министерство Точности. Здесь учитывают каждый клик, каждое попадание и каждый промах.", en = "Citizen, welcome to the Ministry of Accuracy. Every click is counted here, every hit and every miss." },
+  { who = "archivist", ru = "Не пугайтесь. Промахи тоже учитывают, но я пишу их карандашом.", en = "Don't be alarmed. Misses are counted too, but I write them in pencil." },
+  { who = "archivist", ru = "Для начала обычная проверка. Пройдите одну карту, а я посмотрю, как вы держите ритм.", en = "First, a routine check. Pass one map and I'll see how you keep the rhythm." },
+]
+
+[[steps]]
+id = "check"
+kind = "task"
+slot = "NM1"
+below = 0.8
+then = "report"
+
+[[steps]]
+id = "report"
+kind = "scene"
+next = "carry"
+lines = [
+  { who = "archivist", when = "check.fc", ru = "Ни одного промаха. Отчёт получится скучным, и это лучший отчёт, какой я видел за неделю.", en = "Not a single miss. The report will be dull, and it's the best report I've seen all week." },
+  { who = "archivist", when = "!check.fc", ru = "Пройдено. Промахи я записал карандашом, как и обещал.", en = "Passed. I wrote the misses in pencil, as promised." },
+]
+
+[[steps]]
+id = "carry"
+kind = "choice"
+lines = [
+  { who = "archivist", ru = "Отчёт готов. Его ждут наверху. Куда понесём?", en = "The report is ready. They're waiting for it upstairs. Where shall we take it?" },
+]
+options = [
+  { id = "upstairs", flag = "by_the_book", next = "upstairs", ru = "Наверх, как положено", en = "Upstairs, as it should be" },
+  { id = "archive", flag = "kept_a_copy", next = "archive", ru = "Сначала покажем в архиве", en = "Show it in the archive first" },
+]
+
+[[steps]]
+id = "upstairs"
+kind = "end"
+lines = [
+  { who = "archivist", ru = "Наверху любят порядок. Посмотрим, полюбят ли они вас.", en = "Upstairs they love order. Let's see if they come to love you." },
+]
+
+[[steps]]
+id = "archive"
+kind = "end"
+lines = [
+  { who = "archivist", ru = "Копия останется у нас. В архиве ничего не теряется, особенно хорошее.", en = "A copy stays with us. Nothing gets lost in the archive, least of all the good things." },
+]
