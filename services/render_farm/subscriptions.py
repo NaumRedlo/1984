@@ -77,7 +77,7 @@ def naive(value: datetime | None) -> datetime | None:
 
 
 def stamp(value: datetime | None) -> str | None:
-    return None if value is None else value.isoformat() + "Z"
+    return None if value is None else naive(value).isoformat() + "Z"
 
 
 def until(row) -> datetime | None:
@@ -313,12 +313,46 @@ def apply_invoice(row, invoice: dict, at: datetime) -> None:
         row.state = "expired"
 
 
+def told_expiry(invoice: dict) -> bool:
+    details = invoice.get("subscriptionDetails") if isinstance(invoice.get("subscriptionDetails"), dict) else {}
+    return moment(details.get("expiredAt")) is not None
+
+
+def reckoned(row, invoice: dict, at: datetime) -> datetime:
+    details = invoice.get("subscriptionDetails") if isinstance(invoice.get("subscriptionDetails"), dict) else {}
+    start = next((found for found in (moment(details.get("startedAt")), moment(details.get("createdAt")), moment(invoice.get("paidAt")),
+                                      moment(invoice.get("createdAt"))) if found is not None), None) or naive(row.created_at)
+    period = timedelta(days=DAYS.get(row.periodicity, 30))
+    end = start + period
+    for _ in range(400):
+        if end > at:
+            break
+        end += period
+    return end
+
+
 async def refresh(row, provider, hint: datetime | None = None) -> None:
     if row.invoice_id is None:
         return
-    apply_invoice(row, await provider.invoice(row.invoice_id), now())
-    if row.state == "cancelled" and row.paid_until is None and hint is not None:
+    invoice = await provider.invoice(row.invoice_id)
+    at = now()
+    apply_invoice(row, invoice, at)
+    if row.state not in PAID or told_expiry(invoice):
+        return
+    if hint is not None and (row.paid_until is None or hint > row.paid_until):
         row.paid_until = hint
+        return
+    if row.paid_until is None or (row.state == "active" and row.paid_until <= at):
+        first = row.paid_until is None
+        row.paid_until = reckoned(row, invoice, at)
+        log.warning("lava.top invoice %s names no end of the paid period; %s is reckoned from its start", row.invoice_id, row.paid_until)
+        if first:
+            from services import incidents
+
+            await incidents.note("billing", "lava", "the invoice names no end of the paid period", detail={
+                "subscription": row.id, "player": row.player_id, "state": row.state, "periodicity": row.periodicity,
+                "reckoned": stamp(row.paid_until), "fields": sorted(invoice), "details": sorted(invoice.get("subscriptionDetails") or {}),
+            })
 
 
 def due(row, at: datetime) -> bool:

@@ -724,3 +724,38 @@ async def test_the_badge_stays_after_the_subscription_ends(setup):
     assert (body["badge"]["stage"], body["badge"]["active"], body["badge"]["tier"]["offer"]) == (3, False, OFFER)
     shown = (await (await client.get("/render/billing/badges?players=1", headers=ONE)).json())["badges"]
     assert shown["1"]["stage"] == 3 and shown["1"]["rank"] == 0
+
+
+async def test_an_active_plan_without_an_end_from_lava_gets_one_and_counts_as_paid(setup):
+    client, provider, factory = setup
+    await pay(client)
+    provider.invoices[FIRST] = {"id": FIRST, "status": "COMPLETED", "subscriptionStatus": "ACTIVE", "subscriptionDetails": {}}
+    async with factory() as session:
+        row = (await session.execute(select(BillingSubscription))).scalars().one()
+        row.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=40)
+        row.checked_at = None
+        await session.commit()
+    shown = (await (await client.get("/render/billing/status", headers=ONE)).json())["subscription"]
+    end = datetime.fromisoformat(shown["paid_until"].replace("Z", "+00:00"))
+    left = end - datetime.now(timezone.utc)
+    assert shown["state"] == "active" and timedelta(days=19) < left < timedelta(days=21)
+    from services import incidents
+    noted, = await incidents.recent("billing")
+    assert noted.stage == "lava" and '"reckoned"' in noted.detail
+    held = await subscriptions.badge(1, ())
+    assert held is not None and held["active"]
+
+
+async def test_the_webhook_end_is_taken_when_the_invoice_names_none(setup):
+    _, provider, factory = setup
+    provider.invoices[FIRST] = {"id": FIRST, "status": "COMPLETED", "subscriptionStatus": "ACTIVE"}
+    row = BillingSubscription(id="x", player_id=1, invoice_id=FIRST, plan_key=PLAN, amount="199", currency="RUB", periodicity="MONTHLY",
+                              email="a@b.c", state="pending", created_at=datetime.now(timezone.utc).replace(tzinfo=None))
+    hint = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=12)
+    await subscriptions.refresh(row, provider, hint)
+    assert row.state == "active" and row.paid_until == hint
+
+
+def test_a_stamp_of_an_aware_moment_is_still_one_timestamp():
+    aware = datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc)
+    assert subscriptions.stamp(aware) == "2026-12-01T10:00:00Z"
