@@ -346,7 +346,8 @@ class BaseCardRenderer:
             probe = Image.new("L", (200, 200), 0)
             draw = ImageDraw.Draw(probe)
             top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
-            self._draw_text(draw, (20, 60), "H", font, 255)
+            draw_text_multifont(draw, (20, 60), "H", font, self._font_fallback(font), 255,
+                                cyrillic_fallback=self._font_cyrillic_fallback(font))
             ink = probe.point(lambda a: 255 if a >= 128 else 0).getbbox()
             self._cap_shifts[key] = ((ink[1] + ink[3]) / 2 - 60 - (top + bottom) / 2) if ink else 0.0
         return self._cap_shifts[key]

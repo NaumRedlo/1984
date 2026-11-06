@@ -8,6 +8,7 @@ from db.database import get_db_session
 from db.models.best_score import UserBestScore
 from db.models.user import User
 from services.command_refresh import RefreshBusy, RefreshCooldown, requests as refresh_requests
+from services import incidents
 from services.image import card_renderer
 from utils.logger import get_logger
 from utils.osu.resolve_user import get_registered_user, get_reply_target_user, resolve_osu_query_status
@@ -329,11 +330,15 @@ async def show_profile(message: types.Message, osu_api_client, trigger_args: Tri
                 await message.answer_photo(photo=photo, reply_markup=keyboard)
             except Exception as img_err:
                 logger.warning(f"Profile card generation failed: {img_err}", exc_info=True)
-                await message.answer(t("pf.card_gen_failed", lang))
+                code = await incidents.note("bot", "pf.card", f"{type(img_err).__name__}: {img_err}", telegram_id=tg_id,
+                                            chat_id=message.chat.id, detail={"query": query, "ruleset": ruleset}, error=img_err)
+                await message.answer(t("pf.card_gen_failed", lang) + t("farm.code", lang, code=code))
 
         except Exception as e:
             logger.error(f"Error in /profile for {tg_id}: {e}", exc_info=True)
-            await message.answer(t("pf.load_error", lang))
+            code = await incidents.note("bot", "pf.load", f"{type(e).__name__}: {e}", telegram_id=tg_id,
+                                        chat_id=message.chat.id, detail={"query": query, "ruleset": ruleset}, error=e)
+            await message.answer(t("pf.load_error", lang) + t("farm.code", lang, code=code))
 
 @router.message(TextTriggerFilter("rf"))
 async def refresh_profile(message: types.Message, osu_api_client, trigger_args: TriggerArgs = None, tenant_chat_id=None):

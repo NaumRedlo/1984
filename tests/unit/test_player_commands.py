@@ -169,7 +169,13 @@ class _Bot:
         self.members = members
 
     async def get_chat_member(self, chat_id, telegram_id):
-        return self.members[(chat_id, telegram_id)]
+        found = self.members[(chat_id, telegram_id)]
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    async def get_chat(self, telegram_id):
+        raise RuntimeError("no chat")
 
 
 class _Message:
@@ -223,3 +229,42 @@ async def test_find_names_only_this_chats_members_who_linked_the_account(factory
         message = _Message(bot)
         await find.cmd_find(message, TriggerArgs("find", "x", "find x"), osu_api_client=object(), tenant_chat_id=chat)
         assert "Nobody in this chat" in message.said[0]
+
+
+async def test_find_keeps_a_linked_player_whose_membership_could_not_be_read(factory, monkeypatch):
+    import contextlib
+
+    from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
+
+    from bot.filters import TriggerArgs
+    from bot.handlers.profile import find
+
+    async with factory() as session:
+        session.add(User(chat_id=-1, telegram_id=20, osu_user_id=8, osu_username="Kept"))
+        await session.commit()
+
+    @contextlib.asynccontextmanager
+    async def session_of():
+        async with factory() as s:
+            yield s
+
+    async def resolved(_client, query):
+        return {"id": 8, "username": "Kept"}
+
+    async def english(_tg):
+        return "en"
+
+    async def allowed(*_a):
+        return True
+
+    monkeypatch.setattr(find, "get_db_session", session_of)
+    monkeypatch.setattr(find, "resolve_osu_user", resolved)
+    monkeypatch.setattr(find, "get_language", english)
+    monkeypatch.setattr(find, "ensure_dm_tenant", allowed)
+    message = _Message(_Bot({(-1, 20): TelegramNetworkError(method=None, message="timeout")}))
+    await find.cmd_find(message, TriggerArgs("find", "kept", "find kept"), osu_api_client=object(), tenant_chat_id=-1)
+    assert message.said == ['<b>Kept</b> in this chat: <a href="tg://user?id=20">Kept</a>']
+
+    message = _Message(_Bot({(-1, 20): TelegramBadRequest(method=None, message="Bad Request: user not found")}))
+    await find.cmd_find(message, TriggerArgs("find", "kept", "find kept"), osu_api_client=object(), tenant_chat_id=-1)
+    assert "Nobody in this chat" in message.said[0]

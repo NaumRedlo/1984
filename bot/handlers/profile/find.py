@@ -1,4 +1,5 @@
 from aiogram import Router, types
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import func, select
 
 from bot.filters import TextTriggerFilter, TriggerArgs
@@ -15,15 +16,34 @@ logger = get_logger("handlers.find")
 router = Router(name="find")
 
 
-async def _name_in_chat(bot, chat_id: int, telegram_id: int) -> str | None:
-    """How the member is called in the chat, or None when they are no longer in it."""
+GONE = ("user not found", "participant_id_invalid", "member not found", "user_not_participant")
+
+
+async def _name_in_chat(bot, chat_id: int, user: User) -> str | None:
     try:
-        member = await bot.get_chat_member(chat_id, telegram_id)
-    except Exception:
-        return None
+        member = await bot.get_chat_member(chat_id, user.telegram_id)
+    except TelegramBadRequest as exc:
+        if any(word in str(exc).lower() for word in GONE):
+            return None
+        logger.warning(f"find: the member {user.telegram_id} of {chat_id} was not read: {exc}")
+        return await _known_name(bot, user)
+    except Exception as exc:
+        logger.warning(f"find: the member {user.telegram_id} of {chat_id} was not read: {exc}")
+        return await _known_name(bot, user)
     if member.status in ("left", "kicked"):
         return None
-    return member.user.full_name or member.user.username or str(telegram_id)
+    return member.user.full_name or member.user.username or str(user.telegram_id)
+
+
+async def _known_name(bot, user: User) -> str:
+    try:
+        person = await bot.get_chat(user.telegram_id)
+        named = person.full_name or person.username
+        if named:
+            return named
+    except Exception:
+        pass
+    return user.osu_username or str(user.telegram_id)
 
 
 @router.message(TextTriggerFilter("find"))
@@ -53,7 +73,7 @@ async def cmd_find(message: types.Message, trigger_args: TriggerArgs, osu_api_cl
 
     people = []
     for user in linked:
-        name = await _name_in_chat(message.bot, tenant_chat_id, user.telegram_id)
+        name = await _name_in_chat(message.bot, tenant_chat_id, user)
         if name:
             people.append(f'<a href="tg://user?id={user.telegram_id}">{escape_html(name)}</a>')
     if not people:

@@ -73,3 +73,16 @@ def test_a_title_takes_the_subscription_colour_only_when_asked():
     assert purple[2] > purple[1], "a purple tier makes a purple title"
     assert tint.worn() is None, "naming the colour leaves no palette worn"
     assert asyncio.run(billing.palette_of(None, billing.CREATORS[0], "tint_titles")) == {"rank": 2, "stage": 4}
+
+
+def test_a_profile_in_a_shimmering_palette_draws_its_mark_even_as_the_first_card(monkeypatch):
+    import sys
+    sys.path.insert(0, "tests/unit")
+    from services.image.base import BaseCardRenderer
+    from services.image.core import CardRenderer
+    from test_profile_card import _data
+
+    monkeypatch.setattr(BaseCardRenderer, "_cap_shifts", {})
+    mark = {"rank": 2, "stage": 4}
+    card = CardRenderer().generate_profile_dashboard(_data(dossier_mark=mark, palette=dict(mark)), None, None, [])
+    assert card.getvalue()
