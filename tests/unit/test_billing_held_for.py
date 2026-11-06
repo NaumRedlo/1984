@@ -58,3 +58,15 @@ async def test_an_osu_account_proven_by_oauth_brings_its_subscription_whatever_t
         await session.commit()
     player_id, held = await billing.held_for(77, None, 111, owns_osu=True)
     assert player_id == 3 and held["active"]
+
+@pytest.mark.asyncio
+async def test_an_active_plan_that_lava_gave_no_end_still_counts_in_the_bot(factory):
+    async with factory() as session:
+        session.add(Player(id=9, osu_user_id=18767984, osu_username="kazak", telegram_id=1308943144))
+        await session.flush()
+        row = paid(9)
+        row.paid_until = None
+        session.add(row)
+        await session.commit()
+    player_id, held = await billing.held_for(1308943144, 9, 18767984, owns_osu=True)
+    assert player_id == 9 and held["active"] and held["name"] == "Lava"

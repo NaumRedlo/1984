@@ -117,10 +117,14 @@ def view(row, at: datetime, change: dict | None = None) -> dict:
     }
 
 
+def counted(row, at: datetime) -> bool:
+    return row.paid_until is not None or has_access(row, at)
+
+
 def lived(row, at: datetime) -> timedelta:
-    if row.paid_until is None:
+    if not counted(row, at):
         return timedelta()
-    end = row.cancelled_at if row.state == "replaced" and row.cancelled_at is not None else until(row)
+    end = row.cancelled_at if row.state == "replaced" and row.cancelled_at is not None else (until(row) or at)
     return max(min(end, at) - row.created_at, timedelta())
 
 
@@ -151,7 +155,7 @@ def tier_order(prices) -> list[str]:
 
 
 def badge_of(rows, choice, prices, at: datetime) -> dict | None:
-    paid = [row for row in rows if row.paid_until is not None]
+    paid = [row for row in rows if counted(row, at)]
     if not paid:
         return None
     order = tier_order(prices)
@@ -225,7 +229,7 @@ async def tint(player_id: int, what: str, on: bool) -> None:
 async def wear(player_id: int, show_badge, show_title, title_offer, prices) -> dict:
     async with AsyncSessionFactory() as session:
         rows = await rows_of(session, player_id)
-        owned = {offer_of(row) for row in rows if row.paid_until is not None}
+        owned = {offer_of(row) for row in rows if counted(row, now())}
         if not owned:
             raise Refused("none")
         if title_offer is not None and title_offer not in owned:
