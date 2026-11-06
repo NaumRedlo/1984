@@ -540,3 +540,14 @@ async def test_a_waiting_worker_gets_a_new_job_as_soon_as_it_is_offered(farm, tm
     started = loop.time()
     taken = await asked
     assert (await taken.json())["id"] == second.id and loop.time() - started < 1.0
+
+
+def test_the_house_skin_plays_the_maps_hitsounds_and_every_other_skin_its_own():
+    from services.render_farm import orders
+    from services.render_farm.queue import STANDARD
+
+    assert orders.render_settings(None)["play"]["map_sounds"] is True
+    assert orders.render_settings({"name": "1984"})["play"]["map_sounds"] is True
+    picked = orders.render_settings({"name": "Rafis"})
+    assert picked["play"]["map_sounds"] is False and picked["play"]["storyboard"] is True and picked["width"] == 1920
+    assert STANDARD["play"]["map_sounds"] is False

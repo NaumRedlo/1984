@@ -85,6 +85,12 @@ async def board_chat(telegram_id: int, chat_id: int) -> int:
                 return pinned
     return chat_id
 
+HOUSE_SKINS = frozenset({"1984"})
+
+def render_settings(skin: Optional[dict[str, Any]]) -> dict[str, Any]:
+    house = skin is None or str(skin.get("name") or "").casefold() in HOUSE_SKINS
+    return {**STANDARD, "play": {**STANDARD["play"], "map_sounds": house}}
+
 SCORES_WAIT = 4.0
 _refreshing: dict[tuple[int, int], asyncio.Task] = {}
 
@@ -249,7 +255,7 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
         meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
         job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
                           requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta, ruleset=head.mode,
-                          leaderboard=rivals)
+                          leaderboard=rivals, settings=render_settings(skin))
         if head.mode == 3:
             await message.reply(t("farm.mania_note", lang))
         status = await message.reply(status_of(job, lang))
