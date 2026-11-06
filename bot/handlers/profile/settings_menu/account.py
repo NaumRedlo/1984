@@ -14,7 +14,7 @@ router = Router(name="settings_account")
 
 async def _account_view(tg_id: int, lang: str = "en"):
     from services.oauth.token_manager import has_oauth
-    from services.render_farm.billing import held_of
+    from services.render_farm.billing import held_for
     async with get_db_session() as session:
         user = await get_registered_identity_user(session, tg_id)
         linked = bool(user and user.osu_user_id)
@@ -23,8 +23,12 @@ async def _account_view(tg_id: int, lang: str = "en"):
         osu_id = user.osu_user_id if user else None
     oauth = await has_oauth(tg_id) if linked else False
     try:
-        held = await held_of(player_id, osu_id) if linked else None
-    except Exception:
+        held = (await held_for(tg_id, player_id, osu_id))[1] if linked else None
+    except Exception as exc:
+        from services import incidents
+
+        await incidents.note("billing", "account", f"{type(exc).__name__}: {exc}", telegram_id=tg_id,
+                             detail={"player": player_id, "osu": osu_id}, error=exc)
         held = None
 
     if not linked:
@@ -68,13 +72,13 @@ async def cb_account_tint(callback: types.CallbackQuery, tenant_chat_id=None, la
         await callback.answer()
         return
     from services.render_farm import subscriptions
-    from services.render_farm.billing import held_of
+    from services.render_farm.billing import held_for
     async with get_db_session() as session:
         user = await get_registered_identity_user(session, callback.from_user.id)
         player_id = getattr(user, "player_id", None) if user else None
         osu_id = user.osu_user_id if user else None
-    held = await held_of(player_id, osu_id) if player_id else None
-    if held is None or not held["active"]:
+    player_id, held = await held_for(callback.from_user.id, player_id, osu_id) if user else (None, None)
+    if held is None or not held["active"] or not player_id:
         await callback.answer()
         return
     await subscriptions.tint(player_id, what, not held[what])
