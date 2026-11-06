@@ -437,7 +437,8 @@ def test_the_chat_board_turns_into_rivals_and_the_choice_is_kept_per_player(tmp_
     assert skins.board_for(7) == "global"
     skins.choose_board(7, "chat")
     assert skins.board_for(7) == "chat" and skins.board_for(8) == "global"
-    assert STANDARD["play"] == {"map_sounds": False, "storyboard": True, "map_video": True}
+    assert STANDARD["play"] == {"map_sounds": False, "storyboard": True, "map_video": True,
+                                "pp_counter": True, "strain_graph": True}
 
 
 def test_a_chat_without_plays_of_the_map_falls_back_to_the_global_top(monkeypatch):

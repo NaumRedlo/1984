@@ -14,7 +14,8 @@ MAX_AGE_SECONDS = 3600.0
 MAX_ATTEMPTS = 3
 
 STANDARD = {"width": 1920, "height": 1080, "fps": 60, "loudness": -16.0,
-            "play": {"map_sounds": False, "storyboard": True, "map_video": True}}
+            "play": {"map_sounds": False, "storyboard": True, "map_video": True,
+                     "pp_counter": True, "strain_graph": True}}
 
 RIVALS = 50
 
