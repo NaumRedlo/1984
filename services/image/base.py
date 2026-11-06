@@ -325,14 +325,52 @@ class BaseCardRenderer:
         if badge is None:
             return int(x)
         k = side / 160
-        img.paste(badge, (int(round(x - left * k)), int(round(cy - (top + bottom) / 2 * k))), badge)
-        return int(round(x + (right - left) * k))
+        ink = badge.getchannel("A").point(lambda a: 255 if a >= 96 else 0).getbbox()
+        if ink is None:
+            return int(x)
+        ink_left, ink_top, ink_right, ink_bottom = ink
+        img.paste(badge, (int(round(x - ink_left)), int(round(cy - (ink_top + ink_bottom - 1) / 2))), badge)
+        return int(round(x + (ink_right - ink_left)))
 
     def _name_mark(self, img: Image.Image, draw: ImageDraw.ImageDraw, right: float, cy: float, font,
                    mark: Optional[dict]) -> int:
         top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
         cap = bottom - top
-        return self._subscriber_mark(img, right + round(cap * 0.65), cy, mark, cap * 1.05)
+        return self._subscriber_mark(img, right + round(cap * 0.65), cy + self._cap_shift(font), mark, cap * 1.05)
+
+    _cap_shifts: dict = {}
+
+    def _cap_shift(self, font) -> float:
+        key = (getattr(font, "path", None), getattr(font, "size", None), id(font))
+        if key not in self._cap_shifts:
+            probe = Image.new("L", (200, 200), 0)
+            draw = ImageDraw.Draw(probe)
+            top, bottom = draw.textbbox((0, 0), "H", font=font)[1::2]
+            self._draw_text(draw, (20, 60), "H", font, 255)
+            ink = probe.point(lambda a: 255 if a >= 128 else 0).getbbox()
+            self._cap_shifts[key] = ((ink[1] + ink[3]) / 2 - 60 - (top + bottom) / 2) if ink else 0.0
+        return self._cap_shifts[key]
+
+    def _subscriber_title(self, img: Image.Image, xy: tuple, text: str, font, palette: Optional[dict], fallback) -> int:
+        colour = tint.title_colour(palette) if palette else None
+        if colour is None:
+            return self._draw_text(ImageDraw.Draw(img), xy, text, font, fallback)
+        if int(palette.get("stage") or 1) < 2:
+            return self._draw_text(ImageDraw.Draw(img), xy, text, font, colour)
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        right = self._draw_text(ImageDraw.Draw(layer), xy, text, font, (255, 255, 255))
+        box = layer.getbbox()
+        if box is None:
+            return right
+        left, top, far, bottom = box
+        held = tint.worn()
+        tint.wear(palette)
+        try:
+            fill = tint.strip(max(1, far - left), max(1, bottom - top), (226, 72, 72), diagonal=True)
+        finally:
+            tint.wear(held)
+        img.paste(fill, (left, top), layer.getchannel("A").crop(box))
+        return right
 
     def _team_flag(self, img: Image.Image, x: float, cy: float, flag: Optional[Image.Image], height: int,
                    outline: bool = False) -> int:

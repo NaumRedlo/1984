@@ -373,7 +373,7 @@ class ProfileCardMixin:
                 nr = self._text_mid(draw, nx, cy, name, fonts["name"], COL_WHITE)
                 mark = data.get("dossier_mark")
                 if mark:
-                    nr = self._pf_dossier_mark(img, nr + 24, cy, mark)
+                    nr = self._pf_dossier_mark(img, nr + 24, cy + self._cap_shift(fonts["name"]), mark)
                 if data.get("is_supporter"):
                     self._pf_supporter_badge(img, nr + 14, int(round(cy)), int(data.get("support_level") or 1))
             elif kind == "handle":

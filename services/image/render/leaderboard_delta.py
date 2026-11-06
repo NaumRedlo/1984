@@ -150,8 +150,15 @@ class LeaderboardDeltaRenderer(BaseCardRenderer):
             ink = tint.name(colors.TEXT_PRIMARY)
             if subtitle:
                 ny = cy - 18
-                self._draw_text(draw, (name_x, cy + 3), subtitle, self.font_small,
-                                row.get("title_color") or colors.TEXT_MUTED)
+                title = row.get("title_label") or ""
+                rest = subtitle[len(title):] if title else subtitle
+                after = name_x
+                if title:
+                    after = self._subscriber_title(img, (name_x, cy + 3), title, self.font_small,
+                                                   row.get("title_palette"), row.get("title_color") or colors.TEXT_MUTED)
+                draw = ImageDraw.Draw(img)
+                if rest:
+                    self._draw_text(draw, (after, cy + 3), rest, self.font_small, colors.TEXT_MUTED)
             else:
                 ny = cy - self._text_size(draw, name, self.font_label)[1] // 2 - 2
             top, bottom = draw.textbbox((0, 0), "H", font=self.font_label)[1::2]

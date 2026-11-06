@@ -167,6 +167,20 @@ async def palette_of(player_id, osu_id=None, what: str = "tint_cards") -> dict |
     return {"rank": held["rank"], "stage": held["stage"]}
 
 
+async def title_palettes_of(players: dict) -> dict:
+    from sqlalchemy import select
+
+    wanted = {int(player) for player in players if player}
+    paying: set[int] = set()
+    if wanted:
+        async with AsyncSessionFactory() as session:
+            found = await session.execute(select(subscriptions.BillingSubscription.player_id).where(subscriptions.BillingSubscription.player_id.in_(wanted)).distinct())
+            paying = set(found.scalars().all())
+    chosen = [(player, osu_id) for player, osu_id in players.items() if (player and int(player) in paying) or osu_id in CREATORS]
+    found = await asyncio.gather(*(palette_of(player, osu_id, "tint_titles") for player, osu_id in chosen))
+    return {player: palette for (player, _), palette in zip(chosen, found) if palette}
+
+
 async def player_of_osu(osu_id) -> int | None:
     if not osu_id:
         return None

@@ -29,6 +29,14 @@ async def mark_rows(session, rows) -> None:
     for row in rows:
         mark = marks.get(row.get("player_id"))
         row["palette"] = row["mark"] = mark
+    try:
+        titled = await billing.title_palettes_of({row.get("player_id"): row.get("osu_user_id") for row in rows
+                                                  if row.get("player_id") or row.get("osu_user_id")})
+    except Exception as exc:
+        logger.warning("subscriber title colours for a leaderboard were not read: %s", exc)
+        return
+    for row in rows:
+        row["title_palette"] = titled.get(row.get("player_id"))
 
 
 _flags: dict = {}

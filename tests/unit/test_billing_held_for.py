@@ -70,3 +70,22 @@ async def test_an_active_plan_that_lava_gave_no_end_still_counts_in_the_bot(fact
         await session.commit()
     player_id, held = await billing.held_for(1308943144, 9, 18767984, owns_osu=True)
     assert player_id == 9 and held["active"] and held["name"] == "Lava"
+
+@pytest.mark.asyncio
+async def test_title_colours_go_to_paying_players_who_keep_them_on(factory):
+    from db.models.billing import BillingBadge
+    async with factory() as session:
+        session.add_all([Player(id=1, osu_user_id=1, osu_username="a"), Player(id=2, osu_user_id=2, osu_username="b"), Player(id=3, osu_user_id=3, osu_username="c")])
+        await session.flush()
+        session.add_all([paid(1), paid(2), BillingBadge(player_id=2, show_badge=True, show_title=True, tint_titles=False)])
+        await session.commit()
+    from types import SimpleNamespace
+    async def prices():
+        return (SimpleNamespace(offer_id="lava", amount="199", currency="RUB", periodicity="MONTHLY"),)
+    billing_prices, billing._prices = billing._prices, prices
+    try:
+        found = await billing.title_palettes_of({1: 1, 2: 2, 3: 3, None: billing.CREATORS[0]})
+    finally:
+        billing._prices = billing_prices
+    assert set(found) == {1, None}
+    assert found[None] == billing.CREATOR_MARK
