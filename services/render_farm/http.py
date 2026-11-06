@@ -1755,7 +1755,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/job/{job_id}/result", job_result),
         web.post("/render/job/{job_id}/give-back", job_give_back),
         web.get("/render/farm", farm),
-    ] + _duel_routes(guard) + _story_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+    ] + _duel_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
 
 def _sessions():
     from db.database import AsyncSessionFactory
@@ -1779,11 +1779,6 @@ def _duel_routes(guard) -> list[web.RouteDef]:
     from services.duels import http as duel_http
 
     return duel_http.routes(guard, _linked, _sessions, lambda: _osu)
-
-def _story_routes(guard) -> list[web.RouteDef]:
-    from services.story import http as story_http
-
-    return story_http.routes(guard, _linked, _sessions, lambda: _osu)
 
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:
