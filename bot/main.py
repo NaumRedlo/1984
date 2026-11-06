@@ -130,10 +130,8 @@ class App:
         await run_all_migrations(engine)
 
         from services.render_farm import invites as farm_invites
-        from services.render_farm import trust as farm_trust
 
         await farm_invites.load()
-        await farm_trust.load()
 
         from utils.osu import assay_service
 

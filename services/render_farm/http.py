@@ -13,8 +13,8 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, trust, videos
-from services.render_farm.queue import STANDARD, RenderQueue, queue as default_queue
+from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, videos
+from services.render_farm.queue import STANDARD, RenderQueue, Serves, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
 from utils.ttl_cache import TTLCache
@@ -82,16 +82,18 @@ def _authorised(request: web.Request) -> bool:
         return True
     return invites.known(offered)
 
-def _limited_to(request: web.Request) -> Optional[tuple[int, Optional[int]]]:
-    offered = _token(request)
-    if RENDER_WORKER_TOKEN and secrets.compare_digest(offered, RENDER_WORKER_TOKEN):
+def _shared(request: web.Request) -> bool:
+    return bool(RENDER_WORKER_TOKEN) and secrets.compare_digest(_token(request), RENDER_WORKER_TOKEN)
+
+async def _serves(request: web.Request, line: RenderQueue) -> Optional[Serves]:
+    if _shared(request):
         return None
-    owner = invites.owner(offered)
+    owner = invites.owner(_token(request))
     if owner is None:
-        return (-1, None)
-    if trust.trusted(owner.telegram_id):
-        return None
-    return (owner.telegram_id, owner.player_id)
+        return Serves(-1)
+    chats = frozenset(job.chat_id for job in line.waiting() if job.chat_id < 0)
+    inside = frozenset([chat for chat in chats if owner.telegram_id and await members.is_member(_bot, chat, owner.telegram_id)])
+    return Serves(owner.telegram_id, owner.player_id, inside)
 
 CARD_KEEP = 300.0
 CLAIM_WAIT_MOST = 25.0
@@ -288,8 +290,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes(),
-                                  "trusted": _limited_to(request) is None})
+        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes()})
 
     async def claim(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -306,13 +307,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         rulesets = frozenset({0} | {r for r in told if isinstance(r, int) and not isinstance(r, bool) and 0 <= r <= 3}) if isinstance(told, list) else frozenset({0})
         wait = said.get("wait")
         wait = min(float(wait), CLAIM_WAIT_MOST) if isinstance(wait, (int, float)) and not isinstance(wait, bool) and wait > 0 else 0.0
-        only_for = _limited_to(request)
         until = asyncio.get_running_loop().time() + wait
         while True:
             if request.transport is None or request.transport.is_closing():
                 return web.Response(status=204)
             arrival = line.arrival()
-            job = line.claim(key, _worker(request)[:128], rulesets=rulesets, only_for=only_for)
+            job = line.claim(key, _worker(request)[:128], rulesets=rulesets, only_for=await _serves(request, line))
             left = until - asyncio.get_running_loop().time()
             if job is not None or left <= 0:
                 break

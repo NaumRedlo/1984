@@ -19,8 +19,8 @@ import db.models
 from db.database import Base
 from db.models.player import Player
 from services.render_farm import http as farm_http
-from services.render_farm import invites, orders, skins, trust
-from services.render_farm.queue import MAX_ATTEMPTS, RenderQueue, State
+from services.render_farm import invites, orders, skins
+from services.render_farm.queue import MAX_ATTEMPTS, RenderQueue, Serves, State
 from services.render_farm.roster import Roster
 from utils.osr import header
 
@@ -553,38 +553,43 @@ def test_the_house_skin_plays_the_maps_hitsounds_and_every_other_skin_its_own():
     assert picked["play"]["map_sounds"] is False and picked["play"]["storyboard"] is True and picked["width"] == 1920
     assert STANDARD["play"]["map_sounds"] is False
 
-def test_a_limited_worker_is_offered_only_its_owners_jobs():
+def test_a_worker_takes_its_owners_jobs_and_jobs_of_chats_its_owner_is_in():
     line = RenderQueue()
-    chat = line.offer("a.osr", "chat", beatmap_md5=HASH, requester=1, chat_id=-5, now=0.0)
-    app_only = line.offer("b.osr", "app", beatmap_md5=HASH, requester=0, requester_player=31, now=1.0)
-    stranger = line.offer("c.osr", "other app", beatmap_md5=HASH, requester=0, requester_player=32, now=2.0)
-    assert line.claim("w9", only_for=(-1, None), now=3.0) is None
-    assert line.claim("w0", only_for=(0, None), now=3.0) is None
-    assert line.claim("w31", only_for=(0, 31), now=3.0) is app_only
-    assert line.claim("w2", only_for=(2, None), now=3.0) is None
-    assert line.claim("w1", only_for=(1, 7), now=3.0) is chat
-    assert line.claim("trusted", now=3.0) is stranger
+    group = line.offer("a.osr", "group", beatmap_md5=HASH, requester=1, chat_id=-5, now=0.0)
+    direct = line.offer("b.osr", "direct", beatmap_md5=HASH, requester=1, chat_id=1, now=1.0)
+    app_only = line.offer("c.osr", "app", beatmap_md5=HASH, requester=0, requester_player=31, now=2.0)
+    other_app = line.offer("d.osr", "other app", beatmap_md5=HASH, requester=0, requester_player=32, now=3.0)
+    assert line.claim("nobody", only_for=Serves(-1), now=4.0) is None
+    assert line.claim("outsider", only_for=Serves(2, None, frozenset({-9})), now=4.0) is None
+    assert line.claim("unlinked", only_for=Serves(0, None), now=4.0) is None
+    assert line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is group
+    assert line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is None
+    assert line.claim("player", only_for=Serves(0, 31), now=4.0) is app_only
+    assert line.claim("sender", only_for=Serves(1, 7), now=4.0) is direct
+    assert line.claim("shared token", now=4.0) is other_app
 
 @pytest.mark.asyncio
-async def test_a_paired_device_without_trust_cannot_take_a_chat_render(farm, monkeypatch):
+async def test_a_paired_device_renders_for_its_owners_chats_and_no_others(farm, monkeypatch):
     client, line, who, job = farm
-    invites.remember("tester-app", invites.Owner(77, "Tester", 5))
-    invites.remember("stranger-app", invites.Owner(88, "Stranger", 6))
-    monkeypatch.setattr(trust, "_owners", {77})
-    monkeypatch.setattr(trust, "ADMIN_IDS", [])
+    invites.remember("member-app", invites.Owner(77, "Member", 5))
+    invites.remember("outsider-app", invites.Owner(88, "Outsider", 6))
+    asked = []
+
+    async def is_member(bot, chat_id, telegram_id):
+        asked.append((chat_id, telegram_id))
+        return (chat_id, telegram_id) == (-5, 77)
+
+    monkeypatch.setattr(farm_http.members, "is_member", is_member)
     try:
-        stranger = {"Authorization": "Bearer stranger-app", "X-Render-Worker": "Laptop"}
-        hello = await (await client.get("/render/hello", headers=stranger)).json()
-        assert hello["trusted"] is False and hello["agree"] is True
-        assert (await client.post("/render/claim", json={}, headers=stranger)).status == 204
-        assert job.state is State.WAITING
-        own = line.offer("own.osr", "own", beatmap_md5=HASH, requester=88)
-        taken = await client.post("/render/claim", json={}, headers=stranger)
+        outsider = {"Authorization": "Bearer outsider-app", "X-Render-Worker": "Laptop"}
+        assert (await client.post("/render/claim", json={}, headers=outsider)).status == 204
+        assert job.state is State.WAITING and (-5, 88) in asked
+        own = line.offer("own.osr", "own", beatmap_md5=HASH, requester=88, chat_id=88)
+        taken = await client.post("/render/claim", json={}, headers=outsider)
         assert taken.status == 200 and (await taken.json())["id"] == own.id
-        tester = {"Authorization": "Bearer tester-app", "X-Render-Worker": "Tower"}
-        assert (await (await client.get("/render/hello", headers=tester)).json())["trusted"] is True
-        given = await client.post("/render/claim", json={}, headers=tester)
+        member = {"Authorization": "Bearer member-app", "X-Render-Worker": "Tower"}
+        given = await client.post("/render/claim", json={}, headers=member)
         assert given.status == 200 and (await given.json())["id"] == job.id
     finally:
-        invites.forget(invites.digest("tester-app"))
-        invites.forget(invites.digest("stranger-app"))
+        invites.forget(invites.digest("member-app"))
+        invites.forget(invites.digest("outsider-app"))

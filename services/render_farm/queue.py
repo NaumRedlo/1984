@@ -116,6 +116,9 @@ class Job:
             return self.requester == telegram_id
         return player_id is not None and self.requester == 0 and self.requester_player == player_id
 
+    def served_by(self, worker: "Serves") -> bool:
+        return self.belongs_to(worker.telegram_id, worker.player_id) or (self.chat_id < 0 and self.chat_id in worker.chats)
+
     def handed(self) -> dict[str, Any]:
         skin = None
         if self.skin:
@@ -145,6 +148,12 @@ def _trouble(job: Job, worker: str, reason: str) -> None:
     }))
     _noting.add(task)
     task.add_done_callback(_noting.discard)
+
+@dataclass(frozen=True)
+class Serves:
+    telegram_id: int
+    player_id: Optional[int] = None
+    chats: frozenset[int] = frozenset()
 
 class RenderQueue:
     def __init__(self) -> None:
@@ -208,11 +217,11 @@ class RenderQueue:
 
     def claim(self, worker: str, name: str = "", *, now: Optional[float] = None,
               rulesets: frozenset[int] = frozenset({0}),
-              only_for: Optional[tuple[int, Optional[int]]] = None) -> Optional[Job]:
+              only_for: Optional["Serves"] = None) -> Optional[Job]:
         now = now if now is not None else monotonic()
         self.sweep(now=now)
         pending = sorted((j for j in self._jobs.values()
-                          if j.state is State.WAITING and j.ruleset in rulesets and (only_for is None or j.belongs_to(*only_for))),
+                          if j.state is State.WAITING and j.ruleset in rulesets and (only_for is None or j.served_by(only_for))),
                          key=lambda j: j.created)
         if not pending:
             return None
