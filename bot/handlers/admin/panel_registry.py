@@ -40,6 +40,14 @@ CATEGORIES: tuple[Category, ...] = (
         CommandSpec("members", "Состав бесед",
                     "Сверить игроков каждой беседы с Telegram; «members sync» применяет изменения.", args="[sync]"),
     )),
+    Category("farm", "🎬", "Рендер", (
+        CommandSpec("workers", "Работники",
+                    "Кто в сети, кто доверен и кто рендерит только свои реплеи."),
+        CommandSpec("trust", "Доверить",
+                    "Устройства владельца начинают брать рендеры из бесед.", args="<telegram_id>"),
+        CommandSpec("untrust", "Снять доверие",
+                    "Устройства владельца рендерят только свои реплеи.", args="<telegram_id>"),
+    )),
     Category("incidents", "🧯", "Сбои", (
         CommandSpec("incidents", "Последние сбои",
                     "Отказы и ошибки с кодами; «incidents farm» только рендер.", args="[farm|bot] [N]"),

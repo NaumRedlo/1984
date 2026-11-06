@@ -12,8 +12,8 @@ from urllib.parse import unquote
 from aiogram import Bot, types
 from aiohttp import web
 
-from config.settings import ADMIN_IDS, APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_TRUSTED_OWNERS, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, videos
+from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
+from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, trust, videos
 from services.render_farm.queue import STANDARD, RenderQueue, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -89,7 +89,7 @@ def _limited_to(request: web.Request) -> Optional[tuple[int, Optional[int]]]:
     owner = invites.owner(offered)
     if owner is None:
         return (-1, None)
-    if owner.telegram_id and (owner.telegram_id in ADMIN_IDS or owner.telegram_id in RENDER_TRUSTED_OWNERS):
+    if trust.trusted(owner.telegram_id):
         return None
     return (owner.telegram_id, owner.player_id)
 

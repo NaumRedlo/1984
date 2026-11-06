@@ -64,7 +64,9 @@ job (`POST /render/claim`), fetches the replay and the chosen skin
 reports progress (`/heartbeat`) and uploads the video (`/result`) or hands the
 job back (`/give-back`); `/render/farm` lists who is online. Only trusted
 workers take other people's jobs: the shared `RENDER_WORKER_TOKEN`, devices of
-`ADMIN_IDS` and devices of the Telegram ids in `RENDER_TRUSTED_OWNERS`. Any
+`ADMIN_IDS` and devices of owners an admin trusted with `trust <telegram_id>`
+(the admin panel's «Рендер» section; `workers` lists them, `untrust` takes it
+back; kept in `bot_settings` under `render_trusted_owners`). Any
 other paired device renders only its own owner's jobs, and `/render/hello`
 tells it so with `"trusted": false`. A job is leased for
 90 seconds at a time and goes back in line when its worker goes quiet; after

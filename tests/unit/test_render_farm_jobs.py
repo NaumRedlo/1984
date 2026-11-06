@@ -19,7 +19,7 @@ import db.models
 from db.database import Base
 from db.models.player import Player
 from services.render_farm import http as farm_http
-from services.render_farm import invites, orders, skins
+from services.render_farm import invites, orders, skins, trust
 from services.render_farm.queue import MAX_ATTEMPTS, RenderQueue, State
 from services.render_farm.roster import Roster
 from utils.osr import header
@@ -570,8 +570,8 @@ async def test_a_paired_device_without_trust_cannot_take_a_chat_render(farm, mon
     client, line, who, job = farm
     invites.remember("tester-app", invites.Owner(77, "Tester", 5))
     invites.remember("stranger-app", invites.Owner(88, "Stranger", 6))
-    monkeypatch.setattr(farm_http, "RENDER_TRUSTED_OWNERS", frozenset({77}))
-    monkeypatch.setattr(farm_http, "ADMIN_IDS", [])
+    monkeypatch.setattr(trust, "_owners", {77})
+    monkeypatch.setattr(trust, "ADMIN_IDS", [])
     try:
         stranger = {"Authorization": "Bearer stranger-app", "X-Render-Worker": "Laptop"}
         hello = await (await client.get("/render/hello", headers=stranger)).json()

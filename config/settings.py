@@ -40,7 +40,6 @@ RENDER_OPEN_TO_ALL: bool = _raw_render_ids.strip() == "*"
 RENDER_TESTER_IDS: list[int] = [int(x.strip()) for x in _raw_render_ids.split(",") if x.strip().isdigit()]
 
 RENDER_WORKER_TOKEN = os.getenv("RENDER_WORKER_TOKEN", "")
-RENDER_TRUSTED_OWNERS: frozenset[int] = frozenset(int(x.strip()) for x in os.getenv("RENDER_TRUSTED_OWNERS", "").split(",") if x.strip().isdigit())
 
 RENDER_SKINS_DIR = os.getenv("RENDER_SKINS_DIR", os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")), "data", "skins"))
 RENDER_SKIN_MOST = int(os.getenv("RENDER_SKIN_MOST", str(64 * 1024 * 1024)))
