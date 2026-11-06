@@ -11,6 +11,8 @@ FOLDER = Path(__file__).resolve().parents[2] / "assets" / "story"
 KINDS = ("scene", "task", "choice", "end")
 OUTCOMES = ("passed", "fc", "ss")
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
+PLACES = frozenset({"player"})
 OPTIONS_LEAST = 2
 OPTIONS_MOST = 3
 ALLOWED_MODS = frozenset({"NF", "EZ", "HD", "HR", "DT", "NC", "HT", "FL", "SD", "PF"})
@@ -99,6 +101,9 @@ def _text(raw: Any, where: str) -> Words:
         value = raw.get(lang)
         if not isinstance(value, str) or not value.strip():
             raise ChapterError(f"{where}: no {lang} text")
+        unknown = sorted(set(PLACEHOLDER.findall(value)) - PLACES)
+        if unknown:
+            raise ChapterError(f"{where}: {lang} text names {', '.join('{' + one + '}' for one in unknown)}, only {{player}} is known")
         said[lang] = value.strip()
     return Words(**said)
 

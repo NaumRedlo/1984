@@ -11,7 +11,7 @@ id = "welcome"
 kind = "scene"
 next = "check"
 lines = [
-  { who = "archivist", ru = "Гражданин, добро пожаловать в Министерство Точности. Здесь учитывают каждый клик, каждое попадание и каждый промах.", en = "Citizen, welcome to the Ministry of Accuracy. Every click is counted here, every hit and every miss." },
+  { who = "archivist", ru = "{player}, добро пожаловать в Министерство Точности. Здесь учитывают каждый клик, каждое попадание и каждый промах.", en = "{player}, welcome to the Ministry of Accuracy. Every click is counted here, every hit and every miss." },
   { who = "archivist", ru = "Не пугайтесь. Промахи тоже учитывают, но я пишу их карандашом.", en = "Don't be alarmed. Misses are counted too, but I write them in pencil." },
   { who = "archivist", ru = "Для начала обычная проверка. Пройдите одну карту, а я посмотрю, как вы держите ритм.", en = "First, a routine check. Pass one map and I'll see how you keep the rhythm." },
 ]

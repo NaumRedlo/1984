@@ -85,8 +85,13 @@ async def _assign(session, chapter: written.Chapter, progress: Progress, player_
     return True
 
 
-def _view(chapter: written.Chapter, progress: Progress, lang: str) -> dict[str, Any]:
-    body = shown(chapter, progress, lang)
+async def _name(session, player_id: int) -> str:
+    player = await session.get(Player, player_id)
+    return (player.osu_username or "") if player is not None else ""
+
+
+def _view(chapter: written.Chapter, progress: Progress, lang: str, player: str = "") -> dict[str, Any]:
+    body = shown(chapter, progress, lang, player)
     if body["kind"] == "task" and progress.task is None:
         body["task"]["unavailable"] = True
     body["done"] = list(progress.done)
@@ -101,7 +106,7 @@ async def state(factory, player_id: int, lang: str) -> dict[str, Any]:
             if chapter.steps[progress.step].kind == "task" and progress.task is None:
                 if await _assign(session, chapter, progress, player_id, eased=False):
                     await _save(session, player_id, progress)
-            return _view(chapter, progress, lang)
+            return _view(chapter, progress, lang, await _name(session, player_id))
 
 
 async def _move(factory, player_id: int, lang: str, change: Callable[[written.Chapter, Progress], Progress]) -> dict[str, Any]:
@@ -113,7 +118,7 @@ async def _move(factory, player_id: int, lang: str, change: Callable[[written.Ch
             if chapter.steps[progress.step].kind == "task" and progress.task is None:
                 await _assign(session, chapter, progress, player_id, eased=False)
             await _save(session, player_id, progress)
-            return _view(chapter, progress, lang)
+            return _view(chapter, progress, lang, await _name(session, player_id))
 
 
 async def next_step(factory, player_id: int, step: Optional[str], lang: str) -> dict[str, Any]:
@@ -180,7 +185,7 @@ async def check(factory, osu, player_id: int, step: Optional[str], lang: str, cl
                 if after.steps[progress.step].kind == "task" and progress.task is None:
                     await _assign(session, after, progress, player_id, eased=False)
                 await _save(session, player_id, progress)
-                return {**_view(after, progress, lang), "checked": {"done": True, "outcomes": sorted(outcomes)}}
+                return {**_view(after, progress, lang, await _name(session, player_id)), "checked": {"done": True, "outcomes": sorted(outcomes)}}
             tries = max(progress.task.tries, tried)
             progress.task.tries = tries
             eased = False
@@ -190,4 +195,4 @@ async def check(factory, osu, player_id: int, step: Optional[str], lang: str, cl
                 if not eased:
                     progress.task.eased = True
             await _save(session, player_id, progress)
-            return {**_view(chapter, progress, lang), "checked": {"done": False, "tries": tries, "eased": eased}}
+            return {**_view(chapter, progress, lang, await _name(session, player_id)), "checked": {"done": False, "tries": tries, "eased": eased}}

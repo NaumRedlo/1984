@@ -193,7 +193,7 @@ async def story(tmp_path, monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(sqlite, expire_on_commit=False)
     async with factory() as session:
-        session.add(Player(id=1, osu_user_id=555, telegram_id=77, osu_username="Citizen"))
+        session.add(Player(id=1, osu_user_id=555, telegram_id=77, osu_username="Fleh"))
         await session.commit()
     folder = tmp_path / "story"
     folder.mkdir()
@@ -289,3 +289,18 @@ async def test_with_no_easier_map_the_task_stays_and_is_not_eased_again(story, m
     checked = await service.check(story, osu, 1, "play", "ru", clock=lambda: 100.0)
     assert checked["checked"] == {"done": False, "tries": 3, "eased": False}
     assert checked["task"]["map"]["beatmap_id"] == 21 and checked["task"]["map"]["eased"] is True
+
+
+def test_a_line_names_the_player_and_an_unknown_placeholder_is_refused():
+    named = chapters.parse(TINY.replace('ru = "Здравствуйте", en = "Hello"', 'ru = "Здравствуйте, {player}", en = "Hello, {player}"'))
+    progress = engine.begin(named)
+    assert engine.shown(named, progress, "en", "Mrekk")["lines"][0]["text"] == "Hello, Mrekk"
+    with pytest.raises(ChapterError, match="only {player} is known"):
+        chapters.parse(TINY.replace('en = "Hello"', 'en = "Hello, {plaeyr}"'))
+
+
+async def test_the_prologue_greets_the_player_by_their_osu_name(story, monkeypatch):
+    monkeypatch.setattr(service, "FIRST", "prologue")
+    monkeypatch.setattr(service, "chapters", chapters.load)
+    first = await service.state(story, 1, "ru")
+    assert first["lines"][0]["text"].startswith("Fleh, добро пожаловать")

@@ -64,14 +64,18 @@ def _expect(progress: Progress, step_id: Optional[str]) -> None:
         raise StoryError("STEP_MOVED")
 
 
-def shown(chapter: Chapter, progress: Progress, lang: str) -> dict[str, Any]:
+def spoken(text: str, player: str) -> str:
+    return text.replace("{player}", player)
+
+
+def shown(chapter: Chapter, progress: Progress, lang: str, player: str = "") -> dict[str, Any]:
     step = _current(chapter, progress)
     body: dict[str, Any] = {
         "chapter": chapter.id,
         "title": chapter.title.said(lang),
         "step": step.id,
         "kind": step.kind,
-        "lines": [{"who": line.who, "name": chapter.speakers[line.who].said(lang), "text": line.words.said(lang)}
+        "lines": [{"who": line.who, "name": chapter.speakers[line.who].said(lang), "text": spoken(line.words.said(lang), player)}
                   for line in heard(chapter, progress.flags, step)],
     }
     if step.kind == "task":
@@ -82,7 +86,7 @@ def shown(chapter: Chapter, progress: Progress, lang: str) -> dict[str, Any]:
             "map": progress.task.body() if progress.task is not None else None,
         }
     if step.kind == "choice":
-        body["options"] = [{"id": option.id, "text": option.words.said(lang)} for option in step.options]
+        body["options"] = [{"id": option.id, "text": spoken(option.words.said(lang), player)} for option in step.options]
     if step.kind == "end":
         body["next_chapter"] = step.next_chapter
     return body
