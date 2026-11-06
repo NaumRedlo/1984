@@ -399,17 +399,22 @@ TIER_ORDER = {catalog.EXEMPLARY: 0, catalog.FITS: 1, None: 1, catalog.BORDERLINE
 async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple[int, ...] = (), model=None) -> list[dict[str, Any]]:
     async with factory() as session:
         await balance._allowed(session, actor, balance.BALANCE_REVIEWER, owners)
-        rows = (await session.execute(
-            select(DuelMapAssignment, DuelMapRevision)
-            .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
-                  & (DuelMapRevision.hash == DuelMapAssignment.revision_hash))
-            .where(DuelMapAssignment.slot == slot)
-        )).all()
-        names = await _names(session, [assignment.reviewer_id for assignment, _ in rows if assignment.reviewer_id is not None])
-        listed = [(assignment, revision, level) for assignment, revision in rows if (level := catalogue_level(assignment, revision)) is not None]
-        stars = await _stars(session, [(revision.hash, catalogue_mods(slot)) for _, revision, _ in listed])
+        joined = (select(DuelMapAssignment, DuelMapRevision)
+                  .join(DuelMapRevision, (DuelMapRevision.beatmap_id == DuelMapAssignment.beatmap_id)
+                        & (DuelMapRevision.hash == DuelMapAssignment.revision_hash)))
+        rows = (await session.execute(joined.where(DuelMapAssignment.slot == slot))).all()
+        extra = [(assignment, revision) for assignment, revision in (await session.execute(
+            joined.where(DuelMapAssignment.state == catalog.HUMAN_APPROVED, DuelMapAssignment.slot != slot,
+                         DuelMapAssignment.secondary_slots.isnot(None))
+        )).all() if catalog.secondary_of(assignment) == slot]
+        everyone = [*rows, *extra]
+        names = await _names(session, [assignment.reviewer_id for assignment, _ in everyone if assignment.reviewer_id is not None])
+        listed = [(assignment, revision, level) for assignment, revision in everyone if (level := catalogue_level(assignment, revision)) is not None]
+        stars = await _stars(session, [(revision.hash, catalogue_mods(held)) for assignment, revision, _ in listed
+                                       for held in {slot, assignment.slot}])
         listed = [(assignment, revision, level) for assignment, revision, level in listed
-                  if in_catalogue(own := stars.get((revision.hash, catalogue_mods(slot)))) and band_of(float(own)) == band]
+                  if in_catalogue(stars.get((revision.hash, catalogue_mods(assignment.slot))))
+                  and in_catalogue(own := stars.get((revision.hash, catalogue_mods(slot)))) and band_of(float(own)) == band]
         seen = await _analyses(session, {(revision.hash, mods) for _, revision, _ in listed for mods in (importer.SEEN_AS, *importer.VIEWED)}) if model is not None else {}
         found = []
         for assignment, revision, level in listed:
@@ -417,8 +422,9 @@ async def coverage_cell(factory, actor: int, slot: str, band: int, owners: tuple
             found.append({"beatmap_id": int(assignment.beatmap_id), "beatmapset_id": int(revision.beatmapset_id) if revision.beatmapset_id else None,
                           "tier": assignment.tier, "typical": _typical(model, slot, revision.hash, seen),
                           "stars": float(own), "level": level, "mapper": revision.mapper, "title": revision.title,
-                          "version": revision.version, "reviewer": names.get(assignment.reviewer_id)})
-        return sorted(found, key=lambda item: (TIER_ORDER.get(item["tier"], 1), -(item["typical"] or 0.0), item["stars"]))
+                          "version": revision.version, "reviewer": names.get(assignment.reviewer_id),
+                          "main_slot": assignment.slot if assignment.slot != slot else None})
+        return sorted(found, key=lambda item: (item["main_slot"] is not None, TIER_ORDER.get(item["tier"], 1), -(item["typical"] or 0.0), item["stars"]))
 
 async def _stuck_detail(session, duel: Duel) -> dict[str, Any]:
     room = await session.scalar(select(DuelRoom).where(DuelRoom.duel_id == duel.id).order_by(DuelRoom.id.desc()).limit(1))

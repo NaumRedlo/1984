@@ -399,3 +399,15 @@ async def test_a_doubted_map_a_reviewer_approved_stays_in_the_catalogue(factory)
     await _named(factory, 1, title="Song (Game Ver.)", tags={"raw": "tv size"})
     found = await desk.coverage(factory, 1)
     assert found["grid"]["NM1"][desk.band_of(5.2)] == 1
+
+async def test_a_cell_lists_the_maps_that_hold_its_slot_as_their_extra_one(factory):
+    async with factory() as session:
+        held = await session.scalar(select(DuelMapAssignment).where(DuelMapAssignment.beatmap_id == 1))
+        held.secondary_slots = ["NM2"]
+        await session.commit()
+    found = await desk.coverage(factory, 1)
+    assert found["secondary"]["NM2"][desk.band_of(5.2)] == 1
+    cell = await desk.coverage_cell(factory, 1, "NM2", desk.band_of(5.2))
+    assert [(m["beatmap_id"], m["main_slot"]) for m in cell] == [(1, "NM1")]
+    own = await desk.coverage_cell(factory, 1, "NM1", desk.band_of(5.2))
+    assert [(m["beatmap_id"], m["main_slot"]) for m in own] == [(1, None)]
