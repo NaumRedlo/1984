@@ -486,7 +486,7 @@ async def batches(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dic
         await _allowed(session, actor, BALANCE_REVIEWER, owners)
         labels = await importer.corpus_labels(session)
         rows = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.corpus_version == corpus.OWN_VERSION))).all()
-        added = (await session.scalars(select(DuelAudit).where(DuelAudit.action == "add_tournament").order_by(DuelAudit.id))).all()
+        added = (await session.scalars(select(DuelAudit).where(DuelAudit.action.in_(["add_tournament", "batch_rename"])).order_by(DuelAudit.id))).all()
         found: dict[tuple[int, str], dict[str, Any]] = {}
         for row in rows:
             batch = found.setdefault((row.year, row.stage), {"name": row.stage, "year": row.year, "maps": 0, "labelled": 0, "excluded": 0,
@@ -494,12 +494,20 @@ async def batches(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dic
             batch["maps"] += 1
             batch["labelled"] += int(importer.resolved(row, labels)[1])
             batch["excluded"] += int(bool(row.excluded))
+        origin: dict[tuple[Any, str], tuple[int, Optional[str]]] = {}
         for audit in added:
-            year = (audit.after or {}).get("year")
-            batch = found.get((year, (audit.target or "")[:32]))
+            if audit.action == "batch_rename":
+                was, now_named = audit.before or {}, audit.after or {}
+                moved = origin.pop((was.get("year"), str(was.get("name") or "")), None)
+                if moved is not None:
+                    origin[(now_named.get("year"), str(now_named.get("name") or ""))] = moved
+                continue
+            origin[((audit.after or {}).get("year"), (audit.target or "")[:32])] = (
+                audit.actor_id, audit.created_at.isoformat() + "Z" if audit.created_at else None)
+        for key, (author, added_at) in origin.items():
+            batch = found.get(key)
             if batch is not None:
-                batch["author"] = audit.actor_id
-                batch["added_at"] = audit.created_at.isoformat() + "Z" if audit.created_at else None
+                batch["author"], batch["added_at"] = author, added_at
         authors = {int(batch["author"]) for batch in found.values() if batch["author"] is not None}
         people = {row.id: row for row in (await session.scalars(select(Player).where(Player.id.in_(authors or {0})))).all()}
         for batch in found.values():

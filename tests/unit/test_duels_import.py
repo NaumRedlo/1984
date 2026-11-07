@@ -541,6 +541,11 @@ async def test_reviewers_and_the_owner_see_rename_exclude_and_delete_batches_who
     assert await balance.rename_batch(factory, 1, "Russian Cup", 2024, "RC Finals", 2025, "clearer name", owners=(555,)) == {"name": "RC Finals", "year": 2025}
     renamed = next(batch for batch in await balance.batches(factory, 1, owners=(555,)) if batch["name"] == "RC Finals")
     assert (renamed["year"], renamed["maps"], renamed["labelled"]) == (2025, 3, 2), "labels travel with the batch"
+    assert renamed["author"]["name"] == "reviewer" and renamed["added_at"], "the author stays after a rename"
+    await balance.rename_batch(factory, 1, "RC Finals", 2025, "RC 2025", 2025, "shorter", owners=(555,))
+    await balance.rename_batch(factory, 1, "RC 2025", 2025, "RC Finals", 2025, "back again", owners=(555,))
+    again = next(batch for batch in await balance.batches(factory, 1, owners=(555,)) if batch["name"] == "RC Finals")
+    assert again["author"]["name"] == "reviewer" and again["added_at"] == renamed["added_at"], "and after renaming it twice"
     await balance.exclude_batch(factory, 1, "RC Finals", 2025, 12, True, "mislabelled", owners=(555,))
 
     async def seen(session, digest):
@@ -563,7 +568,7 @@ async def test_reviewers_and_the_owner_see_rename_exclude_and_delete_batches_who
     assert [(batch["name"], batch["maps"]) for batch in await balance.batches(factory, 1, owners=(555,))] == [("RC Finals", 2)]
     async with factory() as session:
         actions = [row.action for row in (await session.scalars(select(DuelAudit).order_by(DuelAudit.id))).all()]
-    assert actions[2:] == ["batch_rename", "batch_exclude", "batch_include", "batch_delete", "batch_delete"]
+    assert actions[2:] == ["batch_rename", "batch_rename", "batch_rename", "batch_exclude", "batch_include", "batch_delete", "batch_delete"]
 
 
 
