@@ -483,7 +483,7 @@ async def batches(factory, actor: int, owners: tuple[int, ...] = ()) -> list[dic
     from services.duels import corpus, importer
 
     async with factory() as session:
-        await _allowed(session, actor, OWNER, owners)
+        await _allowed(session, actor, BALANCE_REVIEWER, owners)
         labels = await importer.corpus_labels(session)
         rows = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.corpus_version == corpus.OWN_VERSION))).all()
         added = (await session.scalars(select(DuelAudit).where(DuelAudit.action == "add_tournament").order_by(DuelAudit.id))).all()
@@ -536,7 +536,7 @@ async def rename_batch(factory, actor: int, name: str, year: int, new_name: str,
         raise DuelError("INVALID_STATE")
     async with factory() as session:
         async with session.begin():
-            role = await _allowed(session, actor, OWNER, owners)
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             examples, labels = await _batch_rows(session, name, year, None)
             if (stage, new_year) != (name, year) and await session.scalar(select(DuelTrainingExample.id).where(
                     DuelTrainingExample.corpus_version == corpus.OWN_VERSION, DuelTrainingExample.year == new_year,
@@ -555,7 +555,7 @@ async def delete_batch(factory, actor: int, name: str, year: int, beatmap_id: Op
                        owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
     async with factory() as session:
         async with session.begin():
-            role = await _allowed(session, actor, OWNER, owners)
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             examples, labels = await _batch_rows(session, name, year, beatmap_id)
             for row in list(examples) + list(labels):
                 await session.delete(row)
@@ -567,7 +567,7 @@ async def exclude_batch(factory, actor: int, name: str, year: int, beatmap_id: O
                         owners: tuple[int, ...] = (), now: Optional[datetime] = None) -> dict[str, Any]:
     async with factory() as session:
         async with session.begin():
-            role = await _allowed(session, actor, OWNER, owners)
+            role = await _allowed(session, actor, BALANCE_REVIEWER, owners)
             examples, _ = await _batch_rows(session, name, year, beatmap_id)
             for row in examples:
                 row.excluded = excluded

@@ -512,7 +512,7 @@ async def test_error_json_is_not_a_successful_empty_search():
     assert len(requested) == len(mirrors.SEARCHES)
 
 
-async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_whole_or_map_by_map(factory, monkeypatch):
+async def test_reviewers_and_the_owner_see_rename_exclude_and_delete_batches_whole_or_map_by_map(factory, monkeypatch):
     from db.models.duel import DuelAudit, DuelRole
     from db.models.duel_catalog import DuelTrainingExample
     from db.models.player import Player
@@ -520,7 +520,8 @@ async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_who
     from services.duels.errors import DuelError
 
     async with factory() as session:
-        session.add_all([Player(id=1, osu_user_id=101, osu_username="owner", telegram_id=555), Player(id=2, osu_user_id=102, osu_username="reviewer")])
+        session.add_all([Player(id=1, osu_user_id=101, osu_username="owner", telegram_id=555), Player(id=2, osu_user_id=102, osu_username="reviewer"),
+                         Player(id=3, osu_user_id=103, osu_username="player")])
         await session.flush()
         session.add(DuelRole(player_id=2, role=balance.BALANCE_REVIEWER))
         await session.commit()
@@ -528,7 +529,8 @@ async def test_the_owner_sees_renames_excludes_and_deletes_reviewers_batches_who
     await balance.add_tournament(factory, 2, "Russian Cup", 2024, pool, "our pool")
     await balance.add_tournament(factory, 2, "Other Cup", 2023, "NM1 https://osu.ppy.sh/b/21", "another")
     with pytest.raises(balance.Forbidden):
-        await balance.batches(factory, 2)
+        await balance.batches(factory, 3)
+    assert await balance.batches(factory, 2) == await balance.batches(factory, 1, owners=(555,))
     found = await balance.batches(factory, 1, owners=(555,))
     russian = next(batch for batch in found if batch["name"] == "Russian Cup")
     assert (russian["year"], russian["maps"], russian["labelled"], russian["excluded"]) == (2024, 3, 2, 0)
