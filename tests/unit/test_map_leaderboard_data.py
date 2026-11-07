@@ -229,3 +229,33 @@ async def test_a_converted_map_is_ranked_only_by_plays_of_the_asked_mode(factory
     assert mania.data["ruleset"] == 3 and mania.data["star_rating"] == 4.5
     assert [r["username"] for r in osu.rows] == ["Clicker"]
     assert osu.data["ruleset"] == 0
+
+async def test_a_failed_attempt_never_stands_on_the_chat_board_or_in_its_record_history(factory):
+    from services.leaderboard.service import build_map_leaderboard
+
+    class Osu:
+        async def get_beatmap(self, beatmap_id):
+            return {"id": beatmap_id, "status": "ranked", "version": "Sojourn Collab", "difficulty_rating": 7.35,
+                    "beatmapset": {"id": 1, "artist": "VINXIS", "title": "Sidetracked Day", "creator": "Chanci"}}
+
+    async with factory() as session:
+        players = []
+        for i, name in enumerate(["Passer", "Failer"], 1):
+            user = User(chat_id=CHAT, telegram_id=i, osu_user_id=10 + i, osu_username=name)
+            session.add(user)
+            await session.flush()
+            players.append(user.player_id)
+        session.add_all([
+            UserMapAttempt(player_id=players[0], score_id=1, beatmap_id=MAP, pp=385.5, score=41369010, rank="A", passed=True,
+                           played_at=datetime(2026, 10, 26, 19, 0)),
+            UserMapAttempt(player_id=players[0], score_id=2, beatmap_id=MAP, pp=0.0, score=99000000, rank="S", passed=False,
+                           played_at=datetime(2026, 11, 1, 19, 0)),
+            UserMapAttempt(player_id=players[1], score_id=3, beatmap_id=MAP, pp=0.0, score=21294690, rank="B", passed=False,
+                           played_at=datetime(2026, 11, 7, 10, 34)),
+        ])
+        await session.commit()
+        result = await build_map_leaderboard(session, Osu(), MAP, CHAT, sync=False)
+    assert [(row["username"], row["pp"], row["score"], row["rank"]) for row in result.rows] == [("Passer", 385.5, 41369010, "A")]
+    assert [entry["username"] for entry in result.data["history"]] == ["Passer"]
+    assert result.data["average"] == "385.5 PP"
+    assert (result.data["total_plays"], result.data["unique_players"]) == (3, 2)

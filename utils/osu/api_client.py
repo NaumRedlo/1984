@@ -83,6 +83,13 @@ async def _estimate_pp(raw: dict, beatmap: dict, beatmap_id: int, mods, stats: d
         return None
     return round(float(served["pp"]), 2)
 
+def shown_score(raw: dict) -> Optional[int]:
+    for key in ("legacy_total_score", "classic_total_score", "total_score", "score"):
+        value = raw.get(key)
+        if value:
+            return int(value)
+    return next((int(raw[key]) for key in ("total_score", "score") if raw.get(key) is not None), None)
+
 DATED_STATUSES = ("ranked", "approved", "loved")
 MAP_FACTS = ("beatmapset_id", "artist", "title", "version", "creator", "star_rating", "ar", "eff_sr", "bpm", "length",
              "map_max_combo", "total_objects", "status")
@@ -649,11 +656,7 @@ class OsuApiClient:
             if acc_val is not None:
                 acc_val = round(acc_val * 100, 2)
 
-            score_val = raw.get("total_score")
-            if score_val is None:
-                score_val = raw.get("legacy_total_score")
-            if score_val is None:
-                score_val = raw.get("score")
+            score_val = shown_score(raw)
 
             star_rating = beatmap.get("difficulty_rating")
             if star_rating is not None:
@@ -803,11 +806,7 @@ class OsuApiClient:
             if acc_val is not None:
                 acc_val = round(float(acc_val) * 100, 2)
 
-            score_val = raw.get("total_score")
-            if score_val is None:
-                score_val = raw.get("legacy_total_score")
-            if score_val is None:
-                score_val = raw.get("score")
+            score_val = shown_score(raw)
 
             star_rating = beatmap.get("difficulty_rating")
             if star_rating is not None:

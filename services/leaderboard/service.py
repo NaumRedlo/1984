@@ -666,6 +666,7 @@ async def _map_record_history(session, beatmap_id: int, chat_id: int, *,
             User.chat_id == chat_id,
             User.osu_user_id.isnot(None),
             UserMapAttempt.beatmap_id == beatmap_id,
+            UserMapAttempt.passed.is_not(False),
             in_mode,
         )
         .order_by(asc(played), asc(UserMapAttempt.id))
@@ -735,6 +736,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
 
     rank_by_score = _ranks_by_score(beatmap.get("status"))
     metric_col = UserMapAttempt.score if rank_by_score else UserMapAttempt.pp
+    counted = UserMapAttempt.passed.is_not(False)
 
     best_metric_sq = (
         select(
@@ -742,7 +744,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             func.max(metric_col).label("best_metric"),
         )
         .join(User, User.player_id == UserMapAttempt.player_id)
-        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode, counted)
         .group_by(UserMapAttempt.player_id)
         .subquery()
     )
@@ -751,7 +753,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
             UserMapAttempt.player_id,
             func.min(UserMapAttempt.id).label("pick_id"),
         )
-        .where(UserMapAttempt.beatmap_id == beatmap_id, in_mode)
+        .where(UserMapAttempt.beatmap_id == beatmap_id, in_mode, counted)
         .join(best_metric_sq, and_(
             UserMapAttempt.player_id == best_metric_sq.c.player_id,
             func.coalesce(metric_col, 0) == func.coalesce(best_metric_sq.c.best_metric, 0),
@@ -776,7 +778,7 @@ async def build_map_leaderboard(session, osu_api_client, beatmap_id: int, chat_i
         )
         .join(UserMapAttempt, UserMapAttempt.player_id == User.player_id)
         .join(pick_sq, pick_sq.c.pick_id == UserMapAttempt.id)
-        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode)
+        .where(User.chat_id == chat_id, User.osu_user_id.isnot(None), UserMapAttempt.beatmap_id == beatmap_id, in_mode, counted)
         .order_by(desc(func.coalesce(metric_col, 0)), asc(UserMapAttempt.id))
     )
 
