@@ -37,6 +37,21 @@ def test_equal_scores_are_a_tie_and_zero_is_a_real_result():
     verdict = judge(_game(scores=[{"user_id": 2, "score": 0, "mods": []}, {"user_id": 3, "score": 0, "mods": []}]), _expected())
     assert (verdict.state, verdict.winner) == ("tie", None)
 
+def _match_score(user_id, points):
+    return {"type": "legacy_match_score", "user_id": user_id, "mods": [{"acronym": "NF"}], "accuracy": 0.95, "max_combo": 351,
+            "statistics": {"great": 634, "ok": 28, "meh": 4, "miss": 12}, "legacy_total_score": points, "total_score": points,
+            "passed": True, "rank": "A"}
+
+def test_the_newer_match_score_format_is_read_by_its_total_and_not_taken_for_a_tie_at_zero():
+    verdict = judge(_game(mods=["NF"], scores=[_match_score(2, 374888), _match_score(3, 173532)]), _expected())
+    assert (verdict.state, verdict.winner, verdict.scores) == ("valid", 2, {2: 374888, 3: 173532})
+    assert verdict.mods == {2: ["NF"], 3: ["NF"]}
+
+def test_a_score_without_any_points_field_waits_instead_of_counting_as_zero():
+    unread = {key: value for key, value in _match_score(3, 1).items() if key not in ("legacy_total_score", "total_score")}
+    verdict = judge(_game(scores=[_match_score(2, 374888), unread]), _expected())
+    assert (verdict.state, verdict.reasons, verdict.winner) == ("incomplete", ["score_missing"], None)
+
 @pytest.mark.parametrize("change, reason", [
     ({"scoring_type": "score"}, "score_mode"),
     ({"team_type": "team-vs"}, "team_mode"),

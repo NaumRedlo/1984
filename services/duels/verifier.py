@@ -40,6 +40,15 @@ def _mods(raw: Any) -> set[str]:
             found.add(acronym.upper())
     return found
 
+POINTS = ("score", "legacy_total_score", "total_score")
+
+def points(score: dict[str, Any]) -> Optional[int]:
+    for key in POINTS:
+        value = score.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+    return None
+
 def payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
@@ -85,6 +94,7 @@ def judge(game: dict[str, Any], expected: Expected) -> Verdict:
         return Verdict("incomplete", ["missing_player"])
     global_mods = _mods(game.get("mods"))
     verdict = Verdict("valid")
+    unread = []
     for score in scores:
         user = int(score["user_id"])
         effective = global_mods | _mods(score.get("mods"))
@@ -95,12 +105,18 @@ def judge(game: dict[str, Any], expected: Expected) -> Verdict:
             reasons.append(f"mods:{user}")
         elif not expected.tiebreak and effective != set(expected.mods):
             reasons.append(f"mods:{user}")
-        verdict.scores[user] = int(score.get("score") or 0)
+        said = points(score)
+        if said is None:
+            unread.append(user)
+            continue
+        verdict.scores[user] = said
         verdict.mods[user] = sorted(effective)
         verdict.details[user] = {"accuracy": score.get("accuracy"), "max_combo": score.get("max_combo"),
                                  "statistics": score.get("statistics") or {}}
     if reasons:
         return Verdict("invalid", reasons, verdict.scores, verdict.mods)
+    if unread:
+        return Verdict("incomplete", ["score_missing"], verdict.scores, verdict.mods)
     first, second = sorted(verdict.scores.items(), key=lambda pair: -pair[1])
     if first[1] == second[1]:
         verdict.state = "tie"
