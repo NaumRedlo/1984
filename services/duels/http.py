@@ -318,7 +318,7 @@ def routes(guard, who, factory_of: Callable[[], Any], osu_of: Callable[[], Any] 
         running = training.running_job()
         if running is not None:
             return {"started": False, "job": running}
-        if await training.unchanged(factory_of()):
+        if not await training.missing_files(factory_of()) and await training.unchanged(factory_of()):
             return web.json_response({"error": "NOTHING_NEW"}, status=409)
         running = training.running_job()
         if running is not None:

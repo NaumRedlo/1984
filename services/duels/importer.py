@@ -452,12 +452,17 @@ def resolved(example, labels: dict[tuple, str]) -> tuple[Optional[str], bool]:
     chosen = corpus.read_back(chosen, example.original_slot)
     return (None if chosen == corpus.EXCLUDED else chosen), verified
 
-async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=print, now: Optional[datetime] = None) -> dict[str, int]:
+def missing_query(versions: Optional[tuple[str, ...]] = None):
+    query = select(DuelTrainingExample).where(DuelTrainingExample.revision_hash.is_(None), DuelTrainingExample.excluded.isnot(True))
+    return query.where(DuelTrainingExample.corpus_version.in_(versions)) if versions is not None else query
+
+async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=print, now: Optional[datetime] = None,
+                       versions: Optional[tuple[str, ...]] = None, progress=None) -> dict[str, int]:
     now = now or utcnow()
     async with factory() as session:
-        waiting = (await session.scalars(select(DuelTrainingExample).where(DuelTrainingExample.revision_hash.is_(None)))).all()
+        waiting = (await session.scalars(missing_query(versions))).all()
     counted: dict[str, int] = {}
-    for row in waiting:
+    for done, row in enumerate(waiting, 1):
         example = corpus.Example(row.year, row.stage, row.original_slot, int(row.beatmap_id),
                                  int(row.beatmapset_id) if row.beatmapset_id else None, row.source)
         digest = await _example_file(factory, fetch, example, folder, now)
@@ -469,6 +474,8 @@ async def load_missing(factory, fetch, folder: str, pause: float = 1.0, report=p
         outcome = "filed" if digest else "no_file"
         counted[outcome] = counted.get(outcome, 0) + 1
         report(f"{row.corpus_version} {row.original_slot} {row.beatmap_id}: {outcome}")
+        if progress is not None:
+            progress(done)
         if pause:
             await asyncio.sleep(pause)
     return counted

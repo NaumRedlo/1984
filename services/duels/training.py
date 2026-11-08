@@ -11,6 +11,7 @@ from services.duels import balance, kamerton
 from utils.timeutils import utcnow
 
 NAME = "kamerton"
+FETCH_PAUSE = 1.0
 NEW_LABELS_LEAST = 50
 EVERY = timedelta(days=1)
 HELD_OUT = 5
@@ -25,6 +26,35 @@ async def unchanged(factory) -> bool:
         last = await session.scalar(select(DuelModelVersion).where(DuelModelVersion.version.like(f"{NAME}-%"))
                                     .order_by(DuelModelVersion.created_at.desc()))
     return last is not None and (last.report or {}).get("fingerprint") == kamerton.fingerprint(found)
+
+async def missing_files(factory) -> int:
+    from sqlalchemy import func
+
+    from services.duels import corpus, importer
+
+    async with factory() as session:
+        return await session.scalar(select(func.count()).select_from(
+            importer.missing_query((corpus.OWN_VERSION,)).subquery())) or 0
+
+async def fetch_batches(factory, report, fetch=None, folder: Optional[str] = None, pause: float = FETCH_PAUSE) -> dict[str, int]:
+    from config.settings import DUEL_OSU_FOLDER
+    from services.duels import corpus, importer, mirrors
+
+    total = await missing_files(factory)
+    if not total:
+        return {}
+    report(phase="fetching", fetched=0, fetch_total=total)
+
+    async def load(fetching):
+        return await importer.load_missing(factory, fetching, folder or DUEL_OSU_FOLDER, pause, report=lambda text: None,
+                                           versions=(corpus.OWN_VERSION,), progress=lambda done: report(fetched=done))
+
+    if fetch is not None:
+        return await load(fetch)
+    import aiohttp
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120, sock_read=30)) as session:
+        return await load(mirrors.aiohttp_fetch(session))
 
 def _people(found: list[kamerton.Example]) -> int:
     return sum(1 for example in found if example.verified)
@@ -116,7 +146,7 @@ def open_job(now: Optional[datetime] = None) -> str:
     for old in [name for name, job in jobs.items() if job["state"] != "running"][:max(0, len(jobs) + 1 - JOBS_KEPT)]:
         del jobs[old]
     name = uuid.uuid4().hex[:12]
-    jobs[name] = {"job": name, "state": "running", "version": None, "error": None, "started_at": (now or utcnow()).isoformat(), "finished_at": None, "phase": "queued", "completed": 0, "total": 0, "maps": 0, "checks_done": 0, "checks_total": 0, "fold": None, "revision": 0}
+    jobs[name] = {"job": name, "state": "running", "version": None, "error": None, "started_at": (now or utcnow()).isoformat(), "finished_at": None, "phase": "queued", "completed": 0, "total": 0, "maps": 0, "fetched": 0, "fetch_total": 0, "checks_done": 0, "checks_total": 0, "fold": None, "revision": 0}
     return name
 
 def running_job() -> Optional[str]:
@@ -139,6 +169,7 @@ async def run_job(factory, name: str, steps: int = 400, now: Optional[datetime] 
             job.update(values)
             job["revision"] += 1
     try:
+        await fetch_batches(factory, report)
         made = await train(factory, steps, now=now, report=report)
     except asyncio.CancelledError:
         job.update(state="interrupted", finished_at=utcnow().isoformat(), revision=job["revision"] + 1)

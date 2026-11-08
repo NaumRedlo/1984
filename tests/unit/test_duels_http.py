@@ -403,6 +403,18 @@ async def test_a_training_run_is_followed_by_its_job_until_it_ends(client, facto
     assert (done["state"], done["version"], done["error"]) == ("done", "kamerton-1", None)
     again = await client.post("/render/admin/duels/models/train", json={"reason": "again"}, headers=_as(1))
     assert again.status == 409 and (await again.json())["error"] == "NOTHING_NEW"
+    from services.duels import balance
+    await balance.add_tournament(factory, 1, "Cup", 2024, "NM1 https://osu.ppy.sh/b/77", "мой турнир")
+    fetched = []
+
+    async def fetch_batches(factory, report):
+        fetched.append(await training.missing_files(factory))
+        return {}
+    monkeypatch.setattr(training, "fetch_batches", fetch_batches)
+    waiting = await (await client.post("/render/admin/duels/models/train", json={"reason": "a batch"}, headers=_as(1))).json()
+    assert waiting["started"]
+    await finished(waiting["job"])
+    assert fetched == [1]
     assert (await client.get("/render/admin/duels/models/training/nobody-knows", headers=_as(1))).status == 404
     assert (await client.get(f"/render/admin/duels/models/training/{said['job']}", headers=_as(2))).status == 403
 

@@ -833,3 +833,52 @@ async def test_old_revisions_get_their_names_and_tags_and_shortened_maps_are_lis
     async with factory() as session:
         made = await session.scalar(select(DuelMapRevision).where(DuelMapRevision.beatmap_id == 91))
     assert made.title == "Song (TV Size)" and made.tags["tournaments"] == ["owc2024"]
+
+
+async def test_a_training_job_fetches_its_batches_maps_first_and_says_so(factory, tmp_path, monkeypatch):
+    from db.models.duel import DuelRole
+    from db.models.player import Player
+    from services.duels import balance
+
+    files = {i: _map(i, 30 + 5 * i) for i in range(8, 11)}
+    asked = []
+
+    async def fetch(address):
+        asked.append(address)
+        for number, raw in files.items():
+            if address.endswith(f"/osu/{number}"):
+                return raw
+        return None
+
+    async with factory() as session:
+        session.add(Player(id=1, osu_user_id=101, osu_username="naum"))
+        await session.flush()
+        session.add(DuelRole(player_id=1, role=balance.BALANCE_REVIEWER))
+        await session.commit()
+    await balance.add_tournament(factory, 1, "Russian Cup", 2024,
+                                 "NM1 https://osu.ppy.sh/b/8\nDT1 https://osu.ppy.sh/b/9\nFM1 https://osu.ppy.sh/b/10", "мой турнир")
+    assert await training.missing_files(factory) == 3
+    assert not any(example.own for example in await kamerton.examples(factory))
+
+    trained = []
+
+    async def train(factory, steps=400, now=None, report=None):
+        trained.append(sorted(example.slot for example in await kamerton.examples(factory) if example.own))
+        return "kamerton-1", {}
+
+    real = training.fetch_batches
+    monkeypatch.setattr(training, "jobs", {})
+    monkeypatch.setattr(training, "train", train)
+    monkeypatch.setattr(training, "fetch_batches", lambda factory, report: real(factory, report, fetch, str(tmp_path), 0))
+    name = training.open_job()
+    await training.run_job(factory, name)
+    job = training.snapshot(name)
+    assert trained == [["DT1", "FM1", "NM1"]]
+    assert job["state"] == "done" and job["phase"] == "fetching"
+    assert (job["fetched"], job["fetch_total"]) == (3, 3)
+    assert await training.missing_files(factory) == 0
+
+    asked.clear()
+    second = training.open_job()
+    await training.run_job(factory, second)
+    assert asked == [] and training.snapshot(second)["fetch_total"] == 0
