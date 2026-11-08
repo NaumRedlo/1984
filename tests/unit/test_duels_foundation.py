@@ -160,11 +160,26 @@ async def test_the_queue_holds_one_place_and_lets_go(factory):
     assert await service.enter_queue(factory, 1, "in-again", now=NOW) == entered
     assert await _count(factory, DuelQueueEntry, DuelQueueEntry.status == "waiting") == 1
     assert await service.busy(factory, [1, 2]) == {1}
-    invited = await service.invite(factory, 2, 1, "call", now=NOW)
-    assert await _code(service.accept(factory, invited["id"], 1, "take", now=NOW)) == "ALREADY_BUSY"
     assert (await service.leave_queue(factory, 1, "out", now=NOW)) == {"queue": None}
     assert await _code(service.leave_queue(factory, 1, "out-again", now=NOW)) == "INVALID_STATE"
-    assert (await service.accept(factory, invited["id"], 1, "take-now", now=NOW))["state"] == states.ACCEPTED
+
+async def test_accepting_a_challenge_takes_both_players_out_of_the_queue(factory):
+    await service.enter_queue(factory, 1, "in-1", now=NOW)
+    await service.enter_queue(factory, 2, "in-2", now=NOW)
+    invited = await service.invite(factory, 2, 1, "call", now=NOW)
+    accepted = await service.accept(factory, invited["id"], 1, "take", now=NOW)
+    assert accepted["state"] == states.ACCEPTED
+    assert await _count(factory, DuelQueueEntry, DuelQueueEntry.status == "waiting") == 0
+    assert await _count(factory, DuelQueueEntry, DuelQueueEntry.status == "left", DuelQueueEntry.left_at == NOW) == 2
+    assert await _count(factory, DuelLease, DuelLease.kind == "duel", DuelLease.duel_id == invited["id"]) == 2
+    assert await service.queue_state(factory, 1) is None
+
+async def test_accepting_still_refuses_a_player_who_is_in_another_duel(factory):
+    first = await service.invite(factory, 1, 2, "first", now=NOW)
+    await service.accept(factory, first["id"], 2, "first-take", now=NOW)
+    second = await service.invite(factory, 3, 2, "second", now=NOW)
+    assert await _code(service.accept(factory, second["id"], 2, "second-take", now=NOW)) == "ALREADY_BUSY"
+    assert await _count(factory, DuelLease, DuelLease.duel_id == first["id"]) == 2
 
 async def test_a_technical_cancel_ends_any_live_duel_once(factory):
     duel = await service.invite(factory, 1, 2, "invite", now=NOW)

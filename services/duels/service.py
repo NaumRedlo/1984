@@ -216,6 +216,19 @@ async def invite(factory, actor_id: int, opponent_id: int, operation_id: str, no
 
     return await _run(factory, operation_id, actor_id, "invite", body, now)
 
+async def _leave_queues(step: Step, player_ids: list[int]) -> None:
+    leases = (await step.session.scalars(select(DuelLease).where(
+        DuelLease.player_id.in_(player_ids), DuelLease.kind == "queue").with_for_update())).all()
+    if not leases:
+        return
+    for lease in leases:
+        await step.session.delete(lease)
+    for entry in (await step.session.scalars(select(DuelQueueEntry).where(
+            DuelQueueEntry.player_id.in_([lease.player_id for lease in leases]), DuelQueueEntry.status == "waiting"))).all():
+        entry.status = "left"
+        entry.left_at = step.now
+    await step.session.flush()
+
 async def accept(factory, duel_id: str, actor_id: int, operation_id: str, expected_version: Optional[int] = None,
                  now: Optional[datetime] = None) -> dict[str, Any]:
     async def body(step: Step) -> dict[str, Any]:
@@ -237,6 +250,7 @@ async def accept(factory, duel_id: str, actor_id: int, operation_id: str, expect
             return await snapshot(step.session, duel, actor_id)
         if duel.state != states.INVITED or not me.invited:
             raise DuelError("INVALID_STATE", await snapshot(step.session, duel, actor_id))
+        await _leave_queues(step, [person.player_id for person in people])
         await step.occupy([person.player_id for person in people], "duel", duel)
         me.accepted_at = step.now
         event = await step.move(duel, states.ACCEPTED)
