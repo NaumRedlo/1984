@@ -182,3 +182,24 @@ def test_a_video_s_numbers_are_checked():
     assert http._dimension(True) is None
     assert http._dimension(-5) is None
     assert http._dimension(float("nan")) is None
+
+
+async def test_a_large_json_answer_goes_compressed_to_a_client_that_asks_and_plain_to_one_that_does_not():
+    async def big(request):
+        return web.json_response({"people": ["someone"] * 400})
+
+    async def small(request):
+        return web.json_response({"ok": True})
+
+    app = web.Application(middlewares=[http.compressed])
+    app.router.add_get("/big", big)
+    app.router.add_get("/small", small)
+    async with TestClient(TestServer(app)) as client:
+        packed = await client.get("/big", headers={"Accept-Encoding": "gzip"})
+        assert packed.headers.get("Content-Encoding") == "gzip"
+        assert len((await packed.json())["people"]) == 400
+        plain = await client.get("/big", headers={"Accept-Encoding": "identity"})
+        assert "Content-Encoding" not in plain.headers
+        assert len((await plain.json())["people"]) == 400
+        tiny = await client.get("/small", headers={"Accept-Encoding": "gzip"})
+        assert "Content-Encoding" not in tiny.headers

@@ -1780,10 +1780,21 @@ def _duel_routes(guard) -> list[web.RouteDef]:
 
     return duel_http.routes(guard, _linked, _sessions, lambda: _osu)
 
+COMPRESSED_FROM = 1024
+
+@web.middleware
+async def compressed(request: web.Request, handler):
+    response = await handler(request)
+    if (type(response) is web.Response and isinstance(response.body, (bytes, bytearray)) and len(response.body) >= COMPRESSED_FROM
+            and response.content_type == "application/json" and "Content-Encoding" not in response.headers):
+        response.enable_compression()
+    return response
+
 def install(app: web.Application) -> bool:
     if not RENDER_WORKER_TOKEN:
         logger.info("no RENDER_WORKER_TOKEN: renders stay on this host")
         return False
+    app.middlewares.append(compressed)
     app.add_routes(make_routes())
     app.cleanup_ctx.append(_video_cleanup)
     logger.info("render worker endpoints ready")
