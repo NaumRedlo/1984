@@ -21,6 +21,11 @@ SEND_PATIENCE = 2.0
 LIVE = (states.PREPARING, states.DRAFTING, states.SELECTING, states.ROUND_SETUP, states.WAITING_READY, states.STARTING,
         states.PLAYING, states.WAITING_PLAYERS)
 
+PUBLIC_STATES = (states.PREPARING, states.PLAYING, states.COMPLETED, states.CANCELLED)
+
+def _public(row: DuelEvent) -> bool:
+    return row.type == "round" or (row.type == "state" and (row.payload or {}).get("to") in PUBLIC_STATES)
+
 def _stamp(moment) -> Optional[str]:
     return moment.isoformat() + "Z" if moment is not None else None
 
@@ -54,6 +59,7 @@ class Hub:
         self.lost: set[tuple[str, int]] = set()
         self.cursor: Optional[int] = None
         self.states: dict[str, dict[int, dict[str, Any]]] = {}
+        self.announce: Optional[Callable[[set[int], bool], Awaitable[Any]]] = None
 
     def witnessed(self, duel_id: str) -> dict[int, dict[str, Any]]:
         return dict(self.states.get(duel_id, {}))
@@ -95,6 +101,11 @@ class Hub:
             await self.send(row.duel_id, {"type": "event", "duel": row.duel_id, "sequence": row.sequence, "event": row.type,
                                           "payload": row.payload, "version": row.state_version, "at": _stamp(row.occurred_at),
                                           "server_time": _stamp(row.received_at)})
+        if rows and self.announce is not None:
+            async with factory() as session:
+                players = set((await session.scalars(select(DuelParticipant.player_id).where(
+                    DuelParticipant.duel_id.in_({row.duel_id for row in rows})))).all())
+            await self.announce(players, any(_public(row) for row in rows))
         return len(rows)
 
     async def watch_presence(self, factory, lose: Callable[..., Awaitable[Any]] = series.player_lost,

@@ -13,7 +13,7 @@ from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import app_storage, billing, channels, community as gathered, donated, invites, members, pairing, players, publications, replays, suggestions, skins, videos
+from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, members, pairing, players, publications, replays, suggestions, skins, videos
 from services.render_farm.queue import STANDARD, RenderQueue, Serves, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -1755,7 +1755,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         web.post("/render/job/{job_id}/result", job_result),
         web.post("/render/job/{job_id}/give-back", job_give_back),
         web.get("/render/farm", farm),
-    ] + _duel_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
+    ] + [events.socket_route(guard)] + _duel_routes(guard) + publications.routes(guard, _who) + billing.routes(guard, _who) + suggestions.routes(guard, lambda: _osu) + channels.routes(guard)
 
 def _sessions():
     from db.database import AsyncSessionFactory

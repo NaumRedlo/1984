@@ -527,3 +527,20 @@ async def test_presence_recovers_training_and_repeated_start_joins_the_same_job(
     finally:
         release.set()
         await asyncio.wait_for(ended.wait(), 2)
+
+async def test_new_duel_events_are_announced_to_the_participants_and_public_ones_to_everyone(client, factory):
+    said = []
+
+    async def announce(players, public):
+        said.append((players, public))
+
+    client.hub.announce = announce
+    await client.hub.pump(factory)
+    duel = await (await client.post("/render/duels/invitations", json={"opponent_id": 2}, headers=_as(1, "invite-0090"))).json()
+    assert await client.hub.pump(factory) == 1
+    assert said == [({1, 2}, False)], "an invitation concerns the two players only"
+    await client.post(f"/render/duels/{duel['id']}/accept", headers=_as(2, "accept-0090"))
+    await client.post(f"/render/duels/{duel['id']}/surrender", headers=_as(1, "give-00090"))
+    await client.hub.pump(factory)
+    assert said[-1] == ({1, 2}, True), "a cancelled duel changes the list everyone sees"
+    assert await client.hub.pump(factory) == 0 and len(said) == 2

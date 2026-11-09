@@ -11,6 +11,7 @@ async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
     from db.database import AsyncSessionFactory
     from services.duels import live
 
+    live.hub.announce = _announce
     helpers = [asyncio.create_task(live.hub.run(AsyncSessionFactory, shutdown_event))]
     gateway = _bancho(AsyncSessionFactory, osu, live.hub)
     if gateway is not None:
@@ -23,6 +24,13 @@ async def run(shutdown_event: asyncio.Event, osu=None, bot=None) -> None:
     finally:
         for helper in helpers:
             helper.cancel()
+
+async def _announce(players: set[int], public: bool) -> None:
+    from services.render_farm import events
+
+    await events.hub.tell(players, "duels")
+    if public:
+        await events.hub.tell(None, "live")
 
 def _bancho(factory, osu, hub):
     from config.settings import BANCHO_HOST, BANCHO_IRC_PASSWORD, BANCHO_PORT, BANCHO_USERNAME, DUEL_CREATED_ROOM_LIMIT
