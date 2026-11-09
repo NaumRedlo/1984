@@ -279,15 +279,30 @@ async def ready(factory, duel_id: str, actor_id: int, operation_id: str, tb_mods
         me.connection_state = "ready"
         step.touch(duel)
         await step.emit(duel, "ready", {"player": actor_id})
-        if all(person.connection_state == "ready" for person in people):
-            for person in people:
-                person.connection_state = "playing"
-            attempt = await _attempt(step.session, current.id)
-            attempt.commanded_at = step.now
-            await step.move(duel, states.STARTING)
-            step.deadline(duel, "round_start", 30)
-            step.command(duel, "start_round", {"duel": duel.id, "round": current.id})
+        await _start_when_ready(step, duel, people, current)
     return await _act(factory, duel_id, actor_id, operation_id, "ready", expected_version, body, now)
+
+async def _start_when_ready(step: Step, duel: Duel, people: list[DuelParticipant], current: DuelRound) -> None:
+    if not all(person.connection_state == "ready" for person in people):
+        return
+    for person in people:
+        person.connection_state = "playing"
+    attempt = await _attempt(step.session, current.id)
+    attempt.commanded_at = step.now
+    await step.move(duel, states.STARTING)
+    step.deadline(duel, "round_start", 30)
+    step.command(duel, "start_round", {"duel": duel.id, "round": current.id})
+
+async def room_all_ready(factory, duel_id: str, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+    async def body(step, duel, people):
+        current = (await _rounds(step.session, duel.id))[-1]
+        for person in people:
+            if person.connection_state != "ready":
+                person.connection_state = "ready"
+                await step.emit(duel, "ready", {"player": person.player_id, "in_room": True})
+        step.touch(duel)
+        await _start_when_ready(step, duel, people, current)
+    return await _system(factory, duel_id, (states.WAITING_READY,), body, now)
 
 async def bonus(factory, duel_id: str, actor_id: int, accept: bool, operation_id: str, tb_mods: Optional[list[str]] = None,
                 now: Optional[datetime] = None) -> dict[str, Any]:

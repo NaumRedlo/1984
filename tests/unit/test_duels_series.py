@@ -8,7 +8,7 @@ from sqlalchemy.pool import NullPool
 
 import db.models
 from db.database import Base
-from db.models.duel import DuelAttempt, DuelCommand, DuelLease
+from db.models.duel import DuelAttempt, DuelCommand, DuelEvent, DuelLease
 from db.models.player import Player
 from services.duels import deadlines, generator, series, service, states
 from services.duels.errors import DuelError
@@ -461,3 +461,22 @@ async def test_an_abort_the_room_never_confirms_cancels_after_the_recovery_windo
     assert await deadlines.sweep(factory, clock.tick(2)) == 1
     lost = await _view(factory, duel_id, 1)
     assert (lost["state"], lost["outcome"], lost["winner"]) == (states.CANCELLED, "room_lost", None)
+
+async def test_everyone_ready_in_the_room_starts_the_round_like_the_ready_button(factory):
+    clock = Clock()
+    duel_id = await _drafting(factory, clock)
+    await _ban_all(factory, clock, duel_id)
+    await _picked(factory, clock, duel_id)
+    assert await series.room_all_ready(factory, duel_id, clock.tick()) is None, "before the round is set up the room is not asked"
+    await series.round_configured(factory, duel_id, clock.tick())
+    version = (await _view(factory, duel_id, 1))["version"]
+    await series.ready(factory, duel_id, 1, clock.op(), expected_version=version, now=clock.tick())
+    started = await series.room_all_ready(factory, duel_id, clock.tick())
+    assert started["state"] == states.STARTING
+    assert {p["connection"] for p in started["participants"]} == {"playing"}
+    assert [command.kind for command in await _commands(factory)].count("start_round") == 1
+    async with factory() as session:
+        readies = (await session.scalars(select(DuelEvent).where(DuelEvent.duel_id == duel_id, DuelEvent.type == "ready"))).all()
+    assert [(event.payload["player"], event.payload.get("in_room", False)) for event in readies] == [(1, False), (2, True)]
+    assert await series.room_all_ready(factory, duel_id, clock.tick()) is None
+    assert (await series.round_started(factory, duel_id, 779, clock.tick()))["state"] == states.PLAYING

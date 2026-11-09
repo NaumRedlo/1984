@@ -362,3 +362,15 @@ async def test_a_drop_during_the_countdown_stops_it_in_the_room(factory, monkeyp
     assert "!mp start 5" not in bancho.said[before:]
     assert bancho.said[before:][:2] == ["!mp aborttimer", "!mp abort"]
     assert await _state(factory, duel_id) == states.PAUSED
+
+
+async def test_pressing_ready_in_the_room_starts_the_round(factory, monkeypatch):
+    monkeypatch.setattr(outbox, "HANDLERS", {})
+    bancho, osu = FakeBancho(), FakeOsu()
+    coordinator = Coordinator(factory, bancho, osu, profiles=_fives, budget=Budget(per_minute=1000))
+    coordinator.install()
+    duel_id, _ = await _to_ready(factory, bancho)
+    await bancho.emit("#mp_500", "All players are ready")
+    assert await _state(factory, duel_id) == states.STARTING
+    await outbox.sweep(factory)
+    assert await _state(factory, duel_id) == states.PLAYING

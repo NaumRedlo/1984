@@ -211,6 +211,8 @@ class Coordinator:
                 await self._bonus_step(duel.id, "setup", "cancelled", None)
                 if not seated:
                     await self._later(duel.id, 0)
+        elif event.kind == "all_ready" and duel.state == states.WAITING_READY:
+            await series.room_all_ready(self.factory, duel.id)
         elif event.kind == "started" and duel.state == states.STARTING:
             await series.round_started(self.factory, duel.id, match_id)
         elif event.kind == "finished_all" and duel.state == states.PLAYING:
