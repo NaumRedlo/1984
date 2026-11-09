@@ -1,0 +1,261 @@
+{
+  "actions": [
+    "ready",
+    "surrender"
+  ],
+  "bonus": null,
+  "created_at": "2026-10-23T12:00:01Z",
+  "deadlines": [
+    {
+      "at": "2026-10-23T12:05:09Z",
+      "kind": "ready"
+    }
+  ],
+  "draft": [
+    {
+      "automatic": false,
+      "by": 1,
+      "slot": "NM1",
+      "turn": 0,
+      "type": "ban"
+    },
+    {
+      "automatic": false,
+      "by": 2,
+      "slot": "NM2",
+      "turn": 1,
+      "type": "ban"
+    },
+    {
+      "automatic": false,
+      "by": 1,
+      "slot": "NM3",
+      "turn": 2,
+      "type": "ban"
+    },
+    {
+      "automatic": false,
+      "by": 2,
+      "slot": "NM4",
+      "turn": 3,
+      "type": "ban"
+    },
+    {
+      "automatic": false,
+      "by": 2,
+      "slot": "HD2",
+      "turn": 4,
+      "type": "pick"
+    },
+    {
+      "automatic": false,
+      "by": 1,
+      "slot": "HR2",
+      "turn": 5,
+      "type": "pick"
+    }
+  ],
+  "finalized_at": null,
+  "id": "834f820e-31da-4fdf-ac50-4dbbdc58635d",
+  "meeting": {
+    "between": {
+      "1": 0,
+      "2": 0
+    },
+    "players": {
+      "1": {
+        "lost": 0,
+        "rating": null,
+        "rd": null,
+        "won": 0
+      },
+      "2": {
+        "lost": 0,
+        "rating": null,
+        "rd": null,
+        "won": 0
+      }
+    }
+  },
+  "mode": "direct",
+  "outcome": null,
+  "participants": [
+    {
+      "accepted": true,
+      "connection": "present",
+      "invited": false,
+      "name": "one",
+      "osu_user_id": 101,
+      "player": 1,
+      "side": "A"
+    },
+    {
+      "accepted": true,
+      "connection": "present",
+      "invited": true,
+      "name": "two",
+      "osu_user_id": 102,
+      "player": 2,
+      "side": "B"
+    }
+  ],
+  "pool": {
+    "entries": [
+      {
+        "banned_by": 1,
+        "beatmap_id": 10,
+        "mods": [
+          "NF"
+        ],
+        "review": "confident",
+        "slot": "NM1",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      },
+      {
+        "banned_by": 2,
+        "beatmap_id": 21,
+        "mods": [
+          "NF"
+        ],
+        "review": "confident",
+        "slot": "NM2",
+        "source": "catalogue",
+        "stars": 5.05,
+        "used": false
+      },
+      {
+        "banned_by": 1,
+        "beatmap_id": 30,
+        "mods": [
+          "NF"
+        ],
+        "review": "confident",
+        "slot": "NM3",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      },
+      {
+        "banned_by": 2,
+        "beatmap_id": 40,
+        "mods": [
+          "NF"
+        ],
+        "review": "confident",
+        "slot": "NM4",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      },
+      {
+        "banned_by": null,
+        "beatmap_id": 50,
+        "mods": [
+          "NF",
+          "HD"
+        ],
+        "review": "confident",
+        "slot": "HD2",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": true
+      },
+      {
+        "banned_by": null,
+        "beatmap_id": 60,
+        "mods": [
+          "NF",
+          "HR"
+        ],
+        "review": "confident",
+        "slot": "HR2",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": true
+      },
+      {
+        "banned_by": null,
+        "beatmap_id": 70,
+        "mods": [
+          "NF",
+          "DT"
+        ],
+        "review": "confident",
+        "slot": "DT1",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      },
+      {
+        "banned_by": null,
+        "beatmap_id": 80,
+        "mods": [
+          "NF",
+          "DT"
+        ],
+        "review": "confident",
+        "slot": "DT2",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      },
+      {
+        "banned_by": null,
+        "beatmap_id": 90,
+        "mods": [
+          "NF"
+        ],
+        "review": "confident",
+        "slot": "TB",
+        "source": "catalogue",
+        "stars": 5.0,
+        "used": false
+      }
+    ],
+    "manifest": "75c9d411df5e12a3597774913e17243cfe0ad2f9012abef665fd58f2dea2ecc2"
+  },
+  "rating": null,
+  "room": null,
+  "rounds": [
+    {
+      "ordinal": 1,
+      "picked_by": 2,
+      "scores": {
+        "1": {
+          "accuracy": null,
+          "combo": null,
+          "score": 900000
+        },
+        "2": {
+          "accuracy": null,
+          "combo": null,
+          "score": 800000
+        }
+      },
+      "slot": "HD2",
+      "state": "done",
+      "ties": 0,
+      "winner": 1
+    },
+    {
+      "ordinal": 2,
+      "picked_by": 1,
+      "scores": {},
+      "slot": "HR2",
+      "state": "setup",
+      "ties": 0,
+      "winner": null
+    }
+  ],
+  "rules": "duels-v1",
+  "state": "WAITING_READY",
+  "version": 27,
+  "viewer": 1,
+  "winner": null,
+  "wins": {
+    "A": 1,
+    "B": 0
+  }
+}

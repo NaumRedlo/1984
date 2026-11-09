@@ -71,7 +71,7 @@ class Verdict:
 
 def judge(game: dict[str, Any], expected: Expected) -> Verdict:
     reasons = []
-    if game.get("mode_int", 0) != 0 or game.get("mode", "osu") != "osu":
+    if game.get("mode_int") != 0 or game.get("mode") != "osu":
         reasons.append("mode")
     if str(game.get("scoring_type", "")).lower() != "scorev2":
         reasons.append("score_mode")

@@ -1,0 +1,16 @@
+{
+  "id": 643803660,
+  "match_id": 122134810,
+  "beatmap_id": 4143588,
+  "mode": "osu",
+  "mode_int": 0,
+  "mods": ["NF"],
+  "scoring_type": "scorev2",
+  "team_type": "head-to-head",
+  "start_time": "2026-11-08T14:58:55Z",
+  "end_time": "2026-11-08T15:01:11Z",
+  "scores": [
+    {"maximum_statistics": {"miss": 0}, "mods": [{"acronym": "NF"}], "statistics": {"miss": 12, "great": 634, "ok": 28, "meh": 4}, "beatmap_id": 4143588, "best_id": null, "id": null, "rank": "A", "type": "legacy_match_score", "user_id": 26253598, "accuracy": 0.9498525073746312, "build_id": null, "ended_at": "2026-11-08T14:58:55Z", "has_replay": false, "is_perfect_combo": false, "legacy_perfect": false, "legacy_score_id": null, "legacy_total_score": 374888, "max_combo": 351, "passed": true, "pp": null, "ruleset_id": 0, "started_at": null, "total_score": 374888, "replay": false, "current_user_attributes": {"pin": null}},
+    {"maximum_statistics": {"miss": 0}, "mods": [{"acronym": "NF"}], "statistics": {"miss": 24, "great": 575, "ok": 71, "meh": 8}, "beatmap_id": 4143588, "best_id": null, "id": null, "rank": "B", "type": "legacy_match_score", "user_id": 18767984, "accuracy": 0.8849557522123894, "build_id": null, "ended_at": "2026-11-08T14:58:55Z", "has_replay": false, "is_perfect_combo": false, "legacy_perfect": false, "legacy_score_id": null, "legacy_total_score": 173532, "max_combo": 203, "passed": true, "pp": null, "ruleset_id": 0, "started_at": null, "total_score": 173532, "replay": false, "current_user_attributes": {"pin": null}}
+  ]
+}

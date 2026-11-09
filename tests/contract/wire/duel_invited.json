@@ -1,0 +1,72 @@
+{
+  "actions": [
+    "accept",
+    "decline"
+  ],
+  "bonus": null,
+  "created_at": "2026-10-23T12:00:00Z",
+  "deadlines": [
+    {
+      "at": "2026-10-23T12:02:00Z",
+      "kind": "invitation"
+    }
+  ],
+  "draft": [],
+  "finalized_at": null,
+  "id": "e898811b-715a-499a-8494-6d2135e61e1e",
+  "meeting": {
+    "between": {
+      "1": 0,
+      "2": 0
+    },
+    "players": {
+      "1": {
+        "lost": 0,
+        "rating": null,
+        "rd": null,
+        "won": 0
+      },
+      "2": {
+        "lost": 0,
+        "rating": null,
+        "rd": null,
+        "won": 0
+      }
+    }
+  },
+  "mode": "direct",
+  "outcome": null,
+  "participants": [
+    {
+      "accepted": true,
+      "connection": "unknown",
+      "invited": false,
+      "name": "one",
+      "osu_user_id": 101,
+      "player": 1,
+      "side": "A"
+    },
+    {
+      "accepted": false,
+      "connection": "unknown",
+      "invited": true,
+      "name": "two",
+      "osu_user_id": 102,
+      "player": 2,
+      "side": "B"
+    }
+  ],
+  "pool": null,
+  "rating": null,
+  "room": null,
+  "rounds": [],
+  "rules": "duels-v1",
+  "state": "INVITED",
+  "version": 1,
+  "viewer": 2,
+  "winner": null,
+  "wins": {
+    "A": 0,
+    "B": 0
+  }
+}
