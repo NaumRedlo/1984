@@ -163,8 +163,9 @@ class App:
 
         from services.render_farm import http as farm_http
         from services.render_farm import pairing as farm_pairing
+        from services.render_farm.telegram_direct import Direct
 
-        farm_http.set_bot(self.bot)
+        farm_http.set_telegram(Direct(self.bot))
         farm_http.set_osu(self.osu_api_client)
 
         try:

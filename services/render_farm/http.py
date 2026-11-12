@@ -9,11 +9,11 @@ import tempfile
 from typing import Optional
 from urllib.parse import unquote
 
-from aiogram import Bot, types
 from aiohttp import web
 
 from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, members, pairing, players, publications, replays, suggestions, skins, videos
+from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, pairing, players, publications, replays, suggestions, skins, videos
+from services.render_farm.telegram import Absent, Telegram
 from services.render_farm.queue import STANDARD, RenderQueue, Serves, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
 from utils.logger import get_logger
@@ -23,12 +23,12 @@ logger = get_logger("services.render_farm.http")
 
 _CHUNK = 1 << 20
 
-_bot: Optional[Bot] = None
+_telegram: Telegram = Absent()
 _osu = None
 
-def set_bot(bot: Bot) -> None:
-    global _bot
-    _bot = bot
+def set_telegram(port: Optional[Telegram]) -> None:
+    global _telegram
+    _telegram = port if port is not None else Absent()
 
 def set_osu(client) -> None:
     global _osu
@@ -92,7 +92,7 @@ async def _serves(request: web.Request, line: RenderQueue) -> Optional[Serves]:
     if owner is None:
         return Serves(-1)
     chats = frozenset(job.chat_id for job in line.waiting() if job.chat_id < 0)
-    inside = frozenset([chat for chat in chats if owner.telegram_id and await members.is_member(_bot, chat, owner.telegram_id)])
+    inside = frozenset([chat for chat in chats if owner.telegram_id and await _telegram.is_member(chat, owner.telegram_id)])
     return Serves(owner.telegram_id, owner.player_id, inside)
 
 CARD_KEEP = 300.0
@@ -158,7 +158,6 @@ async def _osu_friends(token: str) -> Optional[list]:
         logger.warning("cannot ask osu! for friends: %s", exc)
         return None
 
-FETCH_PATIENCE = 900
 THUMB_KEEP = 3600.0
 _thumb_cache = TTLCache(maxsize=200, ttl=THUMB_KEEP)
 
@@ -171,44 +170,8 @@ def _etag_of(body: dict) -> str:
 
 def forget_memories() -> None:
     _chat_cache.clear()
-    members.forget()
     gathered.forget_holders()
     gathered.forget_gathered()
-_fetching: dict[str, asyncio.Lock] = {}
-_reading: dict[str, int] = {}
-
-def _local(path: str) -> bool:
-    return bool(path) and os.path.isabs(path) and os.path.isfile(path)
-
-async def _fetched(bot: Bot, file_id: str, key: str):
-    lock = _fetching.setdefault(key, asyncio.Lock())
-    async with lock:
-        file = await bot.get_file(file_id, request_timeout=FETCH_PATIENCE)
-        path = file.file_path or ""
-        if not _local(path):
-            return file, None
-        handle = open(path, "rb")
-        _reading[path] = _reading.get(path, 0) + 1
-        return file, handle
-
-async def _released(key: str, path: str, handle) -> None:
-    async with _fetching.setdefault(key, asyncio.Lock()):
-        handle.close()
-        left = _reading.get(path, 1) - 1
-        if left > 0:
-            _reading[path] = left
-            return
-        _reading.pop(path, None)
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-async def _small(bot: Bot, file_id: str) -> bytes:
-    file = await bot.get_file(file_id)
-    buffer = await bot.download_file(file.file_path)
-    return buffer.read() if hasattr(buffer, "read") else bytes(buffer)
-
 async def _who(request: web.Request) -> Optional[invites.Owner]:
     base = invites.owner(_token(request))
     if base is None or base.player_id is None:
@@ -550,12 +513,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "no one"}, status=404)
         body = {"telegram_id": owner.telegram_id, "name": owner.name, "username": "", "avatar": False,
                 "telegram": bool(owner.telegram_id), "player": owner.player_id}
-        if _bot is not None and owner.telegram_id:
+        if _telegram.ready() and owner.telegram_id:
             try:
-                chat = await _bot.get_chat(owner.telegram_id)
-                body["username"] = chat.username or ""
-                body["name"] = " ".join(p for p in (chat.first_name, chat.last_name) if p) or owner.name
-                body["avatar"] = chat.photo is not None
+                chat = await _telegram.describe(owner.telegram_id)
+                body["username"] = chat.username
+                body["name"] = chat.name or owner.name
+                body["avatar"] = chat.photo
             except Exception as exc:
                 logger.warning("cannot describe %s: %s", owner.telegram_id, exc)
         return web.json_response(body)
@@ -575,15 +538,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         owner = await _who(request)
-        if owner is None or _bot is None or not owner.telegram_id:
+        if owner is None or not _telegram.ready() or not owner.telegram_id:
             return web.json_response({"error": "no one"}, status=404)
         try:
-            chat = await _bot.get_chat(owner.telegram_id)
-            if chat.photo is None:
+            data = await _telegram.photo(owner.telegram_id)
+            if data is None:
                 return web.json_response({"error": "no photo"}, status=404)
-            file = await _bot.get_file(chat.photo.small_file_id)
-            buffer = await _bot.download_file(file.file_path)
-            data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
         except Exception as exc:
             logger.warning("cannot fetch the photo of %s: %s", owner.telegram_id, exc)
             return web.json_response({"error": "no photo"}, status=404)
@@ -620,7 +580,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             seen.add(chat_id)
             title = ""
             photo = False
-            if _bot is not None:
+            if _telegram.ready():
                 try:
                     title, photo = await _chat_card(chat_id)
                     if not await _member(chat_id, owner.telegram_id):
@@ -632,14 +592,14 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         return web.json_response(rows)
 
     async def _member(chat_id: int, telegram_id: int) -> bool:
-        return await members.is_member(_bot, chat_id, telegram_id)
+        return await _telegram.is_member(chat_id, telegram_id)
 
     async def _chat_card(chat_id: int) -> tuple[str, bool]:
         kept = _chat_cache.get(chat_id)
         if kept is not None:
             return kept
-        chat = await _bot.get_chat(chat_id)
-        card = (chat.title or chat.full_name or "", chat.photo is not None)
+        chat = await _telegram.describe(chat_id)
+        card = (chat.title, chat.photo)
         _chat_cache[chat_id] = card
         return card
 
@@ -648,7 +608,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         owner = await _who(request)
-        if owner is None or _bot is None:
+        if owner is None or not _telegram.ready():
             return web.json_response({"error": "no one"}, status=404)
         try:
             chat_id = int(request.match_info["chat_id"])
@@ -657,12 +617,9 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if chat_id != owner.telegram_id and not await _member(chat_id, owner.telegram_id):
             return web.json_response({"error": "not your chat"}, status=403)
         try:
-            chat = await _bot.get_chat(chat_id)
-            if chat.photo is None:
+            data = await _telegram.photo(chat_id)
+            if data is None:
                 return web.json_response({"error": "no photo"}, status=404)
-            file = await _bot.get_file(chat.photo.small_file_id)
-            buffer = await _bot.download_file(file.file_path)
-            data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
         except Exception as exc:
             logger.info("no photo for chat %s: %s", chat_id, exc)
             return web.json_response({"error": "no photo"}, status=404)
@@ -720,7 +677,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 body["me"] = await players.one(session, owner.player_id, owner.telegram_id, me=owner.player_id)
         body["group"] = ""
         body["photo"] = False
-        if chat_id is not None and _bot is not None:
+        if chat_id is not None and _telegram.ready():
             try:
                 body["group"], body["photo"] = await _chat_card(chat_id)
             except Exception as exc:
@@ -870,9 +827,9 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             if user is None:
                 return web.json_response({"error": "not registered"}, status=404)
             handle = None
-            if _bot is not None:
+            if _telegram.ready():
                 try:
-                    chat = await _bot.get_chat(owner.telegram_id)
+                    chat = await _telegram.describe(owner.telegram_id)
                     handle = f"@{chat.username}" if chat.username else None
                 except Exception as exc:
                     logger.info("cannot learn the handle of %s: %s", owner.telegram_id, exc)
@@ -956,7 +913,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        if _bot is None:
+        if not _telegram.ready():
             return web.json_response({"error": "bot asleep"}, status=503)
         told = await _json_object(request)
         replay = str(told.get("replay") or "").lower()
@@ -987,7 +944,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         try:
             data = await build_recent_card_data(raw, username=name, player_id=int(osu_user_id or 0), lang=lang, card_mode="shared", client=_osu)
             png = (await card_renderer.generate_recent_card_async(data)).getvalue()
-            await _bot.send_photo(chat_id, types.BufferedInputFile(png, filename="score.png"))
+            await _telegram.send_photo(chat_id, png, "score.png")
         except Exception as exc:
             logger.warning("a witnessed play %s was not sent: %s", row.id, exc, exc_info=True)
             return web.json_response({"error": "not sent"}, status=502)
@@ -1202,7 +1159,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         owner = await _who(request)
         if owner is None:
             return web.json_response({"error": "no one"}, status=404)
-        if _bot is None:
+        if not _telegram.ready():
             return web.json_response({"error": "bot asleep"}, status=503)
         if not owner.telegram_id:
             return web.json_response({"error": "no telegram"}, status=409)
@@ -1221,11 +1178,11 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "not your chat"}, status=403)
         filename = os.path.basename(str(meta.get("name") or "")).strip()[:128] or "render.mp4"
         try:
-            sent = await _bot.send_video(
+            sent = await _telegram.send_video(
                 where,
-                types.FSInputFile(path, filename=filename),
+                path,
+                filename,
                 caption=caption or None,
-                supports_streaming=True,
                 width=_dimension(meta.get("width")),
                 height=_dimension(meta.get("height")),
                 duration=_dimension(meta.get("duration")),
@@ -1240,7 +1197,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 pass
         logger.info("a video of %d bytes went to %s", written, where)
         body = {"ok": True, "message_id": sent.message_id}
-        kind, media = videos.media_of(sent)
+        kind, media = sent.kind, sent.media
         if media is not None:
             from db.database import AsyncSessionFactory
 
@@ -1503,12 +1460,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         _, _, video, _ = found
-        if not video.thumb_id or _bot is None:
+        if not video.thumb_id or not _telegram.ready():
             return web.json_response({"error": "no picture"}, status=404)
         data = _thumb_cache.get(video.id)
         if data is None:
             try:
-                data = await _small(_bot, video.thumb_id)
+                data = await _telegram.small(video.thumb_id)
             except Exception as exc:
                 logger.info("no picture for video %s: %s", video.id, exc)
                 return web.json_response({"error": "no picture"}, status=404)
@@ -1524,39 +1481,29 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             if not app_storage.available(video):
                 return web.json_response({"error": "video expired"}, status=410)
             return web.FileResponse(app_storage.path_for(video.id), headers={"Content-Type": "video/mp4", "X-Content-SHA256": video.storage_hash or ""})
-        if _bot is None:
+        if not _telegram.ready():
             return web.json_response({"error": "bot asleep"}, status=503)
         key = video.file_unique_id or video.file_id
         try:
-            file, handle = await _fetched(_bot, video.file_id, key)
+            fetched = await _telegram.fetch(video.file_id, key)
         except Exception as exc:
             logger.warning("telegram did not give video %s: %s", video.id, exc)
             return web.json_response({"error": "telegram did not answer"}, status=502)
-        path = file.file_path or ""
-        size = os.fstat(handle.fileno()).st_size if handle is not None else (file.file_size or video.size or 0)
+        size = fetched.size or video.size or 0
         reply = web.StreamResponse(headers={"Content-Type": "video/mp4"})
         if size:
             reply.content_length = int(size)
         try:
             await reply.prepare(request)
-            if handle is not None:
-                while True:
-                    chunk = await asyncio.to_thread(handle.read, _CHUNK)
-                    if not chunk:
-                        break
-                    await reply.write(chunk)
-            else:
-                url = _bot.session.api.file_url(_bot.token, path)
-                async for chunk in _bot.session.stream_content(url, timeout=FETCH_PATIENCE, chunk_size=_CHUNK):
-                    await reply.write(chunk)
+            async for chunk in fetched.chunks(_CHUNK):
+                await reply.write(chunk)
             await reply.write_eof()
         except (ConnectionError, asyncio.CancelledError):
             raise
         except Exception as exc:
             logger.warning("video %s stopped half way: %s", video.id, exc)
         finally:
-            if handle is not None:
-                await asyncio.shield(_released(key, path, handle))
+            await asyncio.shield(fetched.release())
         return reply
 
     async def inbox_replay(request: web.Request) -> web.StreamResponse:
@@ -1576,13 +1523,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         owner, _, video, sender = found
         if video.kind == "app":
             return web.json_response({"error": "only in app"}, status=404)
-        if _bot is None:
+        if not _telegram.ready():
             return web.json_response({"error": "bot asleep"}, status=503)
         if not owner.telegram_id:
             return web.json_response({"error": "no telegram"}, status=409)
-        send_as = {"animation": _bot.send_animation, "document": _bot.send_document}.get(video.kind or "", _bot.send_video)
         try:
-            sent = await send_as(owner.telegram_id, video.file_id, caption=videos.caption(video, sender) or None)
+            sent = await _telegram.pass_on(owner.telegram_id, video.kind, video.file_id, videos.caption(video, sender) or None)
         except Exception as exc:
             logger.warning("passing video %s to %s failed: %s", video.id, owner.telegram_id, exc)
             return web.json_response({"error": str(exc)}, status=502)

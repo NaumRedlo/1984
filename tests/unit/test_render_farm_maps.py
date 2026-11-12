@@ -14,6 +14,7 @@ from db.models.map_attempt import UserMapAttempt
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from services.render_farm import community, http, invites, maps
+from services.render_farm.telegram_direct import Direct
 
 CHAT = -1001
 OTHER = -2002
@@ -128,7 +129,7 @@ async def served(monkeypatch, factory):
     monkeypatch.setattr(db.database, "AsyncSessionFactory", factory)
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-y"
     invites.remember(token, invites.Owner(7, "Naum"))
-    http.set_bot(_Bot())
+    http.set_telegram(Direct(_Bot()))
     http.set_osu(None)
     app = web.Application()
     app.add_routes(http.make_routes())
@@ -136,7 +137,7 @@ async def served(monkeypatch, factory):
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_the_app_reads_the_board_of_a_map_in_its_own_chat(served, factory):

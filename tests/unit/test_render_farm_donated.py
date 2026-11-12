@@ -6,6 +6,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from services.render_farm import donated, http, invites
+from services.render_farm.telegram_direct import Direct
 
 def _replay(tail: bytes = b"") -> bytes:
     md5 = b"5b73773f55e18a9756dd3261938aa454"
@@ -21,14 +22,14 @@ async def served(monkeypatch, tmp_path):
     monkeypatch.setattr(donated, "DONATED_REPLAYS_DIR", str(tmp_path / "donated"))
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-z"
     invites.remember(token, invites.Owner(7, "Naum"))
-    http.set_bot(_Bot())
+    http.set_telegram(Direct(_Bot()))
     app = web.Application()
     app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}, tmp_path / "donated"
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_a_donated_replay_is_kept_once_under_its_hash(served):

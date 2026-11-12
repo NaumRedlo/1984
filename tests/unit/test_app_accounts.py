@@ -22,6 +22,7 @@ from services.refresh import refresh_user
 from services.render_farm import http, invites, pairing, players
 from tasks.live_tracker import LiveTracker
 from tasks.profile_updater import ProfileUpdater
+from services.render_farm.telegram_direct import Direct
 
 MAC = pairing.Machine("MacBook Pro", "macOS", 10, "0.93.0")
 OSU = {
@@ -187,7 +188,7 @@ async def alone(factory, monkeypatch):
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-osu"
     invites.remember(token, invites.Owner(0, "alice", player_id))
     bot = _Bot()
-    http.set_bot(bot)
+    http.set_telegram(Direct(bot))
     http.set_osu(None)
     app = web.Application()
     app.add_routes(http.make_routes())
@@ -195,7 +196,7 @@ async def alone(factory, monkeypatch):
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}, player_id, bot
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_an_account_without_telegram_says_so_and_has_no_chats(alone):

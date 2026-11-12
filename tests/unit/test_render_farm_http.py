@@ -5,6 +5,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from services.render_farm import http
+from services.render_farm.telegram_direct import Direct
 
 TOKEN = "a-shared-secret"
 MINE = {"Authorization": f"Bearer {TOKEN}", "X-Render-Worker": "mac"}
@@ -72,9 +73,9 @@ async def linked(monkeypatch, farm):
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-x"
     invites.remember(token, invites.Owner(7, "Naum"))
     bot = _Sent()
-    http.set_bot(bot)
+    http.set_telegram(Direct(bot))
     yield client, token, bot
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_a_machine_can_ask_who_it_belongs_to(linked):

@@ -15,6 +15,7 @@ from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from services.leaderboard.periods import current_period_key
 from services.render_farm import community, http, invites
+from services.render_farm.telegram_direct import Direct
 
 CHAT = -1001
 NOW = datetime(2026, 9, 23, 12, 0)
@@ -189,14 +190,14 @@ async def served(monkeypatch, factory):
     monkeypatch.setattr(db.database, "AsyncSessionFactory", factory)
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-y"
     invites.remember(token, invites.Owner(7, "Naum"))
-    http.set_bot(_Bot())
+    http.set_telegram(Direct(_Bot()))
     app = web.Application()
     app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_the_machine_gets_its_person_s_group_without_naming_it(served, factory):

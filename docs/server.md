@@ -82,6 +82,25 @@ Rules the code keeps after the split:
   duel commands.
 - The addresses older Dossier builds use keep answering.
 
+## Done
+
+- Step 0, 13 November 2026: `tests/unit/test_server_boundary.py` walks the
+  imports from the app's routes and loops and holds three lists: where the
+  app's side imports `aiogram` (4 modules), where it imports the `bot` package
+  (2 places), and where the bot's side reads memory the server owns (7
+  places). A new one fails the test, and so does a closed one left on a list.
+- Step 1, 13 November 2026: the routes speak to Telegram through
+  `render_farm/telegram.py` (membership, a chat's card, a photo, a thumbnail,
+  a video stream, sending a photo or a video, passing a file on).
+  `telegram_direct.py` calls the bot as before; with no bot the routes answer
+  as they did. `render_farm/http.py` no longer imports `aiogram`.
+
+Still on the lists, for the next steps: the OAuth callback's notice through
+the bot, `orders.rivals_for` living in the bot's order intake,
+`BufferedInputFile` in the leaderboard service, and two functions the app's
+side borrows from the bot's handlers (`_build_page_data`,
+`_play_from_score`).
+
 ## Seams found so far
 
 Read from the code, not yet a full list; step 0 makes the list complete.

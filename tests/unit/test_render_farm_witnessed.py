@@ -6,6 +6,7 @@ from db.models.map_attempt import UserMapAttempt
 from db.models.witnessed_play import WitnessedPlay
 from services.render_farm import community, witnessed
 from tests.unit.test_render_farm_community import CHAT, NOW, _seed, factory, served
+from services.render_farm.telegram_direct import Direct
 
 MD5 = "0123456789abcdef0123456789abcdef"
 REPLAY = "fedcba9876543210fedcba9876543210"
@@ -293,7 +294,7 @@ async def test_the_app_sends_its_own_kept_play_to_the_chat_and_the_day_is_read(s
 
     monkeypatch.setattr(recent, "build_recent_card_data", built)
     monkeypatch.setattr(card_renderer, "generate_recent_card_async", drawn)
-    monkeypatch.setattr(http._bot, "send_photo", photo, raising=False)
+    monkeypatch.setattr(http._telegram.bot, "send_photo", photo, raising=False)
     assert (await client.post("/render/me/play", headers=mine, json=_told(id=5561))).status == 201
     sent = await client.post("/render/me/play/send", headers=mine, json={"chat": CHAT, "replay": REPLAY})
     assert sent.status == 200 and photos == [CHAT]

@@ -20,6 +20,7 @@ from db.models.player import Player
 from db.models.shared_video import SharedVideo, VideoDelivery
 from db.models.user import User
 from services.render_farm import app_storage, http, invites, videos
+from services.render_farm.telegram_direct import Direct
 
 CHAT = -1001
 OTHER = -2002
@@ -225,14 +226,14 @@ async def served(monkeypatch, factory, tmp_path):
         invites.remember(token, invites.Owner(telegram, name))
         tokens[telegram] = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     bot = _Bot(str(tmp_path))
-    http.set_bot(bot)
+    http.set_telegram(Direct(bot))
     app = web.Application()
     app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, tokens, bot
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     for headers in tokens.values():
         invites.forget(invites.digest(headers["Authorization"][len("Bearer "):]))
 

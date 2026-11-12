@@ -22,6 +22,7 @@ from services.render_farm import http as farm_http
 from services.render_farm import invites, orders, skins
 from services.render_farm.queue import MAX_ATTEMPTS, RenderQueue, Serves, State
 from services.render_farm.roster import Roster
+from services.render_farm.telegram import Absent
 from utils.osr import header
 
 TOKEN = "s3cret"
@@ -578,11 +579,12 @@ async def test_a_paired_device_renders_for_its_owners_chats_and_no_others(farm, 
     invites.remember("outsider-app", invites.Owner(88, "Outsider", 6))
     asked = []
 
-    async def is_member(bot, chat_id, telegram_id):
-        asked.append((chat_id, telegram_id))
-        return (chat_id, telegram_id) == (-5, 77)
+    class Rosters(Absent):
+        async def is_member(self, chat_id, telegram_id):
+            asked.append((chat_id, telegram_id))
+            return (chat_id, telegram_id) == (-5, 77)
 
-    monkeypatch.setattr(farm_http.members, "is_member", is_member)
+    monkeypatch.setattr(farm_http, "_telegram", Rosters())
     try:
         outsider = {"Authorization": "Bearer outsider-app", "X-Render-Worker": "Laptop"}
         assert (await client.post("/render/claim", json={}, headers=outsider)).status == 204

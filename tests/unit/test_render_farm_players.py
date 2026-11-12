@@ -15,6 +15,7 @@ from db.models.player import Player
 from db.models.title_progress import UserTitleProgress
 from db.models.user import User
 from services.render_farm import http, invites, players
+from services.render_farm.telegram_direct import Direct
 
 GROUP = -1001
 OTHER = -2002
@@ -122,14 +123,14 @@ async def served(monkeypatch, factory):
     monkeypatch.setattr(db.database, "AsyncSessionFactory", factory)
     token = "a-personal-token-of-sixty-four-characters-more-or-less-long-x"
     invites.remember(token, invites.Owner(7, "Naum"))
-    http.set_bot(_Bot())
+    http.set_telegram(Direct(_Bot()))
     app = web.Application()
     app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
     await client.start_server()
     yield client, {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     await client.close()
-    http.set_bot(None)
+    http.set_telegram(None)
     invites.forget(invites.digest(token))
 
 async def test_the_app_lists_players_and_pins_its_chat(served, factory):

@@ -61,11 +61,13 @@ if POSTGRES:
 
 @pytest.fixture(autouse=True)
 def fresh_render_memories():
-    from services.render_farm import http
+    from services.render_farm import http, members
 
     http.forget_memories()
+    members.forget()
     yield
     http.forget_memories()
+    members.forget()
 
 @pytest.fixture(autouse=True)
 def incidents_in_memory(monkeypatch):
