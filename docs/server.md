@@ -168,16 +168,47 @@ are estimates.
 
 Steps 0 to 4 are the split. After them the bot is no longer the only way in.
 
-## Before step 4
+## What the machine told, 13 November 2026
 
-Needed from the machine, not known yet:
+Memory, resident, from two readings an hour apart:
 
-```
-ps -eo rss,comm,args --sort=-rss | head -12
-du -sh /root/1984/data/* /root/1984/logs /var/lib/postgresql 2>/dev/null
-cat /etc/caddy/Caddyfile
-```
+| Process | Size |
+|---|---|
+| `python -m bot.main` | 400 to 540 MB |
+| Assay | 350 to 530 MB |
+| PostgreSQL, 9 idle connections of the bot | about 100 MB each as `ps` counts them; most of it is the shared buffers counted nine times |
+| `telegram-bot-api` | runs, small |
 
-The first says how much each process takes and whether a local Telegram Bot
-API server runs beside the bot. The second says what fills the 22 GB. The
-third is the place the second unit and the health check are added.
+The bot and Assay together take about 1 GB of the 1.8 GB. Two Python
+processes in place of one do not fit as they are. Before step 4:
+
+- find what the bot holds in its 400 to 540 MB, and cut it;
+- give Assay a ceiling: workstation garbage collection, a heap limit, and
+  fewer cached maps than the default 512 (`ASSAY_CACHED_MAPS`);
+- size the connection pool for two processes, so that they do not open 18
+  connections where 9 sit idle now.
+
+Disk, 22 GB used. What the bot and its data need is small: `data/` 1.3 GB,
+PostgreSQL 225 MB, the nightly dumps 510 MB, Assay's maps 391 MB. The rest is
+leftovers:
+
+| What | Size | From |
+|---|---|---|
+| the systemd journal | 2.9 GB | no size limit set |
+| `/root/.osu` | 2.2 GB | not read by today's code; to be looked at |
+| `/root/.nuget` | 2.0 GB | packages fetched to build Assay on the machine |
+| `/root/.rustup`, `/root/.cargo` | 1.5 GB | the toolchain that built the renderer here until 23 September |
+| `/root/.dossier` | 736 MB | the renderer's engines, kept unpacked by the removed `scripts/engine.py` |
+| `/root/.local` | 620 MB | to be looked at |
+| `/root/replays-2026-11-07.tar` | 0.5 GB | a hand-made archive |
+| `/root/telegram-bot-api` | 472 MB | the source and build tree of the Bot API server |
+| the apt cache and an older kernel | about 0.7 GB | |
+| build output under `assay-server/src` | 227 MB | Assay runs from `/opt/assay` |
+| three SQLite files | 156 MB | the way back from PostgreSQL |
+
+Caddy has one site, `onenineeightfour.ignorelist.com`, with
+`reverse_proxy 127.0.0.1:8080`.
+
+Building Assay on this machine is what brings 2 GB of packages and a .NET SDK
+here. A build in CI that ships the published folder removes both; it belongs
+with step 8.
