@@ -6,7 +6,7 @@ RUN rid=linux-x64; [ "$TARGETARCH" = "arm64" ] && rid=linux-arm64; \
     dotnet publish src/Assay/Assay.csproj -c Release -r "$rid" --self-contained false -o /out \
     && dotnet /out/Assay.dll --self-test
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:11.0
 WORKDIR /app
 COPY --from=build /out/ ./
 ENV ASSAY_URLS=http://0.0.0.0:5077 \
