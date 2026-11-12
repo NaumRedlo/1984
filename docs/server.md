@@ -195,19 +195,25 @@ leftovers:
 | What | Size | From |
 |---|---|---|
 | the systemd journal | 2.9 GB | no size limit set |
-| `/root/.osu` | 2.2 GB | not read by today's code; to be looked at |
+| `/root/.osu/Songs` | 2.2 GB | the removed renderer's maps, last written on 23 September; nothing reads it now |
 | `/root/.nuget` | 2.0 GB | packages fetched to build Assay on the machine |
 | `/root/.rustup`, `/root/.cargo` | 1.5 GB | the toolchain that built the renderer here until 23 September |
 | `/root/.dossier` | 736 MB | the renderer's engines, kept unpacked by the removed `scripts/engine.py` |
-| `/root/.local` | 620 MB | to be looked at |
+| `/root/.local/share/NuGet` | 620 MB | the second NuGet cache of the same builds |
 | `/root/replays-2026-11-07.tar` | 0.5 GB | a hand-made archive |
-| `/root/telegram-bot-api` | 472 MB | the source and build tree of the Bot API server |
+| `/root/telegram-bot-api/build` | 311 MB | the build tree of the Bot API server; the service runs `bin/telegram-bot-api` beside it |
 | the apt cache and an older kernel | about 0.7 GB | |
 | build output under `assay-server/src` | 227 MB | Assay runs from `/opt/assay` |
 | three SQLite files | 156 MB | the way back from PostgreSQL |
 
 Caddy has one site, `onenineeightfour.ignorelist.com`, with
-`reverse_proxy 127.0.0.1:8080`.
+`reverse_proxy 127.0.0.1:8080`. Ports taken on the loopback: 8080 the bot's
+HTTP side, 8081 the local Bot API server, 5077 Assay. The second unit needs
+another one.
+
+The Bot API server gets its `--api-id` and `--api-hash` on the command line,
+where `ps` shows them. With the units of step 4 they move into an environment
+file (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`).
 
 Building Assay on this machine is what brings 2 GB of packages and a .NET SDK
 here. A build in CI that ships the published folder removes both; it belongs
