@@ -1,13 +1,16 @@
 import asyncio
 import os
+import uuid
 from typing import AsyncIterator, Optional
 
 from aiogram import Bot, types
 
+from config.settings import TELEGRAM_FETCH_DIR
 from services.render_farm import members, videos
 from services.render_farm.telegram import Chat, Media, Sent, Thumb
 
 FETCH_PATIENCE = 900
+FETCH_CHUNK = 256 * 1024
 
 _fetching: dict[str, asyncio.Lock] = {}
 _reading: dict[str, int] = {}
@@ -113,6 +116,26 @@ class Direct:
             handle = open(path, "rb")
             _reading[path] = _reading.get(path, 0) + 1
             return _File(self.bot, key, path, handle, os.fstat(handle.fileno()).st_size)
+
+    async def local(self, file_id: str) -> str:
+        file = await self.bot.get_file(file_id, request_timeout=FETCH_PATIENCE)
+        path = file.file_path or ""
+        if _local(path):
+            return path
+        os.makedirs(TELEGRAM_FETCH_DIR, exist_ok=True)
+        kept = os.path.join(TELEGRAM_FETCH_DIR, uuid.uuid4().hex)
+        url = self.bot.session.api.file_url(self.bot.token, path)
+        try:
+            with open(kept, "wb") as out:
+                async for chunk in self.bot.session.stream_content(url, timeout=FETCH_PATIENCE, chunk_size=FETCH_CHUNK):
+                    await asyncio.to_thread(out.write, chunk)
+        except BaseException:
+            try:
+                os.unlink(kept)
+            except OSError:
+                pass
+            raise
+        return kept
 
     async def send_photo(self, chat_id: int, png: bytes, filename: str) -> Sent:
         message = await self.bot.send_photo(chat_id, types.BufferedInputFile(png, filename=filename))

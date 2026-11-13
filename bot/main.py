@@ -46,7 +46,7 @@ from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_linked as oauth_set_linked
 from bot.handlers.auth.linked import notifier as oauth_notifier
 from db.migrations import run_all_migrations
-from config.settings import RENDER_WORKER_TOKEN
+from config.settings import DATABASE_URL, RENDER_WORKER_TOKEN, TELEGRAM_THROUGH_ROWS
 import db.models
 
 logger = get_logger(__name__)
@@ -62,6 +62,8 @@ class App:
         self.membership_task: Optional[asyncio.Task] = None
         self.map_checks_task: Optional[asyncio.Task] = None
         self.duels_task: Optional[asyncio.Task] = None
+        self.telegram_tasks: Optional[asyncio.Task] = None
+        self.signals = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -160,13 +162,26 @@ class App:
         logger.info("Starting OAuth server...")
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
-        oauth_set_linked(oauth_notifier(self.bot))
 
         from services.render_farm import http as farm_http
         from services.render_farm import pairing as farm_pairing
         from services.render_farm.telegram_direct import Direct
 
-        farm_http.set_telegram(Direct(self.bot))
+        if TELEGRAM_THROUGH_ROWS:
+            from db.database import AsyncSessionFactory
+            from services.render_farm.telegram_rows import Carrier, Rows
+            from utils.signals import Signals
+
+            logger.info("Telegram is asked through rows of the database")
+            self.signals = Signals(DATABASE_URL)
+            asking = Rows(AsyncSessionFactory, self.signals)
+            carrier = Carrier(AsyncSessionFactory, Direct(self.bot), self.signals, linked=oauth_notifier(self.bot))
+            farm_http.set_telegram(asking)
+            oauth_set_linked(asking.linked)
+            self.telegram_tasks = asyncio.create_task(carrier.run(self.shutdown_event), name="telegram_tasks")
+        else:
+            farm_http.set_telegram(Direct(self.bot))
+            oauth_set_linked(oauth_notifier(self.bot))
         farm_http.set_osu(self.osu_api_client)
 
         try:
@@ -238,6 +253,12 @@ class App:
 
         if self.oauth_server:
             await self.oauth_server.stop()
+
+        if self.telegram_tasks:
+            with suppress(asyncio.CancelledError):
+                await self.telegram_tasks
+        if self.signals:
+            await self.signals.stop()
 
         if self.osu_api_client:
             await self.osu_api_client.close()

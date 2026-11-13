@@ -103,12 +103,52 @@ Rules the code keeps after the split:
     makes the links; the callback calls whoever `set_linked` named, and
     `bot/handlers/auth/linked.py` is the bot's answer to it.
 
+- Step 2, 13 November 2026: a second kind of the port,
+  `render_farm/telegram_rows.py`, with two halves that share one table,
+  `telegram_tasks`.
+  - `Rows` is what the routes hold. A call writes a row and waits for the
+    answer. Pictures travel in the row; a video travels as a path on the disk
+    both processes see.
+  - `Carrier` runs beside the bot. It takes rows, carries them out through
+    the direct kind, and writes the answer back. Up to 16 at once, so a long
+    upload does not hold a face back.
+  - `services/outbox.py` is the duels' outbox made general: claiming with
+    `SKIP LOCKED`, settling, retries with a growing pause. The duels use it
+    through `services/duels/outbox.py` as before.
+  - `utils/signals.py` wakes the other side with `NOTIFY`, so nobody polls
+    while nothing is asked. Without PostgreSQL the wait falls back to a poll
+    of half a second.
+  - A request is carried out once and never late. If the bot does not take
+    it within 3 seconds the row is withdrawn, the port says the bot is asleep
+    for 15 seconds, and the routes answer `503 bot asleep` as they did with no
+    bot.
+  - The notice after a sign-in is a row with no deadline. It waits for the
+    bot and is tried up to 10 times.
+
+  Measured on a development machine, two processes over PostgreSQL 17: a
+  chat's card crosses and comes back in 4 ms at the median, a picture of
+  800 KB in 8 ms. The video routes pass their 37 tests through both kinds.
+  The other process in these runs was a stand-in for the bot: nothing was
+  sent to Telegram itself from two processes yet.
+
+  It is off by default. `TELEGRAM_THROUGH_ROWS=1` in the environment turns it
+  on inside the one process of today, which is the way to try it on the
+  server before the units are split.
+
+Found on the way, for step 4:
+
+- A video read back from Telegram crosses as the path the local Bot API
+  server wrote. The server's user has to read and remove files in that
+  folder, so the two units and the Bot API server need a group in common.
+- The notices of the duels are rows already (`duel_notifications`,
+  `services/duels/notify.py`). The loop that delivers them moves to the bot's
+  unit.
+- Each process that listens keeps one more connection to PostgreSQL open.
+
 Still on the third list, for step 3: the bot's `/start` reads
 `invites` and `pairing`, and the order intake reads `invites`, `queue` and
 `roster`, all of them memory the server owns.
 
-The notice after a sign-in still crosses by a function call, which works
-only inside one process. It becomes an outbox row in step 2.
 
 ## Seams found so far
 

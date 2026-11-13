@@ -12,6 +12,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 import db.models
 from db.database import Base
@@ -19,8 +20,10 @@ from db.models.chat_member import ChatMember
 from db.models.player import Player
 from db.models.shared_video import SharedVideo, VideoDelivery
 from db.models.user import User
-from services.render_farm import app_storage, http, invites, videos
+from services.render_farm import app_storage, http, invites, telegram_direct, videos
 from services.render_farm.telegram_direct import Direct
+from services.render_farm.telegram_rows import Carrier, Rows
+from utils.signals import Signals
 
 CHAT = -1001
 OTHER = -2002
@@ -28,8 +31,8 @@ NOW = datetime(2026, 10, 1, 12, 0)
 EVERYBODY = {7, 8, 9, 10, 11}
 
 @pytest_asyncio.fixture
-async def factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def factory(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'videos.db'}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield async_sessionmaker(engine, expire_on_commit=False)
@@ -212,8 +215,8 @@ class _Bot:
     async def download_file(self, file_path):
         return open(file_path, "rb")
 
-@pytest_asyncio.fixture
-async def served(monkeypatch, factory, tmp_path):
+@pytest_asyncio.fixture(params=["direct", "rows"])
+async def served(request, monkeypatch, factory, tmp_path):
     import db.database
 
     monkeypatch.setattr(http, "RENDER_WORKER_TOKEN", "a-shared-secret")
@@ -226,7 +229,14 @@ async def served(monkeypatch, factory, tmp_path):
         invites.remember(token, invites.Owner(telegram, name))
         tokens[telegram] = {"Authorization": f"Bearer {token}", "X-Render-Worker": "mac"}
     bot = _Bot(str(tmp_path))
-    http.set_telegram(Direct(bot))
+    monkeypatch.setattr(telegram_direct, "TELEGRAM_FETCH_DIR", str(tmp_path / "fetched"))
+    stop, carrying = asyncio.Event(), None
+    if request.param == "rows":
+        signals = Signals()
+        http.set_telegram(Rows(factory, signals))
+        carrying = asyncio.create_task(Carrier(factory, Direct(bot), signals).run(stop))
+    else:
+        http.set_telegram(Direct(bot))
     app = web.Application()
     app.add_routes(http.make_routes())
     client = TestClient(TestServer(app))
@@ -234,6 +244,9 @@ async def served(monkeypatch, factory, tmp_path):
     yield client, tokens, bot
     await client.close()
     http.set_telegram(None)
+    stop.set()
+    if carrying is not None:
+        await carrying
     for headers in tokens.values():
         invites.forget(invites.digest(headers["Authorization"][len("Bearer "):]))
 

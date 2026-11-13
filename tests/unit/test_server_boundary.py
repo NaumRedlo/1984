@@ -9,6 +9,7 @@ SERVER_ROOTS = (
     "services.oauth.server",
     "services.render_farm.http",
     "services.render_farm.events",
+    "services.render_farm.telegram_rows",
     "services.duels.http",
     "tasks.duels",
     "tasks.live_tracker",
