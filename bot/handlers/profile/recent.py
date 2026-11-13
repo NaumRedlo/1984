@@ -19,7 +19,8 @@ from utils.title_progress import evaluate_recent_plays
 from utils.osu.api_client import _is_perfect, _parse_played_at
 from utils.language import get_language
 from bot.filters import TextTriggerFilter, TriggerArgs
-from services.image.render.recent import build_recent_card_data, _pick_score_value
+from services.image.render.recent import build_recent_card_data
+from services.recent_plays import play_from_score as _play_from_score
 from utils.osu import rulesets
 
 logger = get_logger("handlers.recent")
@@ -47,36 +48,6 @@ async def fetch_recent(client, osu_id: int, token, ruleset=None) -> tuple[list, 
     newest = [plays[0] for plays in found.values() if plays]
     shown = max(newest, key=_ended) if newest else None
     return standard, shown
-
-def _play_from_score(raw: dict) -> dict:
-    bm = raw.get("beatmap") or {}
-    stats = raw.get("statistics") or {}
-    passed = raw.get("passed", True)
-    miss = stats.get("miss")
-    if miss is None:
-        miss = stats.get("count_miss")
-    n100 = stats.get("ok")
-    if n100 is None:
-        n100 = stats.get("count_100")
-    return {
-        "star_rating": bm.get("difficulty_rating") or 0.0,
-        "rank": raw.get("rank") if passed else "F",
-        "beatmap_id": bm.get("id"),
-        "mods": ",".join(
-            m.get("acronym", "") if isinstance(m, dict) else str(m)
-            for m in (raw.get("mods") or [])
-        ),
-        "accuracy": (raw.get("accuracy") or 0) * 100,
-        "bpm": bm.get("bpm"),
-        "length": bm.get("total_length"),
-        "max_combo": raw.get("max_combo") or 0,
-        "map_max_combo": bm.get("max_combo"),
-        "count_miss": miss,
-        "count_100": n100,
-        "is_fc": _is_perfect(raw),
-        "passed": passed,
-        "score": _pick_score_value(raw),
-    }
 
 @router.message(TextTriggerFilter("rs"))
 async def cmd_recent(message: types.Message, trigger_args: TriggerArgs, osu_api_client, tenant_chat_id=None):

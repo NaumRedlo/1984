@@ -43,7 +43,8 @@ from tasks.profile_updater import periodic_profile_updates
 
 from db.database import engine, Base, close_engine
 from services.image import close_shared_session
-from services.oauth.server import OAuthServer, set_bot as oauth_set_bot
+from services.oauth.server import OAuthServer, set_linked as oauth_set_linked
+from bot.handlers.auth.linked import notifier as oauth_notifier
 from db.migrations import run_all_migrations
 from config.settings import RENDER_WORKER_TOKEN
 import db.models
@@ -159,7 +160,7 @@ class App:
         logger.info("Starting OAuth server...")
         self.oauth_server = OAuthServer()
         await self.oauth_server.start()
-        oauth_set_bot(self.bot)
+        oauth_set_linked(oauth_notifier(self.bot))
 
         from services.render_farm import http as farm_http
         from services.render_farm import pairing as farm_pairing

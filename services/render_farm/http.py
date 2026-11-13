@@ -111,9 +111,9 @@ def _plain(value):
     return str(value)
 
 async def _card_of(user, session, handle: Optional[str], viewer: int) -> dict:
-    from bot.handlers.profile.handlers import _build_page_data
+    from services.profile_page import build_page_data
 
-    data = await _build_page_data(user, _osu, session, tg_handle=handle, viewer_tg_id=viewer)
+    data = await build_page_data(user, _osu, session, tg_handle=handle, viewer_tg_id=viewer)
     data["play_seconds"] = int(getattr(user, "play_time", 0) or 0)
     data["title_code"] = getattr(user, "active_title_code", None)
     return _plain(data)
@@ -474,7 +474,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         state = pairing.osu_state(request.match_info["code"])
         if state is None:
             return web.json_response({"error": "gone"}, status=404)
-        from services.oauth.server import authorize_url
+        from services.oauth.links import authorize_url
 
         raise web.HTTPFound(authorize_url(state))
 
@@ -751,10 +751,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         chat_id, allowed = await _group_for(owner.telegram_id, "")
         from types import SimpleNamespace
 
-        from services.render_farm import orders
+        from services.render_farm import rivals as boards
 
         head = SimpleNamespace(mode=0, beatmap_md5=said)
-        rivals = await orders.rivals_for(_osu, {"id": int(said)}, head, owner.telegram_id or 0, chat_id if allowed and chat_id else 0,
+        rivals = await boards.rivals_for(_osu, {"id": int(said)}, head, owner.telegram_id or 0, chat_id if allowed and chat_id else 0,
                                          request.query.get("board"))
         return web.json_response({"rivals": rivals})
 

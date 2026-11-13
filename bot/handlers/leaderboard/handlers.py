@@ -9,10 +9,9 @@ from aiogram.types import (
 from db.database import get_db_session
 from services.image import card_renderer
 from services.leaderboard.marks import mark_rows
+from bot.handlers.leaderboard.cards import build_absolute_card, build_delta_card
 from services.leaderboard import (
     CATEGORIES,
-    build_absolute_card,
-    build_delta_card,
     build_map_leaderboard,
     map_leaderboard_usage,
     schedule_stale_refresh,

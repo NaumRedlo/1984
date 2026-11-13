@@ -22,7 +22,7 @@ from utils.formatting.text import escape_html, format_error, format_success
 from utils.i18n import t
 from utils.tenant import clear_dm_tenant
 from utils.language import get_language, has_language, set_language
-from services.oauth.server import generate_oauth_url, track_link_message
+from services.oauth.links import generate_oauth_url, track_link_message
 from services.oauth.token_manager import has_oauth
 from services.refresh import refresh_user
 

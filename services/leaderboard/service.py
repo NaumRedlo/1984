@@ -3,13 +3,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
-from aiogram.types import BufferedInputFile
 from sqlalchemy import select, desc, asc, func, and_, or_
 
 from db.models.user import User
 from db.models.map_attempt import UserMapAttempt
 from db.database import get_db_session
-from services.leaderboard.marks import mark_rows, team_rows
 from services.refresh import refresh_user, is_stale, STALE_THRESHOLD
 from utils.i18n import t
 from utils.osu import rulesets
@@ -415,37 +413,6 @@ def _absolute_labels(key: str, user, lang: str = "en") -> tuple[str, str]:
     return _format_value(key, getattr(user, {"accuracy": "accuracy", "play_count": "play_count",
                                              "play_time": "play_time",
                                              "ranked_score": "ranked_score"}[key]), lang=lang), ""
-
-async def build_absolute_card(session, key: str, chat_id: int, page: int = 0, *,
-                              viewer_user_id=None, lang: str = "en"):
-    import asyncio as _asyncio
-
-    from services.leaderboard.delta_card import build_absolute_payload
-    from services.image.render.leaderboard_delta import render_delta_leaderboard
-
-    board = await build_absolute_board(session, key, chat_id, page,
-                                       viewer_user_id=viewer_user_id, lang=lang)
-    await mark_rows(session, board.get("rows", []) + [board.get("self_row")])
-    await team_rows(session, board.get("rows", []) + [board.get("self_row")])
-    png = await _asyncio.to_thread(render_delta_leaderboard, build_absolute_payload(board, lang))
-    photo = BufferedInputFile(png, filename=f"leaderboard_{key}.png")
-    return photo, board
-
-async def build_delta_card(session, key: str, chat_id: int, page: int = 0, *,
-                           viewer_user_id=None, lang: str = "en"):
-    import asyncio as _asyncio
-
-    from services.leaderboard.delta_card import build_payload
-    from services.image.render.leaderboard_delta import render_delta_leaderboard
-
-    board = await build_delta_board(session, key, chat_id, page,
-                                    viewer_user_id=viewer_user_id, lang=lang)
-    await mark_rows(session, board.get("rows", []) + [board.get("self_row")])
-    await team_rows(session, board.get("rows", []) + [board.get("self_row")])
-    payload = build_payload(board, lang)
-    png = await _asyncio.to_thread(render_delta_leaderboard, payload)
-    photo = BufferedInputFile(png, filename=f"leaderboard_{key}_delta.png")
-    return photo, board
 
 def map_leaderboard_usage(lang: str = "en") -> str:
     return t("lbm.usage", lang)

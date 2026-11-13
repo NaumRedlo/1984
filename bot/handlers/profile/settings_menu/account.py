@@ -161,7 +161,7 @@ async def cb_language_set(callback: types.CallbackQuery, tenant_chat_id=None, la
     await callback.answer(t("sts.lang.set_alert", ui_lang, lang=new_card_lang))
 
 async def _send_oauth_link(callback: types.CallbackQuery, relink: bool, lang: str = "en"):
-    from services.oauth.server import generate_oauth_url, track_link_message
+    from services.oauth.links import generate_oauth_url, track_link_message
     tg_id = callback.from_user.id
     if relink:
         from sqlalchemy import delete

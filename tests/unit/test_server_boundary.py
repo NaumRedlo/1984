@@ -33,21 +33,11 @@ SERVER_MEMORY = (
     "tasks.live_tracker",
 )
 
-SERVER_IMPORTS_TELEGRAM = {
-    "services.leaderboard.service",
-    "services.oauth.server",
-    "services.render_farm.members",
-    "services.render_farm.orders",
-}
+SERVER_IMPORTS_TELEGRAM = set()
 
-SERVER_IMPORTS_BOT = {
-    ("services.render_farm.http", "bot.handlers.profile.handlers"),
-    ("tasks.live_tracker", "bot.handlers.profile.recent"),
-}
+SERVER_IMPORTS_BOT = set()
 
 BOT_READS_SERVER_MEMORY = {
-    ("bot.handlers.auth.handlers", "services.oauth.server"),
-    ("bot.handlers.profile.settings_menu.account", "services.oauth.server"),
     ("bot.handlers.start.handlers", "services.render_farm.invites"),
     ("bot.handlers.start.handlers", "services.render_farm.pairing"),
     ("services.render_farm.orders", "services.render_farm.invites"),

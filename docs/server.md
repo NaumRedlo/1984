@@ -39,7 +39,7 @@ From the output of 13 November 2026:
 | | |
 |---|---|
 | Memory | 1.8 GiB, 289 MiB available, 198 MiB of swap in use |
-| Disk | 30 GB, 6.4 GB free |
+| Disk | 30 GB, 6.4 GB free before the cleanup of the same day, 18 GB after |
 | In front | Caddy |
 | Unit | `1984.service`, `User=root`, `Restart=always`, `RestartSec=15` |
 
@@ -48,14 +48,9 @@ Two limits come from this.
 - **Memory.** Every further Python process loads SQLAlchemy, aiohttp and
   Pillow again. Three processes may not fit. The plan starts with two and
   measures before a third.
-- **Disk.** One full allowance of 5 GB of videos takes most of the free space.
-  The allowance cannot be sold before the videos have a place outside this
-  disk.
-
-One leftover to remove: the drop-in
-`/etc/systemd/system/1984.service.d/engine.conf` runs `scripts/engine.py`
-before every start. The script left the repository in commit `095eb5d6`; the
-leading `-` hides the failure.
+- **Disk.** With 18 GB free, three full allowances of 5 GB fill it. The
+  allowance cannot be sold to more than a few people before the videos have a
+  place outside this disk.
 
 ## Where it goes
 
@@ -95,11 +90,25 @@ Rules the code keeps after the split:
   `telegram_direct.py` calls the bot as before; with no bot the routes answer
   as they did. `render_farm/http.py` no longer imports `aiogram`.
 
-Still on the lists, for the next steps: the OAuth callback's notice through
-the bot, `orders.rivals_for` living in the bot's order intake,
-`BufferedInputFile` in the leaderboard service, and two functions the app's
-side borrows from the bot's handlers (`_build_page_data`,
-`_play_from_score`).
+- After step 1, 13 November 2026: the first two lists are empty. Nothing the
+  routes or the loops import reaches `aiogram` or the `bot` package.
+  - The page data of a profile and the play made from a score moved out of
+    the bot's handlers into `services/profile_page.py` and
+    `services/recent_plays.py`.
+  - The rivals of a map moved from the bot's order intake into
+    `render_farm/rivals.py`.
+  - The leaderboard cards that wrap a picture for Telegram moved into
+    `bot/handlers/leaderboard/cards.py`.
+  - The OAuth callback no longer holds the bot. `services/oauth/links.py`
+    makes the links; the callback calls whoever `set_linked` named, and
+    `bot/handlers/auth/linked.py` is the bot's answer to it.
+
+Still on the third list, for step 3: the bot's `/start` reads
+`invites` and `pairing`, and the order intake reads `invites`, `queue` and
+`roster`, all of them memory the server owns.
+
+The notice after a sign-in still crosses by a function call, which works
+only inside one process. It becomes an outbox row in step 2.
 
 ## Seams found so far
 
@@ -207,7 +216,11 @@ processes in place of one do not fit as they are. Before step 4:
 - size the connection pool for two processes, so that they do not open 18
   connections where 9 sit idle now.
 
-Disk, 22 GB used. What the bot and its data need is small: `data/` 1.3 GB,
+Disk, 22 GB used before the cleanup; 11 GB used and 18 GB free after it. The
+table below is what was found; everything in it is removed except the three
+SQLite files, which stay until a restore from the nightly dump is rehearsed.
+The drop-in `engine.conf`, which ran the removed `scripts/engine.py` before
+every start, is removed too. What the bot and its data need is small: `data/` 1.3 GB,
 PostgreSQL 225 MB, the nightly dumps 510 MB, Assay's maps 391 MB. The rest is
 leftovers:
 

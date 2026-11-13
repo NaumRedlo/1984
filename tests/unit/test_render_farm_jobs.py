@@ -445,7 +445,7 @@ def test_the_chat_board_turns_into_rivals_and_the_choice_is_kept_per_player(tmp_
 def test_a_chat_without_plays_of_the_map_falls_back_to_the_global_top(monkeypatch):
     from types import SimpleNamespace
 
-    from services.render_farm import maps, orders, skins
+    from services.render_farm import maps, rivals, skins
 
     monkeypatch.setattr(skins, "board_for", lambda _: "chat")
 
@@ -463,12 +463,12 @@ def test_a_chat_without_plays_of_the_map_falls_back_to_the_global_top(monkeypatc
         return chat_id
 
     monkeypatch.setattr(maps, "board", empty_board)
-    monkeypatch.setattr(orders, "board_chat", same_chat)
-    monkeypatch.setattr(orders, "AsyncSessionFactory", lambda: Session())
+    monkeypatch.setattr(rivals, "board_chat", same_chat)
+    monkeypatch.setattr(rivals, "AsyncSessionFactory", lambda: Session())
     api = SimpleNamespace(get_beatmap_scores=AsyncMock(return_value=[
         {"user": {"username": "mrekk"}, "legacy_total_score": 9, "accuracy": 1.0, "mods": []}]))
     head = SimpleNamespace(mode=0, beatmap_md5="a" * 32)
-    rivals = asyncio.run(orders.rivals_for(api, {"id": 5}, head, 7, -100))
+    rivals = asyncio.run(rivals.rivals_for(api, {"id": 5}, head, 7, -100))
     assert [rival["name"] for rival in rivals] == ["mrekk"]
 
 
@@ -480,7 +480,7 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
     from db.models.chat_member import ChatMember
     from db.models.player import Player
     from db.models.user import User
-    from services.render_farm import orders
+    from services.render_farm import rivals
     from sqlalchemy import select
 
     async def go():
@@ -488,14 +488,14 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         made = async_sessionmaker(engine, expire_on_commit=False)
-        monkeypatch.setattr(orders, "AsyncSessionFactory", made)
+        monkeypatch.setattr(rivals, "AsyncSessionFactory", made)
         async with made() as session:
             session.add(Player(id=1, osu_user_id=11, osu_username="a", telegram_id=7, pinned_chat_id=-500))
             session.add(Player(id=2, osu_user_id=12, osu_username="b", telegram_id=8, pinned_chat_id=-500))
             session.add(User(id=1, chat_id=-500, telegram_id=7, osu_user_id=11, osu_username="a"))
             await session.commit()
             assert await session.scalar(select(ChatMember.player_id).where(ChatMember.chat_id == -500)) == 1
-        found = [await orders.board_chat(7, 42), await orders.board_chat(7, -100), await orders.board_chat(8, -100), await orders.board_chat(0, -100)]
+        found = [await rivals.board_chat(7, 42), await rivals.board_chat(7, -100), await rivals.board_chat(8, -100), await rivals.board_chat(0, -100)]
         await engine.dispose()
         return found
 
@@ -503,7 +503,7 @@ def test_a_chat_leaderboard_comes_from_the_pinned_chat_only_while_the_player_is_
 
 
 def test_a_slow_refresh_of_chat_scores_holds_a_render_back_only_briefly(monkeypatch):
-    from services.render_farm import orders
+    from services.render_farm import rivals
 
     finished = []
 
@@ -511,19 +511,19 @@ def test_a_slow_refresh_of_chat_scores_holds_a_render_back_only_briefly(monkeypa
         await asyncio.sleep(0.3)
         finished.append(True)
 
-    monkeypatch.setattr(orders, "_sync_scores", slow)
+    monkeypatch.setattr(rivals, "_sync_scores", slow)
 
     async def go():
         started = asyncio.get_running_loop().time()
-        await orders._fresh_scores(object(), 5, -100, wait=0.05)
+        await rivals._fresh_scores(object(), 5, -100, wait=0.05)
         waited = asyncio.get_running_loop().time() - started
-        again = orders._refreshing.get((5, -100))
+        again = rivals._refreshing.get((5, -100))
         await asyncio.sleep(0.4)
         return waited, again, finished
 
     waited, again, done = asyncio.run(go())
     assert waited < 0.2 and again is not None and done == [True]
-    assert (5, -100) not in orders._refreshing
+    assert (5, -100) not in rivals._refreshing
 
 
 @pytest.mark.asyncio

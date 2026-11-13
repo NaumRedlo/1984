@@ -72,7 +72,7 @@ class LiveTracker:
         return known
 
     async def catch(self, osu_user_id: int) -> int:
-        from bot.handlers.profile.recent import _play_from_score
+        from services.recent_plays import play_from_score
         from db.database import AsyncSessionFactory
         from utils.title_progress import evaluate_recent_plays
 
@@ -99,7 +99,7 @@ class LiveTracker:
                 fresh = await recent_plays.unseen(session, user.player_id, scores, stored=user.player_id in authenticated or recent_plays.is_linked(user))
                 if not fresh:
                     continue
-                plays = [_play_from_score(score) for score in fresh]
+                plays = [play_from_score(score) for score in fresh]
                 synced += await self.api_client.sync_user_map_attempts(user, session, fresh)
                 await evaluate_recent_plays(user, plays, session)
             await session.commit()

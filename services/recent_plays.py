@@ -5,6 +5,9 @@ from weakref import WeakValueDictionary
 
 from sqlalchemy import select
 
+from services.image.render.recent import _pick_score_value
+from utils.osu.api_client import _is_perfect
+
 MATCH_WITHIN = timedelta(seconds=10)
 _locks = WeakValueDictionary()
 
@@ -81,3 +84,33 @@ async def unseen(session, player_id: int, scores: list, *, stored: bool = False)
                    and (raw.get("passed") is None or bool(raw["passed"]) == bool(row.passed)) for row in witnessed):
             fresh.append(raw)
     return fresh
+
+def play_from_score(raw: dict) -> dict:
+    bm = raw.get("beatmap") or {}
+    stats = raw.get("statistics") or {}
+    passed = raw.get("passed", True)
+    miss = stats.get("miss")
+    if miss is None:
+        miss = stats.get("count_miss")
+    n100 = stats.get("ok")
+    if n100 is None:
+        n100 = stats.get("count_100")
+    return {
+        "star_rating": bm.get("difficulty_rating") or 0.0,
+        "rank": raw.get("rank") if passed else "F",
+        "beatmap_id": bm.get("id"),
+        "mods": ",".join(
+            m.get("acronym", "") if isinstance(m, dict) else str(m)
+            for m in (raw.get("mods") or [])
+        ),
+        "accuracy": (raw.get("accuracy") or 0) * 100,
+        "bpm": bm.get("bpm"),
+        "length": bm.get("total_length"),
+        "max_combo": raw.get("max_combo") or 0,
+        "map_max_combo": bm.get("max_combo"),
+        "count_miss": miss,
+        "count_100": n100,
+        "is_fc": _is_perfect(raw),
+        "passed": passed,
+        "score": _pick_score_value(raw),
+    }
