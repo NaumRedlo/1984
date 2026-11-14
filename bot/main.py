@@ -186,7 +186,7 @@ class App:
 
         try:
             me = await self.bot.get_me()
-            farm_pairing.set_bot_username(me.username or "")
+            await farm_pairing.publish_bot_username(me.username or "")
         except Exception as exc:
             logger.warning("cannot learn my own username, pairing links stay bare: %s", exc)
 

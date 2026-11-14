@@ -130,7 +130,7 @@ async def _sign_in_app(request: web.Request, code: str, state: str) -> web.Respo
     from services.render_farm import pairing, players
 
     lang = _page_language(request)
-    pairing_code = pairing.take_osu_state(state)
+    pairing_code = await pairing.take_osu_state(state)
     if pairing_code is None:
         return web.Response(text=t("oauth.app_expired", lang), content_type="text/html", status=400)
     token_data = await _exchange_code(code)
@@ -146,7 +146,7 @@ async def _sign_in_app(request: web.Request, code: str, state: str) -> web.Respo
         await _keep_player_token(session, player, token_data)
         await session.commit()
         player_id, telegram_id, name = player.id, player.telegram_id, player.osu_username
-    if pairing.approve(pairing_code, telegram_id or 0, name, player_id=player_id) is None:
+    if await pairing.approve(pairing_code, telegram_id or 0, name, player_id=player_id) is None:
         return web.Response(text=t("oauth.app_expired", lang), content_type="text/html", status=400)
     logger.info(f"Dossier signed in through osu!: {name} (player {player_id})")
     spawn(_first_refresh(player_id), name=f"app_first_refresh_{player_id}")

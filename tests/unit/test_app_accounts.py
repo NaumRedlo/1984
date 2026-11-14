@@ -34,15 +34,11 @@ OSU = {
 
 @pytest.fixture(autouse=True)
 def clean_pairing():
-    pairing._pending.clear()
-    pairing._osu_states.clear()
     pairing._starts.clear()
     yield
-    pairing._pending.clear()
-    pairing._osu_states.clear()
     pairing._starts.clear()
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(autouse=True)
 async def factory(monkeypatch):
     import db.database as database
 
@@ -55,24 +51,24 @@ async def factory(monkeypatch):
     yield made
     await engine.dispose()
 
-def test_a_pairing_can_be_answered_through_osu_and_only_once():
-    code = pairing.start(MAC, "1.1.1.1")
-    state = pairing.osu_state(code)
-    assert state.startswith("app.") and pairing.osu_state("22222222") is None
-    assert pairing.osu_state(code) == state and len(pairing._osu_states) == 1
-    assert pairing.take_osu_state(state) == code
-    assert pairing.take_osu_state(state) is None
-    linked = pairing.approve(code, 0, "alice", player_id=5)
+async def test_a_pairing_can_be_answered_through_osu_and_only_once():
+    code = await pairing.start(MAC, "1.1.1.1")
+    state = await pairing.osu_state(code)
+    assert state.startswith("app.") and await pairing.osu_state("22222222") is None
+    assert await pairing.osu_state(code) == state
+    assert await pairing.take_osu_state(state) == code
+    assert await pairing.take_osu_state(state) is None
+    linked = await pairing.approve(code, 0, "alice", player_id=5)
     assert (linked.linked_to, linked.linked_player) == (0, 5)
-    assert pairing.osu_state(code) is None
+    assert await pairing.osu_state(code) is None
 
 async def test_a_request_to_link_telegram_is_not_a_machine_waiting_for_a_token():
-    code = pairing.ask_telegram(5, "alice", "1.1.1.1")
-    assert pairing.describe(code).wants_telegram_for == 5
-    assert pairing.approve(code, 7, "Naum") is None
+    code = await pairing.ask_telegram(5, "alice", "1.1.1.1")
+    assert (await pairing.describe(code)).wants_telegram_for == 5
+    assert await pairing.approve(code, 7, "Naum") is None
     assert (await pairing.collect(code, "1.1.1.1")).status == pairing.GONE
-    assert pairing.answered(code).wants_telegram_for == 5
-    assert pairing.answered(code) is None
+    assert (await pairing.answered(code)).wants_telegram_for == 5
+    assert await pairing.answered(code) is None
 
 async def test_signing_in_makes_a_player_without_telegram_and_fills_it_from_osu(factory):
     async with factory() as s:
@@ -113,8 +109,8 @@ async def _callback(monkeypatch, state, *, osu=OSU, headers=None):
     return await oauth.handle_callback(request)
 
 async def test_osu_calls_back_and_the_waiting_application_gets_a_token_of_its_player(factory, monkeypatch):
-    code = pairing.start(MAC, "1.1.1.1")
-    state = pairing.osu_state(code)
+    code = await pairing.start(MAC, "1.1.1.1")
+    state = await pairing.osu_state(code)
     reply = await _callback(monkeypatch, state, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
     assert reply.status == 200 and "alice" in reply.text and "Вход выполнен" in reply.text
     got = await pairing.collect(code, "1.1.1.1")
@@ -131,8 +127,8 @@ async def test_osu_calls_back_and_the_waiting_application_gets_a_token_of_its_pl
     invites.forget(invites.digest(got.token))
 
 async def test_a_state_that_is_used_or_unknown_is_refused(factory, monkeypatch):
-    code = pairing.start(MAC, "1.1.1.1")
-    state = pairing.osu_state(code)
+    code = await pairing.start(MAC, "1.1.1.1")
+    state = await pairing.osu_state(code)
     assert (await _callback(monkeypatch, state)).status == 200
     late = await _callback(monkeypatch, state)
     assert late.status == 400 and "expired" in late.text
@@ -244,7 +240,7 @@ async def test_the_application_is_sent_to_osu_and_can_ask_for_telegram_later(alo
     assert "state=app." in away.headers["Location"]
     assert (await client.get("/render/pair/22222222/osu", allow_redirects=False)).status == 404
     asked = await (await client.post("/render/me/telegram", headers=mine)).json()
-    assert pairing.describe(asked["code"]).wants_telegram_for == player_id
+    assert (await pairing.describe(asked["code"])).wants_telegram_for == player_id
 
 async def test_linking_telegram_gives_the_account_its_chats_and_moves_its_osu_token(factory):
     async with factory() as s:
@@ -281,7 +277,7 @@ async def test_the_bot_asks_before_linking_and_links_on_yes(factory, monkeypatch
     async with factory() as s:
         player = await players.signed_in(s, OSU)
         await s.commit()
-    code = pairing.ask_telegram(player.id, "alice", "1.1.1.1")
+    code = await pairing.ask_telegram(player.id, "alice", "1.1.1.1")
     message = _Message(user_id=7)
     await handlers.start_pairing(message, _command(f"pair-{code}"))
     text_shown, kw = message.sent[-1]

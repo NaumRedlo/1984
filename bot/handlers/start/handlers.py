@@ -56,7 +56,7 @@ async def start_pairing(message: Message, command: CommandObject):
     who = message.from_user
     lang = await _lang_of(who)
     code = invites.tidy((command.args or "")[len(PAIR_PREFIX):])
-    found = pairing.describe(code)
+    found = await pairing.describe(code)
     linking = _links_telegram(found)
     if not who or (not linking and not await _may_pair(getattr(message, "bot", None), who.id)):
         await message.answer(t("dsr.pair.not_open", lang), parse_mode="HTML")
@@ -89,13 +89,13 @@ async def answer_pairing(callback: CallbackQuery):
     who = callback.from_user
     lang = await _lang_of(who)
     _, verdict, code = callback.data.split(":", 2)
-    linking = _links_telegram(pairing.describe(code))
+    linking = _links_telegram(await pairing.describe(code))
     if not who or (not linking and not await _may_pair(getattr(callback, "bot", None), who.id)):
         await callback.answer(t("dsr.pair.not_open_short", lang), show_alert=True)
         return
 
     if linking:
-        asked = pairing.answered(code)
+        asked = await pairing.answered(code)
         if verdict != "yes" or asked is None:
             said = t("dsr.pair.declined", lang)
         else:
@@ -107,11 +107,11 @@ async def answer_pairing(callback: CallbackQuery):
             said = (t("dsr.link.done", lang, name=escape_html(asked.machine.name))
                     if outcome == players.LINKED else t("dsr.link.taken", lang))
     elif verdict == "yes":
-        linked = pairing.approve(code, who.id, who.full_name or "")
+        linked = await pairing.approve(code, who.id, who.full_name or "")
         said = (t("dsr.pair.linked", lang, name=escape_html(linked.machine.name))
                 if linked else t("dsr.pair.gone", lang))
     else:
-        pairing.decline(code)
+        await pairing.decline(code)
         said = t("dsr.pair.declined", lang)
 
     if callback.message:

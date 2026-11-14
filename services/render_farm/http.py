@@ -458,12 +458,12 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             cores=cores,
             build=str(said.get("build") or "").strip()[:64],
         )
-        code = pairing.start(machine, _address(request))
+        code = await pairing.start(machine, _address(request))
         if code is None:
             return web.json_response({"error": "too many"}, status=429)
         return web.json_response({
             "code": invites.pretty(code),
-            "link": pairing.link(code),
+            "link": await pairing.link(code),
             "expires_in": int(pairing.GOOD_FOR),
             "osu": _osu_sign_in(),
         })
@@ -471,7 +471,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
     async def pair_osu(request: web.Request) -> web.Response:
         if not _osu_sign_in():
             return web.json_response({"error": "no osu! sign-in"}, status=404)
-        state = pairing.osu_state(request.match_info["code"])
+        state = await pairing.osu_state(request.match_info["code"])
         if state is None:
             return web.json_response({"error": "gone"}, status=404)
         from services.oauth.links import authorize_url
@@ -487,10 +487,10 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "no one"}, status=404)
         if owner.telegram_id:
             return web.json_response({"error": "linked"}, status=409)
-        code = pairing.ask_telegram(owner.player_id, owner.name, _address(request))
+        code = await pairing.ask_telegram(owner.player_id, owner.name, _address(request))
         if code is None:
             return web.json_response({"error": "too many"}, status=429)
-        return web.json_response({"code": invites.pretty(code), "link": pairing.link(code), "expires_in": int(pairing.GOOD_FOR)})
+        return web.json_response({"code": invites.pretty(code), "link": await pairing.link(code), "expires_in": int(pairing.GOOD_FOR)})
 
     async def pair_status(request: web.Request) -> web.Response:
         got = await pairing.collect(request.match_info["code"], _address(request))
