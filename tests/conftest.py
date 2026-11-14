@@ -77,3 +77,31 @@ def incidents_in_memory(monkeypatch):
     incidents.forget()
     yield
     incidents.forget()
+
+
+@pytest.fixture
+async def spare_database(monkeypatch, tmp_path_factory):
+    import sqlalchemy.ext.asyncio as sa_asyncio
+    from sqlalchemy.pool import NullPool
+
+    import db.database
+    import db.models
+    from db.database import Base
+
+    engine = sa_asyncio.create_async_engine(f"sqlite+aiosqlite:///{tmp_path_factory.mktemp('spare') / 'spare.db'}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = sa_asyncio.async_sessionmaker(engine, expire_on_commit=False)
+    monkeypatch.setattr(db.database, "AsyncSessionFactory", factory)
+    yield factory
+    await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def farm_folders_in_tmp(monkeypatch, tmp_path_factory):
+    from config import settings
+    from services.render_farm import http
+
+    base = tmp_path_factory.mktemp("farm")
+    monkeypatch.setattr(settings, "RENDER_ORDERS_DIR", str(base / "orders"))
+    monkeypatch.setattr(http, "RENDER_SPOOL_DIR", str(base / "spool"))

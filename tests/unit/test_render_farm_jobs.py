@@ -25,6 +25,8 @@ from services.render_farm.roster import Roster
 from services.render_farm.telegram import Absent
 from utils.osr import header
 
+pytestmark = pytest.mark.usefixtures("spare_database")
+
 TOKEN = "s3cret"
 HASH = "0123456789abcdef0123456789abcdef"
 
@@ -54,42 +56,42 @@ def test_what_is_not_a_replay_is_refused():
     assert header(an_osr(beatmap="nope")) is None
     assert header(b"") is None
 
-def test_the_oldest_waiting_job_is_claimed_first_and_held_by_its_worker():
+async def test_the_oldest_waiting_job_is_claimed_first_and_held_by_its_worker():
     line = RenderQueue()
-    first = line.offer("a.osr", "first", beatmap_md5=HASH, requester=1, now=0.0)
-    second = line.offer("b.osr", "second", beatmap_md5=HASH, requester=2, now=1.0)
-    assert line.ahead_of(second, now=1.5) == 1
-    taken = line.claim("w1", "MacBook", now=2.0)
+    first = await line.offer("a.osr", "first", beatmap_md5=HASH, requester=1, now=0.0)
+    second = await line.offer("b.osr", "second", beatmap_md5=HASH, requester=2, now=1.0)
+    assert await line.ahead_of(second, now=1.5) == 1
+    taken = await line.claim("w1", "MacBook", now=2.0)
     assert taken is first and taken.state is State.CLAIMED and taken.worker_name == "MacBook"
-    assert line.ahead_of(second, now=2.5) == 0
-    assert not line.heartbeat(first.id, "w2", now=3.0)
-    assert line.heartbeat(first.id, "w1", {"done": 10, "total": 100}, now=3.0)
+    assert await line.ahead_of(second, now=2.5) == 0
+    assert not await line.heartbeat(first.id, "w2", now=3.0)
+    assert await line.heartbeat(first.id, "w1", {"done": 10, "total": 100}, now=3.0)
     assert first.progress == {"done": 10, "total": 100}
 
-def test_a_quiet_worker_loses_its_job_and_it_goes_back_in_line():
+async def test_a_quiet_worker_loses_its_job_and_it_goes_back_in_line():
     line = RenderQueue()
-    job = line.offer("a.osr", "t", beatmap_md5=HASH, now=0.0)
-    line.claim("w1", now=0.0)
-    line.sweep(now=200.0)
+    job = await line.offer("a.osr", "t", beatmap_md5=HASH, now=0.0)
+    await line.claim("w1", now=0.0)
+    await line.sweep(now=200.0)
     assert job.state is State.WAITING and job.attempts == 1 and job.worker is None
 
-def test_a_job_handed_back_too_often_is_withdrawn():
+async def test_a_job_handed_back_too_often_is_withdrawn():
     line = RenderQueue()
-    job = line.offer("a.osr", "t", beatmap_md5=HASH, now=0.0)
+    job = await line.offer("a.osr", "t", beatmap_md5=HASH, now=0.0)
     for _ in range(MAX_ATTEMPTS):
-        line.claim("w1", now=1.0)
-        line.give_back(job.id, "w1", "the map is nowhere")
+        await line.claim("w1", now=1.0)
+        await line.give_back(job.id, "w1", "the map is nowhere")
     assert job.withdrawn and job.settled.is_set() and job.reason == "the map is nowhere"
-    assert line.get(job.id) is None
+    assert await line.get(job.id) is None
 
-def test_a_finished_job_carries_its_video_and_leaves_the_queue():
+async def test_a_finished_job_carries_its_video_and_leaves_the_queue():
     line = RenderQueue()
-    job = line.offer("a.osr", "t", beatmap_md5=HASH, requester=7, now=0.0)
-    assert line.open_for(7) == 1
-    line.claim("w1", now=1.0)
-    assert line.finish(job.id, "w1", {"path": "/tmp/v.mp4"})
+    job = await line.offer("a.osr", "t", beatmap_md5=HASH, requester=7, now=0.0)
+    assert await line.open_for(7) == 1
+    await line.claim("w1", now=1.0)
+    assert await line.finish(job.id, "w1", {"path": "/tmp/v.mp4"})
     assert job.settled.is_set() and job.payload == {"path": "/tmp/v.mp4"}
-    assert line.open_for(7) == 0
+    assert await line.open_for(7) == 0
 
 def test_the_title_names_the_player_and_the_map():
     head = header(an_osr())
@@ -132,7 +134,7 @@ async def test_replays_use_telegram_unless_the_sender_has_an_authorised_app(acco
     try:
         await orders.take(bot, message, "ru")
         await asyncio.sleep(0)
-        job, = line.waiting()
+        job, = await line.waiting()
         assert job.in_app is (account in ("legacy", "app"))
         assert (job.requester, job.chat_id, job.skin) == (7, -10055, skin)
         assert Path(job.replay_path).read_bytes() == an_osr()
@@ -151,7 +153,7 @@ async def test_telegram_video_replies_to_the_original_message_in_the_original_to
     status = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
     path = tmp_path / "video.mp4"
     path.write_bytes(VIDEO)
-    job = RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=-10055)
+    job = await RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=-10055)
     job.payload = {"path": str(path), "meta": {"duration": 95}}
     await orders.deliver(bot, job, asked, status, "ru")
     sent = bot.await_args.args[0]
@@ -170,7 +172,7 @@ async def test_a_video_kept_in_the_app_is_also_sent_to_the_chat(tmp_path, monkey
     status = SimpleNamespace(delete=AsyncMock(), edit_text=AsyncMock())
     kept = tmp_path / "42.mp4"
     kept.write_bytes(VIDEO)
-    job = RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=7, in_app=True, ruleset=3)
+    job = await RenderQueue().offer("replay.osr", "My play", beatmap_md5=HASH, requester=7, chat_id=7, in_app=True, ruleset=3)
     job.payload = {"bytes": len(VIDEO), "video": 42}
     await orders.deliver(bot, job, asked, status, "ru")
     sent = bot.await_args.args[0]
@@ -179,7 +181,7 @@ async def test_a_video_kept_in_the_app_is_also_sent_to_the_chat(tmp_path, monkey
     status.delete.assert_awaited_once()
     assert kept.exists()
 
-def test_a_skin_on_the_server_is_described_by_its_hash(tmp_path, monkeypatch):
+async def test_a_skin_on_the_server_is_described_by_its_hash(tmp_path, monkeypatch):
     monkeypatch.setattr(skins.settings, "RENDER_SKINS_DIR", str(tmp_path))
     (tmp_path / "Rafis.osk").write_bytes(b"a skin")
     (tmp_path / "notes.txt").write_text("ignored")
@@ -201,7 +203,7 @@ async def farm(monkeypatch, tmp_path):
     skin.write_bytes(b"skin bytes")
     line = RenderQueue()
     who = Roster()
-    job = line.offer(str(replay), "NaumRedlo — yaseta - Bluenation [Grace]", beatmap_md5=HASH, beatmapset_id=39804,
+    job = await line.offer(str(replay), "NaumRedlo — yaseta - Bluenation [Grace]", beatmap_md5=HASH, beatmapset_id=39804,
                      skin={"name": "Rafis", "hash": "ab" * 32, "size": 10, "path": str(skin)}, requester=1, chat_id=-5)
     app = web.Application()
     app.add_routes(farm_http.make_routes(line, who))
@@ -271,19 +273,19 @@ async def test_a_stranger_gets_nothing(farm):
     refused = await client.post("/render/claim", json={}, headers={"Authorization": "Bearer nope", "X-Render-Worker": "x"})
     assert refused.status == 401
 
-def test_the_status_says_where_the_job_stands(monkeypatch):
+async def test_the_status_says_where_the_job_stands(monkeypatch):
     line = RenderQueue()
     who = Roster()
     monkeypatch.setattr(orders, "queue", line)
     monkeypatch.setattr(orders, "roster", who)
-    job = line.offer("a.osr", "NaumRedlo — Bluenation", beatmap_md5=HASH)
-    assert "подождёт" in orders.status_of(job, "ru")
+    job = await line.offer("a.osr", "NaumRedlo — Bluenation", beatmap_md5=HASH)
+    assert "подождёт" in await orders.status_of(job, "ru")
     who.hello("k", "MacBook")
-    assert "впереди 0" in orders.status_of(job, "ru")
-    line.claim("k", "MacBook")
-    assert "Подготовка" in orders.status_of(job, "ru")
-    line.heartbeat(job.id, "k", {"stage": "drawing", "done": 25, "total": 100, "seconds_left": 75})
-    assert "25%" in orders.status_of(job, "ru") and "1:15" in orders.status_of(job, "ru")
+    assert "впереди 0" in await orders.status_of(job, "ru")
+    await line.claim("k", "MacBook")
+    assert "Подготовка" in await orders.status_of(job, "ru")
+    await line.heartbeat(job.id, "k", {"stage": "drawing", "done": 25, "total": 100, "seconds_left": 75})
+    assert "25%" in await orders.status_of(job, "ru") and "1:15" in await orders.status_of(job, "ru")
 
 
 @pytest_asyncio.fixture
@@ -341,7 +343,7 @@ async def test_simultaneous_uploads_reserve_capacity_before_download(replay_send
     finally:
         release.set()
         await asyncio.gather(first, second)
-    assert line.open_for(777) == 2
+    assert await line.open_for(777) == 2
     assert not orders._receiving
 
 
@@ -360,11 +362,11 @@ async def test_failed_download_frees_reservation_and_removes_temporary_file(repl
             await orders.take(bot, message, "ru")
     else:
         await orders.take(bot, message, "ru")
-    assert not orders._receiving and line.open_for(777) == 0
+    assert not orders._receiving and await line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
     bot.download.side_effect = original
     await orders.take(bot, message, "ru")
-    assert line.open_for(777) == 1
+    assert await line.open_for(777) == 1
 
 
 async def test_failed_status_message_withdraws_job_and_cleans_up(replay_sender):
@@ -374,7 +376,7 @@ async def test_failed_status_message_withdraws_job_and_cleans_up(replay_sender):
     from services import incidents
     noted, = await incidents.recent("farm")
     assert noted.stage == "order" and "Telegram unavailable" in noted.trace
-    assert not orders._receiving and line.open_for(777) == 0
+    assert not orders._receiving and await line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
     orders.follow.assert_not_awaited()
 
@@ -387,18 +389,18 @@ async def test_failure_after_download_frees_reservation_and_cleans_up(replay_sen
     noted, = await incidents.recent("farm")
     assert "skin unavailable" in noted.reason
     assert noted.code in message.reply.await_args.args[0]
-    assert not orders._receiving and line.open_for(777) == 0
+    assert not orders._receiving and await line.open_for(777) == 0
     assert not Path(paths[0]).parent.exists()
 
 
-def test_a_mania_replay_waits_for_a_worker_that_draws_mania():
+async def test_a_mania_replay_waits_for_a_worker_that_draws_mania():
     from services.render_farm.queue import RenderQueue
     line = RenderQueue()
-    mania = line.offer("mania.osr", "Keys", beatmap_md5="a" * 32, ruleset=3, now=1.0)
-    osu = line.offer("osu.osr", "Circles", beatmap_md5="b" * 32, now=2.0)
-    assert line.claim("old", now=3.0) is osu, "a worker that names no rulesets is given osu! only"
-    assert line.claim("old", now=3.0) is None
-    assert line.claim("new", now=3.0, rulesets=frozenset({0, 3})) is mania
+    mania = await line.offer("mania.osr", "Keys", beatmap_md5="a" * 32, ruleset=3, now=1.0)
+    osu = await line.offer("osu.osr", "Circles", beatmap_md5="b" * 32, now=2.0)
+    assert await line.claim("old", now=3.0) is osu, "a worker that names no rulesets is given osu! only"
+    assert await line.claim("old", now=3.0) is None
+    assert await line.claim("new", now=3.0, rulesets=frozenset({0, 3})) is mania
 
 
 def test_bot_renders_sound_at_four_fifths_of_the_old_level():
@@ -407,7 +409,7 @@ def test_bot_renders_sound_at_four_fifths_of_the_old_level():
     assert round(10 ** ((STANDARD["loudness"] + 14.0) / 20.0), 2) == 0.79
 
 
-def test_the_maps_top_rides_with_the_job_in_classic_points():
+async def test_the_maps_top_rides_with_the_job_in_classic_points():
     from services.render_farm.queue import RenderQueue, rivals_of
 
     scores = [
@@ -422,9 +424,9 @@ def test_the_maps_top_rides_with_the_job_in_classic_points():
         {"name": "mrekk", "score": 52_000_000, "stable": 52_000_000, "standard": 990_000, "accuracy": 99.12, "mods": "HD", "avatar": "https://a.ppy.sh/7562902"},
         {"name": "lazer", "score": 870_000, "stable": None, "standard": 870_000, "accuracy": 97.0, "mods": "", "avatar": ""},
     ]
-    job = RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32, leaderboard=rivals)
+    job = await RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32, leaderboard=rivals)
     assert job.handed()["leaderboard"] == rivals
-    assert RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32).handed()["leaderboard"] == []
+    assert (await RenderQueue().offer("a.osr", "t", beatmap_md5="a" * 32)).handed()["leaderboard"] == []
 
 
 def test_the_chat_board_turns_into_rivals_and_the_choice_is_kept_per_player(tmp_path, monkeypatch):
@@ -541,7 +543,7 @@ async def test_a_waiting_worker_gets_a_new_job_as_soon_as_it_is_offered(farm, tm
     await asyncio.sleep(0.1)
     replay = tmp_path / "second.osr"
     replay.write_bytes(REPLAY)
-    second = line.offer(str(replay), "second", beatmap_md5=HASH, requester=2, chat_id=-5)
+    second = await line.offer(str(replay), "second", beatmap_md5=HASH, requester=2, chat_id=-5)
     started = loop.time()
     taken = await asked
     assert (await taken.json())["id"] == second.id and loop.time() - started < 1.0
@@ -557,20 +559,20 @@ def test_the_house_skin_plays_the_maps_hitsounds_and_every_other_skin_its_own():
     assert picked["play"]["map_sounds"] is False and picked["play"]["storyboard"] is True and picked["width"] == 1920
     assert STANDARD["play"]["map_sounds"] is False
 
-def test_a_worker_takes_its_owners_jobs_and_jobs_of_chats_its_owner_is_in():
+async def test_a_worker_takes_its_owners_jobs_and_jobs_of_chats_its_owner_is_in():
     line = RenderQueue()
-    group = line.offer("a.osr", "group", beatmap_md5=HASH, requester=1, chat_id=-5, now=0.0)
-    direct = line.offer("b.osr", "direct", beatmap_md5=HASH, requester=1, chat_id=1, now=1.0)
-    app_only = line.offer("c.osr", "app", beatmap_md5=HASH, requester=0, requester_player=31, now=2.0)
-    other_app = line.offer("d.osr", "other app", beatmap_md5=HASH, requester=0, requester_player=32, now=3.0)
-    assert line.claim("nobody", only_for=Serves(-1), now=4.0) is None
-    assert line.claim("outsider", only_for=Serves(2, None, frozenset({-9})), now=4.0) is None
-    assert line.claim("unlinked", only_for=Serves(0, None), now=4.0) is None
-    assert line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is group
-    assert line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is None
-    assert line.claim("player", only_for=Serves(0, 31), now=4.0) is app_only
-    assert line.claim("sender", only_for=Serves(1, 7), now=4.0) is direct
-    assert line.claim("shared token", now=4.0) is other_app
+    group = await line.offer("a.osr", "group", beatmap_md5=HASH, requester=1, chat_id=-5, now=0.0)
+    direct = await line.offer("b.osr", "direct", beatmap_md5=HASH, requester=1, chat_id=1, now=1.0)
+    app_only = await line.offer("c.osr", "app", beatmap_md5=HASH, requester=0, requester_player=31, now=2.0)
+    other_app = await line.offer("d.osr", "other app", beatmap_md5=HASH, requester=0, requester_player=32, now=3.0)
+    assert await line.claim("nobody", only_for=Serves(-1), now=4.0) is None
+    assert await line.claim("outsider", only_for=Serves(2, None, frozenset({-9})), now=4.0) is None
+    assert await line.claim("unlinked", only_for=Serves(0, None), now=4.0) is None
+    assert await line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is group
+    assert await line.claim("member", only_for=Serves(2, None, frozenset({-5})), now=4.0) is None
+    assert await line.claim("player", only_for=Serves(0, 31), now=4.0) is app_only
+    assert await line.claim("sender", only_for=Serves(1, 7), now=4.0) is direct
+    assert await line.claim("shared token", now=4.0) is other_app
 
 @pytest.mark.asyncio
 async def test_a_paired_device_renders_for_its_owners_chats_and_no_others(farm, monkeypatch):
@@ -589,7 +591,7 @@ async def test_a_paired_device_renders_for_its_owners_chats_and_no_others(farm, 
         outsider = {"Authorization": "Bearer outsider-app", "X-Render-Worker": "Laptop"}
         assert (await client.post("/render/claim", json={}, headers=outsider)).status == 204
         assert job.state is State.WAITING and (-5, 88) in asked
-        own = line.offer("own.osr", "own", beatmap_md5=HASH, requester=88, chat_id=88)
+        own = await line.offer("own.osr", "own", beatmap_md5=HASH, requester=88, chat_id=88)
         taken = await client.post("/render/claim", json={}, headers=outsider)
         assert taken.status == 200 and (await taken.json())["id"] == own.id
         member = {"Authorization": "Bearer member-app", "X-Render-Worker": "Tower"}

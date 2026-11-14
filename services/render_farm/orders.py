@@ -26,6 +26,7 @@ logger = get_logger("services.render_farm.orders")
 TICK = 2.0
 EDIT_EVERY = 4.0
 _receiving = Counter()
+_following: set[str] = set()
 
 def _clock(seconds: float) -> str:
     seconds = max(0, int(round(seconds)))
@@ -45,7 +46,7 @@ def title_of(head: Header, beatmap: Optional[dict[str, Any]]) -> tuple[str, Opti
     player = head.player or "?"
     return (f"{player} — {song}" if song else player), (int(set_id) if str(set_id or "").isdigit() else None)
 
-def status_of(job: Job, lang: str) -> str:
+async def status_of(job: Job, lang: str) -> str:
     if job.state is State.CLAIMED:
         progress = job.progress or {}
         total = int(progress.get("total") or 0)
@@ -61,10 +62,10 @@ def status_of(job: Job, lang: str) -> str:
             left = float(progress.get("seconds_left") or 0.0)
             return t("farm.drawing", lang, title=job.title, worker=worker, share=share, left=_clock(left))
         return t("farm.preparing", lang, title=job.title, worker=worker)
-    workers = roster.taking()
+    workers = await roster.taking_anywhere()
     if workers == 0:
         return t("farm.waiting_alone", lang, title=job.title, minutes=int(settings.RENDER_GIVE_UP // 60))
-    return t("farm.waiting", lang, title=job.title, ahead=queue.ahead_of(job), workers=workers)
+    return t("farm.waiting", lang, title=job.title, ahead=await queue.ahead_of(job), workers=workers)
 
 HOUSE_SKINS = frozenset({"1984"})
 
@@ -106,7 +107,7 @@ async def take(bot: Bot, message: types.Message, lang: str, osu_api_client=None)
 
 async def order(bot: Bot, message: types.Message, person: types.User, fetch, lang: str, osu_api_client=None, missing: str = "farm.unreadable",
                 detail: Optional[dict[str, Any]] = None) -> None:
-    if queue.open_for(person.id) + _receiving[person.id] >= settings.RENDER_ORDERS_EACH:
+    if await queue.open_for(person.id) + _receiving[person.id] >= settings.RENDER_ORDERS_EACH:
         await refuse(message, person, lang, "farm.too_many", "intake", "too many in the queue", detail=detail, shown=False,
                      n=settings.RENDER_ORDERS_EACH)
         return
@@ -134,7 +135,8 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
     async with AsyncSessionFactory() as session:
         player = (await session.execute(select(Player.id).where(Player.telegram_id == person.id))).scalar_one_or_none()
     in_app = player is not None and (person.id in invites.linked() or player in invites.linked_players())
-    workdir = tempfile.mkdtemp(prefix="order-")
+    os.makedirs(settings.RENDER_ORDERS_DIR, exist_ok=True)
+    workdir = tempfile.mkdtemp(prefix="order-", dir=settings.RENDER_ORDERS_DIR)
     job = None
     handed = False
     try:
@@ -175,18 +177,22 @@ async def _order(bot: Bot, message: types.Message, person: types.User, fetch, la
         beatmapset = (beatmap or {}).get("beatmapset") or {}
         song = " - ".join(part for part in (str(beatmapset.get("artist") or "").strip(), str(beatmapset.get("title") or "").strip()) if part)
         meta = {"player": head.player, "song": song, "version": str((beatmap or {}).get("version") or ""), "map_hash": head.beatmap_md5}
-        job = queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
-                          requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta, ruleset=head.mode,
-                          leaderboard=rivals, settings=render_settings(skin))
+        job = await queue.offer(path, title, beatmap_md5=head.beatmap_md5, beatmapset_id=set_id, skin=skin,
+                                requester=person.id, chat_id=message.chat.id, in_app=in_app, video_meta=meta,
+                                ruleset=head.mode, leaderboard=rivals, settings=render_settings(skin), followed=True)
         if head.mode == 3:
             await message.reply(t("farm.mania_note", lang))
-        status = await message.reply(status_of(job, lang))
+        status = await message.reply(await status_of(job, lang))
+        await queue.note(job.id, {"chat": message.chat.id, "asked": getattr(message, "message_id", None),
+                                  "status": getattr(status, "message_id", None), "lang": lang, "workdir": workdir})
+        _following.add(job.id)
         asyncio.create_task(follow(bot, job, message, status, lang, workdir))
         handed = True
     finally:
         if not handed:
             if job is not None:
-                queue.withdraw(job.id, "submission_failed")
+                await queue.withdraw(job.id, "submission_failed")
+                await queue.close(job.id)
             shutil.rmtree(workdir, ignore_errors=True)
 
 async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message, lang: str, workdir: str) -> None:
@@ -195,26 +201,23 @@ async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message
     unclaimed_since: Optional[float] = monotonic()
     try:
         while not job.settled.is_set():
-            queue.sweep()
+            await queue.sweep()
             now = monotonic()
             if job.state is State.WAITING:
                 unclaimed_since = unclaimed_since or now
                 if now - unclaimed_since > settings.RENDER_GIVE_UP:
-                    queue.withdraw(job.id, "nobody")
+                    await queue.withdraw(job.id, "nobody")
                     break
             else:
                 unclaimed_since = None
-            fresh = status_of(job, lang)
+            fresh = await status_of(job, lang)
             if fresh != said and now - edited >= EDIT_EVERY:
                 try:
                     await status.edit_text(fresh)
                     said, edited = fresh, now
                 except Exception:
                     pass
-            try:
-                await asyncio.wait_for(job.settled.wait(), TICK)
-            except asyncio.TimeoutError:
-                pass
+            await queue.wait(job, TICK)
         if job.withdrawn or not job.payload:
             key = "farm.nobody" if job.reason in ("nobody", "expired") else "farm.failed"
             code = await incidents.note("farm", "queue" if key == "farm.nobody" else "render", job.reason or "?",
@@ -226,7 +229,49 @@ async def follow(bot: Bot, job: Job, asked: types.Message, status: types.Message
             return
         await deliver(bot, job, asked, status, lang)
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        try:
+            await queue.close(job.id)
+        finally:
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
+            _following.discard(job.id)
+
+
+class _Kept:
+    def __init__(self, bot: Bot, chat_id: int, message_id: Optional[int]):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.message_id = message_id
+        self.text = ""
+
+    async def edit_text(self, text: str, **more):
+        return await self.bot.edit_message_text(text, chat_id=self.chat_id, message_id=self.message_id, **more)
+
+    async def delete(self):
+        return await self.bot.delete_message(self.chat_id, self.message_id)
+
+    async def reply_video(self, video, **more):
+        reply = types.ReplyParameters(message_id=self.message_id, allow_sending_without_reply=True) if self.message_id else None
+        return await self.bot.send_video(self.chat_id, video, reply_parameters=reply, **more)
+
+
+async def resume(bot: Bot) -> int:
+    picked = 0
+    for job in await queue.followed():
+        if job.id in _following:
+            continue
+        told = job.told or {}
+        if told.get("chat") is None or told.get("status") is None:
+            await queue.close(job.id)
+            continue
+        _following.add(job.id)
+        asked = _Kept(bot, told["chat"], told.get("asked"))
+        status = _Kept(bot, told["chat"], told["status"])
+        asyncio.create_task(follow(bot, job, asked, status, str(told.get("lang") or "en"), str(told.get("workdir") or "")))
+        picked += 1
+    if picked:
+        logger.info("%d render order(s) picked up after a restart", picked)
+    return picked
 
 def _story(job: Job) -> dict[str, Any]:
     return {

@@ -17,6 +17,8 @@ from services.render_farm.roster import Roster
 from bot.handlers.farm import _a_skin
 
 
+pytestmark = pytest.mark.usefixtures("spare_database")
+
 def archive(prefix="", value=b"[General]\nName: Player", extra=None):
     into = io.BytesIO()
     with zipfile.ZipFile(into, "w") as made:
@@ -63,18 +65,18 @@ async def test_selection_without_a_registered_user_reaches_the_next_worker_job(s
     await skins.choose(123, key)
     assert await skins.chosen_name(123) == key
     selected = await skins.chosen_for(123)
-    job = RenderQueue().offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=selected)
+    job = await RenderQueue().offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=selected)
     assert job.handed()["skin"]["hash"] == hashlib.sha256(data).hexdigest()
     await skins.choose(123, None)
     assert await skins.chosen_name(123) is None
     assert await skins.chosen_for(123) is None
 
 
-def test_new_upload_does_not_replace_the_archive_of_a_queued_job(storage):
+async def test_new_upload_does_not_replace_the_archive_of_a_queued_job(storage):
     first, second = archive(value=b"first"), archive(value=b"second")
     before = store(storage, 7, first)
     line = RenderQueue()
-    job = line.offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=skins.described(before, 7))
+    job = await line.offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=skins.described(before, 7))
     after = store(storage, 7, second)
     assert before != after
     assert Path(job.skin["path"]).read_bytes() == first
@@ -180,7 +182,7 @@ async def test_real_upload_reaches_its_claimed_worker_over_http(storage, monkeyp
     data = archive("Player/")
     key = store(storage, 123, data)
     line = RenderQueue()
-    job = line.offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=skins.described(key, 123))
+    job = await line.offer("replay.osr", "Player", beatmap_md5="a" * 32, skin=skins.described(key, 123))
     app = web.Application(); app.add_routes(farm_http.make_routes(line, Roster()))
     headers = {"Authorization": "Bearer skin-test-token", "X-Render-Worker": "Mac"}
     async with TestClient(TestServer(app)) as client:

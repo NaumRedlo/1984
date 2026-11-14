@@ -135,6 +135,41 @@ Rules the code keeps after the split:
   on inside the one process of today, which is the way to try it on the
   server before the units are split.
 
+- Step 3, 15 November 2026: what one side kept in memory for the other is
+  in tables.
+  - Pairings are rows of `pairings`. The app's side starts one, the bot
+    answers it, and the answer is a conditional update, so two answers cannot
+    both win. The counters that slow down guessing stay in the memory of the
+    app's side, which is the only one that takes those requests.
+  - The render queue is the table `render_jobs`. Each process keeps the job
+    objects it knows and refreshes them from the rows; a claim is an update
+    that succeeds for one worker only. A job the bot follows stays as a row
+    after it is rendered or given up, until the bot has sent the video or
+    said sorry, and holds the chat, the two message numbers and the language
+    for that. When the bot starts it picks such jobs up
+    (`orders.resume`). Rows nobody collected in six hours are removed with
+    their files.
+  - Replays of orders and videos sent back by workers are written under
+    `data/render-orders` and `data/render-spool` instead of the system's
+    temporary folder, so that both units see them and a restart keeps them.
+  - Enrolled machines: each process keeps its copy of `render_worker_tokens`
+    and reloads it when a `NOTIFY` says a token was issued, and every ten
+    minutes besides. Nothing in the code revokes a token yet.
+  - Who is present (`render_farm/presence.py`) and which workers answered
+    lately (`render_farm/roster.py`) stay in the memory of the app's side.
+    The bot needs one number from there, how many workers are taking, and
+    reads it from a row the app's side writes every 15 seconds.
+  - The bot writes its username to `bot_settings`; the app's side reads it
+    for the pairing link.
+
+  Measured on a development machine, two processes over PostgreSQL 17: a
+  worker's long poll is woken when the job is offered, and the process that
+  follows a job learns of its end 11 ms after the other one wrote it.
+
+  One place is left on the third list of the boundary test: the order intake
+  imports the roster. In a process without workers of its own that call reads
+  the row.
+
 Found on the way, for step 4:
 
 - A video read back from Telegram crosses as the path the local Bot API
@@ -144,11 +179,6 @@ Found on the way, for step 4:
   `services/duels/notify.py`). The loop that delivers them moves to the bot's
   unit.
 - Each process that listens keeps one more connection to PostgreSQL open.
-
-Still on the third list, for step 3: the bot's `/start` reads
-`invites` and `pairing`, and the order intake reads `invites`, `queue` and
-`roster`, all of them memory the server owns.
-
 
 ## Seams found so far
 

@@ -65,6 +65,7 @@ class App:
         self.duels_task: Optional[asyncio.Task] = None
         self.telegram_tasks: Optional[asyncio.Task] = None
         self.tokens_task: Optional[asyncio.Task] = None
+        self.roster_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -184,6 +185,15 @@ class App:
             oauth_set_linked(oauth_notifier(self.bot))
         farm_http.set_osu(self.osu_api_client)
 
+        from services.render_farm import orders as farm_orders
+        from services.render_farm.roster import roster as farm_roster
+
+        self.roster_task = asyncio.create_task(farm_roster.tell(self.shutdown_event), name="render_roster")
+        try:
+            await farm_orders.resume(self.bot)
+        except Exception as exc:
+            logger.warning("render orders left by the last run were not picked up: %s", exc)
+
         try:
             me = await self.bot.get_me()
             await farm_pairing.publish_bot_username(me.username or "")
@@ -260,6 +270,9 @@ class App:
         if self.tokens_task:
             with suppress(asyncio.CancelledError):
                 await self.tokens_task
+        if self.roster_task:
+            with suppress(asyncio.CancelledError):
+                await self.roster_task
         await shared_signals.stop()
 
         if self.osu_api_client:

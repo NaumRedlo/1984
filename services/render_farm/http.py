@@ -11,7 +11,7 @@ from urllib.parse import unquote
 
 from aiohttp import web
 
-from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
+from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_SPOOL_DIR, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
 from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, pairing, players, presence as attendance, publications, replays, suggestions, skins, videos
 from services.render_farm.telegram import Absent, Telegram
 from services.render_farm.queue import STANDARD, RenderQueue, Serves, queue as default_queue
@@ -47,7 +47,8 @@ def _max_send_bytes() -> int:
     return 48 * 1024 * 1024
 
 async def _spool(request: web.Request, most: int, prefix: str) -> tuple[str, int]:
-    handle, path = tempfile.mkstemp(prefix=prefix, suffix=".mp4")
+    os.makedirs(RENDER_SPOOL_DIR, exist_ok=True)
+    handle, path = tempfile.mkstemp(prefix=prefix, suffix=".mp4", dir=RENDER_SPOOL_DIR)
     written = 0
     try:
         with os.fdopen(handle, "wb") as out:
@@ -91,7 +92,7 @@ async def _serves(request: web.Request, line: RenderQueue) -> Optional[Serves]:
     owner = invites.owner(_token(request))
     if owner is None:
         return Serves(-1)
-    chats = frozenset(job.chat_id for job in line.waiting() if job.chat_id < 0)
+    chats = frozenset(job.chat_id for job in await line.waiting() if job.chat_id < 0)
     inside = frozenset([chat for chat in chats if owner.telegram_id and await _telegram.is_member(chat, owner.telegram_id)])
     return Serves(owner.telegram_id, owner.player_id, inside)
 
@@ -243,8 +244,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         who.hello(key, _worker(request)[:128], owner.telegram_id if owner else 0, build=build, take=take)
         return key
 
-    def _mine(request: web.Request):
-        job = line.get(request.match_info["job_id"])
+    async def _mine(request: web.Request):
+        job = await line.get(request.match_info["job_id"])
         if job is None or job.worker != _key(request):
             return None
         return job
@@ -253,7 +254,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(line.waiting()), "most": _max_send_bytes()})
+        return web.json_response({"build": "", "agree": True, "reason": "", "waiting": len(await line.waiting()), "most": _max_send_bytes()})
 
     async def claim(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -275,7 +276,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             if request.transport is None or request.transport.is_closing():
                 return web.Response(status=204)
             arrival = line.arrival()
-            job = line.claim(key, _worker(request)[:128], rulesets=rulesets, only_for=await _serves(request, line))
+            job = await line.claim(key, _worker(request)[:128], rulesets=rulesets, only_for=await _serves(request, line))
             left = until - asyncio.get_running_loop().time()
             if job is not None or left <= 0:
                 break
@@ -293,7 +294,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        job = _mine(request)
+        job = await _mine(request)
         if job is None:
             return web.json_response({"error": "not yours"}, status=409)
         if not os.path.isfile(job.replay_path):
@@ -304,7 +305,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         bad = await guard(request)
         if bad:
             return bad
-        job = _mine(request)
+        job = await _mine(request)
         if job is None:
             return web.json_response({"error": "not yours"}, status=409)
         path = (job.skin or {}).get("path")
@@ -319,7 +320,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         said = await _json_object(request)
         _seen(request)
         progress = said.get("progress")
-        alive = line.heartbeat(request.match_info["job_id"], _key(request), progress if isinstance(progress, dict) else None)
+        alive = await line.heartbeat(request.match_info["job_id"], _key(request), progress if isinstance(progress, dict) else None)
         return web.json_response({"yours": alive}, status=200 if alive else 409)
 
     async def job_result(request: web.Request) -> web.Response:
@@ -328,14 +329,14 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return bad
         key = _seen(request)
         job_id = request.match_info["job_id"]
-        if not line.heartbeat(job_id, key):
+        if not await line.heartbeat(job_id, key):
             return web.json_response({"error": "not yours"}, status=409)
-        job = line.get(job_id)
+        job = await line.get(job_id)
         maximum = APP_VIDEO_MOST if job is not None and (job.video_id is not None or job.in_app) else _max_send_bytes()
         try:
             path, written = await _spool(request, maximum, "render-result-")
         except ValueError:
-            line.give_back(job_id, key, "the video was too large to send")
+            await line.give_back(job_id, key, "the video was too large to send")
             who.handed_back(key)
             return web.json_response({"error": "too large", "most": maximum}, status=413)
         except OSError as exc:
@@ -345,7 +346,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 header = source.read(12)
             if written < 12 or header[4:8] != b"ftyp":
                 os.unlink(path)
-                line.give_back(job_id, key, "worker returned an invalid video")
+                await line.give_back(job_id, key, "worker returned an invalid video")
                 return web.json_response({"error": "not mp4"}, status=400)
             from db.database import AsyncSessionFactory
             from db.models.player import Player
@@ -361,14 +362,14 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                         player = (await session.execute(select(Player).where(Player.telegram_id == job.requester))).scalar_one_or_none()
                         if player is None or not os.path.isfile(job.replay_path):
                             os.unlink(path)
-                            line.give_back(job_id, key, "render source unavailable")
+                            await line.give_back(job_id, key, "render source unavailable")
                             return web.json_response({"error": "render source unavailable"}, status=410)
                         with open(job.replay_path, "rb") as source:
                             replay_data = source.read()
                         replay_key = await app_storage.keep_replay(replay_data, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST)
                         if replay_key is None:
                             os.unlink(path)
-                            line.give_back(job_id, key, "replay storage is full")
+                            await line.give_back(job_id, key, "replay storage is full")
                             return web.json_response({"error": "replay storage is full"}, status=507)
                         owner = invites.Owner(job.requester, player.osu_username, player.id)
                         meta = dict(job.video_meta or {})
@@ -386,7 +387,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                             await session.rollback()
                             await session.delete(video)
                             await session.commit()
-                        line.give_back(job_id, key, "video storage is full")
+                        await line.give_back(job_id, key, "video storage is full")
                         return web.json_response({"error": "video storage is full"}, status=507)
             except Exception as exc:
                 if os.path.exists(path):
@@ -397,11 +398,11 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 await incidents.note("farm", "store", f"{type(exc).__name__}: {exc}", telegram_id=job.requester or None,
                                      chat_id=job.chat_id or None, detail={"job": job.id, "title": job.title, "bytes": written}, error=exc)
                 return web.json_response({"error": "video storage failed"}, status=500)
-            if not line.finish(job_id, key, {"bytes": written, "video": video.id}):
+            if not await line.finish(job_id, key, {"bytes": written, "video": video.id}):
                 return web.json_response({"error": "not yours"}, status=409)
             who.delivered(key)
             return web.json_response({"ok": True})
-        if not line.finish(job_id, key, {"path": path, "meta": _meta(request), "bytes": written}):
+        if not await line.finish(job_id, key, {"path": path, "meta": _meta(request), "bytes": written}):
             os.unlink(path)
             return web.json_response({"error": "not yours"}, status=409)
         who.delivered(key)
@@ -413,7 +414,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return bad
         said = await _json_object(request)
         key = _seen(request)
-        given = line.give_back(request.match_info["job_id"], key, str(said.get("reason") or "no reason given")[:300])
+        given = await line.give_back(request.match_info["job_id"], key, str(said.get("reason") or "no reason given")[:300])
         if given:
             who.handed_back(key)
         return web.json_response({"ok": given}, status=200 if given else 409)
@@ -423,7 +424,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         if bad:
             return bad
         mine = _key(request)
-        busy = line.rendering()
+        busy = await line.rendering()
         workers = []
         for worker in who.here():
             job = busy.get(worker.key)
@@ -436,7 +437,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
                 "mine": worker.key == mine,
                 "progress": (job.progress or {}) if job else None,
             })
-        return web.json_response({"waiting": len(line.waiting()), "workers": workers})
+        return web.json_response({"waiting": len(await line.waiting()), "workers": workers})
 
     async def pair(request: web.Request) -> web.Response:
         try:
@@ -1404,7 +1405,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"state": "ready"})
         if app_storage.available(video):
             return web.json_response({"state": "ready"})
-        job = line.for_video(video.id)
+        job = await line.for_video(video.id)
         return web.json_response({"state": "rendering" if job else "expired"})
 
     async def inbox_restore(request: web.Request) -> web.Response:
@@ -1416,7 +1417,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "not an app video"}, status=409)
         if app_storage.available(video):
             return web.json_response({"state": "ready"})
-        if line.for_video(video.id):
+        if await line.for_video(video.id):
             return web.json_response({"state": "rendering"})
         replay_path = app_storage.replay_path(video, SHARED_REPLAYS_DIR)
         if replay_path is None or not replay_path.is_file() or not video.map_hash:
@@ -1450,7 +1451,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         skin = skins.described(video.skin_name, video.owner) if video.skin_name else None
         if skin is not None and skin.get("hash") != video.skin_hash:
             skin = None
-        line.offer(str(replay_path), videos.caption(video, None) or "Shared video", beatmap_md5=video.map_hash,
+        await line.offer(str(replay_path), videos.caption(video, None) or "Shared video", beatmap_md5=video.map_hash,
                    skin=skin, requester=video.owner, video_id=video.id, settings=settings,
                    requester_player=video.owner_player_id)
         return web.json_response({"state": "rendering"}, status=202)

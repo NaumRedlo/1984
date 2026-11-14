@@ -457,7 +457,7 @@ async def test_bot_order_result_appears_in_owners_app_instead_of_telegram(served
     monkeypatch.setattr(app_storage, "APP_VIDEOS_DIR", str(tmp_path / "app-videos"))
     replay = tmp_path / "bot-order.osr"
     replay.write_bytes(_replay())
-    job = http.default_queue.offer(str(replay), "NaumRedlo — A Map", beatmap_md5="a" * 32,
+    job = await http.default_queue.offer(str(replay), "NaumRedlo — A Map", beatmap_md5="a" * 32,
                                    requester=7, in_app=True, video_meta={"player": "NaumRedlo", "song": "A Map"})
     claim = await client.post("/render/claim", headers=tokens[7], json={"take": True})
     assert (await claim.json())["id"] == job.id

@@ -12,6 +12,8 @@ from services import incidents
 from services.render_farm import orders
 from services.render_farm.queue import RenderQueue
 
+pytestmark = pytest.mark.usefixtures("spare_database")
+
 HASH = "0123456789abcdef0123456789abcdef"
 
 def _message(chat_type="supergroup"):
@@ -105,9 +107,9 @@ async def test_a_failed_download_and_a_broken_order_are_noted_with_their_trace(m
 @pytest.mark.asyncio
 async def test_a_worker_giving_a_job_back_is_noted_and_kept_in_the_jobs_story():
     line = RenderQueue()
-    job = line.offer("a.osr", "song", beatmap_md5=HASH, requester=7, chat_id=-1)
-    line.claim("worker-key", "Laptop")
-    assert line.give_back(job.id, "worker-key", "map download failed")
+    job = await line.offer("a.osr", "song", beatmap_md5=HASH, requester=7, chat_id=-1)
+    await line.claim("worker-key", "Laptop")
+    assert await line.give_back(job.id, "worker-key", "map download failed")
     await asyncio.sleep(0)
     noted, = await incidents.recent("farm")
     assert (noted.stage, noted.reason, noted.telegram_id) == ("worker", "map download failed", 7)

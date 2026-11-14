@@ -17,6 +17,7 @@ class Signals:
         self._marks: dict[str, asyncio.Event] = {}
         self._channels: tuple[str, ...] = ()
         self._listening: Optional[asyncio.Task] = None
+        self._more: Optional[asyncio.Event] = None
 
     @property
     def remote(self) -> bool:
@@ -42,9 +43,16 @@ class Signals:
             await session.execute(text("select pg_notify(:channel, '')"), {"channel": channel})
 
     def listen(self, *channels: str) -> None:
-        self._channels = tuple(dict.fromkeys(self._channels + channels))
-        if self.remote and self._listening is None:
+        wanted = tuple(dict.fromkeys(self._channels + channels))
+        if wanted == self._channels:
+            return
+        self._channels = wanted
+        if not self.remote:
+            return
+        if self._listening is None:
             self._listening = asyncio.create_task(self._listen(), name="signals")
+        elif self._more is not None:
+            self._more.set()
 
     async def stop(self) -> None:
         task, self._listening = self._listening, None
@@ -69,11 +77,18 @@ class Signals:
                 connection = await asyncpg.connect(address)
                 gone = asyncio.get_running_loop().create_future()
                 connection.add_termination_listener(lambda _c: gone.done() or gone.set_result(None))
-                for channel in self._channels:
-                    await connection.add_listener(channel, self._told)
-                for channel in self._channels:
-                    self.heard(channel)
-                await gone
+                self._more = asyncio.Event()
+                added: set[str] = set()
+                while not gone.done():
+                    self._more.clear()
+                    for channel in self._channels:
+                        if channel not in added:
+                            await connection.add_listener(channel, self._told)
+                            added.add(channel)
+                            self.heard(channel)
+                    more = asyncio.create_task(self._more.wait())
+                    await asyncio.wait({gone, more}, return_when=asyncio.FIRST_COMPLETED)
+                    more.cancel()
                 logger.warning("the connection that listens for signals closed")
             except asyncio.CancelledError:
                 if connection is not None and not connection.is_closed():

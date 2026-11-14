@@ -25,7 +25,6 @@ SERVER_MEMORY = (
     "services.render_farm.http",
     "services.render_farm.events",
     "services.render_farm.presence",
-    "services.render_farm.queue",
     "services.render_farm.roster",
     "services.render_farm.channels",
     "services.duels.live",
@@ -38,7 +37,6 @@ SERVER_IMPORTS_TELEGRAM = set()
 SERVER_IMPORTS_BOT = set()
 
 BOT_READS_SERVER_MEMORY = {
-    ("services.render_farm.orders", "services.render_farm.queue"),
     ("services.render_farm.orders", "services.render_farm.roster"),
 }
 

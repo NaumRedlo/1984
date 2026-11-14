@@ -1,11 +1,14 @@
 import types
 
+import pytest
 import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from services.render_farm import http
 from services.render_farm.telegram_direct import Direct
+
+pytestmark = pytest.mark.usefixtures("spare_database")
 
 TOKEN = "a-shared-secret"
 MINE = {"Authorization": f"Bearer {TOKEN}", "X-Render-Worker": "mac"}
