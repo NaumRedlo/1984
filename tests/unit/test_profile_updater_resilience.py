@@ -27,7 +27,7 @@ async def database(tmp_path, monkeypatch):
     import tasks.profile_updater as module
     import services.oauth.token_manager as tokens
     import utils.title_progress as titles
-    from services.render_farm import invites
+    from services.render_farm import invites, presence
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'profiles.db'}")
     async with engine.begin() as connection:
@@ -37,7 +37,7 @@ async def database(tmp_path, monkeypatch):
     monkeypatch.setattr(tokens, "token_of", AsyncMock(return_value=None))
     monkeypatch.setattr(titles, "refresh_user_titles", AsyncMock(return_value=[]))
     monkeypatch.setattr(invites, "linked_players", lambda: set())
-    monkeypatch.setattr(invites, "present", lambda: [])
+    monkeypatch.setattr(presence, "present", lambda: [])
     yield factory
     await engine.dispose()
 
@@ -312,13 +312,13 @@ async def test_foreground_requests_overtake_queued_background_requests():
 
 
 async def test_present_dossier_player_gets_active_cadence(database, monkeypatch):
-    from services.render_farm import invites
+    from services.render_farm import invites, presence
     pid = await add_player(database, seen=False)
     async with database() as session:
         player = await session.get(Player, pid)
         player.last_api_update = utcnow() - timedelta(minutes=10)
         await session.commit()
-    monkeypatch.setattr(invites, "present", lambda: [invites.Owner(1, "p1", pid)])
+    monkeypatch.setattr(presence, "present", lambda: [invites.Owner(1, "p1", pid)])
     updater = ProfileUpdater(api_for())
     assert await updater._due("stats_only", 10) == [pid]
     assert await updater.run_job(pid, "stats_only") == "updated"

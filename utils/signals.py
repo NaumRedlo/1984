@@ -3,6 +3,7 @@ from typing import Optional
 
 from sqlalchemy import text
 
+from config.settings import DATABASE_URL
 from utils.logger import get_logger
 
 logger = get_logger("signals")
@@ -81,3 +82,6 @@ class Signals:
             except Exception as exc:
                 logger.warning("listening for signals failed: %s", exc)
             await asyncio.sleep(RETRY)
+
+
+shared = Signals(DATABASE_URL)

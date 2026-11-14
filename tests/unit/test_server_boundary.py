@@ -24,8 +24,7 @@ SERVER_MEMORY = (
     "services.oauth.server",
     "services.render_farm.http",
     "services.render_farm.events",
-    "services.render_farm.invites",
-    "services.render_farm.pairing",
+    "services.render_farm.presence",
     "services.render_farm.queue",
     "services.render_farm.roster",
     "services.render_farm.channels",
@@ -39,9 +38,6 @@ SERVER_IMPORTS_TELEGRAM = set()
 SERVER_IMPORTS_BOT = set()
 
 BOT_READS_SERVER_MEMORY = {
-    ("bot.handlers.start.handlers", "services.render_farm.invites"),
-    ("bot.handlers.start.handlers", "services.render_farm.pairing"),
-    ("services.render_farm.orders", "services.render_farm.invites"),
     ("services.render_farm.orders", "services.render_farm.queue"),
     ("services.render_farm.orders", "services.render_farm.roster"),
 }

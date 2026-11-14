@@ -5,7 +5,7 @@ import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from services.render_farm import events, invites
+from services.render_farm import events, invites, presence
 
 def _as(token):
     return {"Authorization": f"Bearer {token}"}
@@ -19,7 +19,7 @@ async def _guard(request):
 async def client(monkeypatch):
     monkeypatch.setattr(invites, "_good", set())
     monkeypatch.setattr(invites, "_owners", {})
-    monkeypatch.setattr(invites, "_seen", {})
+    monkeypatch.setattr(presence, "_seen", {})
     invites.remember("one", invites.Owner(telegram_id=11, name="one", player_id=1))
     invites.remember("two", invites.Owner(telegram_id=12, name="two", player_id=2))
     invites.remember("bare", invites.Owner(telegram_id=13, name="bare", player_id=None))
@@ -47,7 +47,7 @@ async def test_a_socket_is_greeted_with_the_topics_and_counts_its_owner_as_onlin
     assert (await _next(two, "hello"))["online"] == 2
     assert (await _next(one, "online"))["online"] == 2, "the first socket hears that someone came"
     await two.close()
-    invites._seen.pop(invites.digest("two"), None)
+    presence._seen.pop(invites.digest("two"), None)
     assert (await _next(one, "online"))["online"] == 1
     await one.close()
 

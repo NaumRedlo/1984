@@ -14,13 +14,13 @@ from db.models.map_attempt import UserMapAttempt
 from sqlalchemy import select
 from tasks import live_tracker
 from tasks.live_tracker import EACH_SECONDS, LiveTracker, ROUND_MOST
-from services.render_farm import invites
+from services.render_farm import invites, presence
 from services import recent_plays
 
 
 @pytest.fixture(autouse=True)
 def fresh_presence(monkeypatch):
-    monkeypatch.setattr(invites, "_seen", {})
+    monkeypatch.setattr(presence, "_seen", {})
     monkeypatch.setattr(invites, "_owners", {})
     monkeypatch.setattr(invites, "_good", set())
 
@@ -115,31 +115,31 @@ def test_presence_is_per_device_expires_and_revocation_is_immediate():
     invites.remember("mac", owner)
     invites.remember("windows", owner)
     invites.remember("worker")
-    invites.touch("mac", now=100, keep=invites.PRESENCE_BEAT_FOR)
-    invites.touch("windows", now=110, keep=invites.PRESENCE_BEAT_FOR)
-    invites.touch("worker", now=120)
-    invites.touch("stranger", now=120)
-    assert invites.present(now=129) == [owner, owner]
-    assert invites.present(now=130) == [owner]
+    presence.touch("mac", now=100, keep=presence.PRESENCE_BEAT_FOR)
+    presence.touch("windows", now=110, keep=presence.PRESENCE_BEAT_FOR)
+    presence.touch("worker", now=120)
+    presence.touch("stranger", now=120)
+    assert presence.present(now=129) == [owner, owner]
+    assert presence.present(now=130) == [owner]
     invites.forget(invites.digest("windows"))
-    assert invites.present(now=131) == []
+    assert presence.present(now=131) == []
 
 
 def test_old_clients_get_a_longer_lease_and_regular_requests_keep_the_short_lease():
     owner = invites.Owner(7, "Naum")
     invites.remember("old", owner)
-    invites.touch("old", now=100)
-    assert invites.present(now=279) == [owner]
-    assert invites.present(now=280) == []
-    invites.touch("old", now=300, keep=invites.PRESENCE_BEAT_FOR)
-    invites.touch("old", now=310)
-    assert invites.present(now=339) == [owner]
-    assert invites.present(now=340) == []
+    presence.touch("old", now=100)
+    assert presence.present(now=279) == [owner]
+    assert presence.present(now=280) == []
+    presence.touch("old", now=300, keep=presence.PRESENCE_BEAT_FOR)
+    presence.touch("old", now=310)
+    assert presence.present(now=339) == [owner]
+    assert presence.present(now=340) == []
 
 
 async def test_an_online_player_still_polls_without_resetting_its_schedule(database, monkeypatch):
     clock = _Clock()
-    monkeypatch.setattr(invites, "monotonic", clock)
+    monkeypatch.setattr(presence, "monotonic", clock)
     async with database() as session:
         session.add_all([
             User(chat_id=-1, telegram_id=7, osu_username="Naum", osu_user_id=70),
@@ -153,8 +153,8 @@ async def test_an_online_player_still_polls_without_resetting_its_schedule(datab
     tracker = LiveTracker(client, clock=clock)
     assert sorted(await tracker.known()) == [70, 80]
     tracker.asked[70] = clock.now
-    invites.touch("mac", keep=invites.PRESENCE_BEAT_FOR)
-    invites.touch("alone", keep=invites.PRESENCE_BEAT_FOR)
+    presence.touch("mac", keep=presence.PRESENCE_BEAT_FOR)
+    presence.touch("alone", keep=presence.PRESENCE_BEAT_FOR)
     tracker.nudge(70)
     clock.now += 6
     assert sorted(await tracker.known()) == [70, 80]
@@ -176,7 +176,7 @@ async def test_a_player_coming_online_during_the_api_request_is_written(database
     invites.remember("mac", invites.Owner(7, "Naum"))
     client = _Client([])
     async def recent(*args, **kwargs):
-        invites.touch("mac", keep=invites.PRESENCE_BEAT_FOR)
+        presence.touch("mac", keep=presence.PRESENCE_BEAT_FOR)
         return [{"id": 1, "beatmap": {}, "statistics": {}, "passed": True}]
     client.get_user_recent_scores = recent
     tracker = LiveTracker(client)
@@ -195,7 +195,7 @@ async def test_a_player_coming_online_during_a_write_keeps_the_attempt(database,
     async def sync(user, session, scores):
         session.add(UserMapAttempt(player_id=user.player_id, score_id=1, beatmap_id=100, pp=10))
         await session.flush()
-        invites.touch("mac", keep=invites.PRESENCE_BEAT_FOR)
+        presence.touch("mac", keep=presence.PRESENCE_BEAT_FOR)
         return 1
     client.sync_user_map_attempts = sync
     tracker = LiveTracker(client)
@@ -221,7 +221,7 @@ async def test_fallback_does_not_copy_witness_results_but_keeps_other_plays(data
         await session.commit()
     if online:
         invites.remember("mac", invites.Owner(7, "Naum"))
-        invites.touch("mac")
+        presence.touch("mac")
     raw = {"id": 1, "beatmap": {"id": 100}, "created_at": at.isoformat(), "score": 100000,
            "statistics": {"count_100": 2, "count_50": 0, "count_miss": 0}, "max_combo": 500,
            "passed": True, "mods": ["HD", "CL"]}

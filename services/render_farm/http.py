@@ -12,7 +12,7 @@ from urllib.parse import unquote
 from aiohttp import web
 
 from config.settings import APP_VIDEO_MOST, RENDER_REPLAY_MOST, RENDER_WORKER_TOKEN, SHARED_REPLAYS_DIR, SHARED_REPLAYS_STORAGE_MOST, TRUSTED_PROXY_HOPS
-from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, pairing, players, publications, replays, suggestions, skins, videos
+from services.render_farm import app_storage, billing, channels, community as gathered, donated, events, invites, pairing, players, presence as attendance, publications, replays, suggestions, skins, videos
 from services.render_farm.telegram import Absent, Telegram
 from services.render_farm.queue import STANDARD, RenderQueue, Serves, queue as default_queue
 from services.render_farm.roster import Roster, roster as default_roster
@@ -234,7 +234,7 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
             return web.json_response({"error": "unauthorised"}, status=401)
         if not _worker(request):
             return web.json_response({"error": "no worker name"}, status=400)
-        invites.touch(_token(request))
+        attendance.touch(_token(request))
         return None
 
     def _seen(request: web.Request, *, build: Optional[str] = None, take: Optional[bool] = None) -> str:
@@ -530,8 +530,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         token = _token(request)
         if invites.owner(token) is None:
             return web.json_response({"error": "no one"}, status=404)
-        invites.touch(token, keep=invites.PRESENCE_BEAT_FOR)
-        return web.json_response({"online": invites.online()})
+        attendance.touch(token, keep=attendance.PRESENCE_BEAT_FOR)
+        return web.json_response({"online": attendance.online()})
 
     async def me_avatar(request: web.Request) -> web.Response:
         bad = await guard(request)
@@ -1060,8 +1060,8 @@ def make_routes(queue: Optional[RenderQueue] = None, roster: Optional[Roster] = 
         from db.database import AsyncSessionFactory
 
         async with AsyncSessionFactory() as session:
-            online = [held.player_id for held in invites.present() if held.player_id is not None]
-            online_telegram = [held.telegram_id for held in invites.present()]
+            online = [held.player_id for held in attendance.present() if held.player_id is not None]
+            online_telegram = [held.telegram_id for held in attendance.present()]
             query = request.query.get("q", "")
             if query:
                 body = await players.everyone(session, owner.telegram_id, query=query, signed=invites.linked_players(), me=owner.player_id,

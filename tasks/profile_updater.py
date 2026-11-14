@@ -137,7 +137,7 @@ class ProfileUpdater:
 
     async def get_stale_player_ids(self):
         from services.dossier_accounts import authenticated_player
-        from services.render_farm import invites
+        from services.render_farm import invites, presence
 
         async with AsyncSessionFactory() as session:
             return list((await session.scalars(select(Player.id).where(
@@ -148,14 +148,14 @@ class ProfileUpdater:
 
     async def _due(self, mode, limit):
         from services.dossier_accounts import authenticated_player
-        from services.render_farm import invites
+        from services.render_farm import invites, presence
 
         now = utcnow()
         full = mode == "background_full"
         stamp = Player.last_full_update if full else Player.last_api_update
         active_interval = BACKGROUND_THRESHOLD if full else STATS_SWEEP_THRESHOLD
         inactive_interval = self.INACTIVE_FULL_THRESHOLD if full else self.INACTIVE_STATS_THRESHOLD
-        owners = invites.present()
+        owners = presence.present()
         active = or_(Player.last_seen_at >= now - self.ACTIVE_WINDOW,
                      Player.id.in_({o.player_id for o in owners if o.player_id is not None}),
                      Player.telegram_id.in_({o.telegram_id for o in owners if o.telegram_id}))
@@ -191,7 +191,7 @@ class ProfileUpdater:
         from db.models.map_attempt import UserMapAttempt
         from services.oauth.token_manager import token_of
         from utils.osu.api_client import DATED_STATUSES
-        from services.render_farm import invites
+        from services.render_farm import invites, presence
 
         async with AsyncSessionFactory() as session:
             player = await session.get(Player, player_id)
@@ -200,7 +200,7 @@ class ProfileUpdater:
             now = _bare(utcnow())
             active = (player.last_seen_at is not None and _bare(player.last_seen_at) >= now - self.ACTIVE_WINDOW) or any(
                 o.player_id == player.id or (o.telegram_id and o.telegram_id == player.telegram_id)
-                for o in invites.present())
+                for o in presence.present())
             full = mode == "background_full"
             interval = (BACKGROUND_THRESHOLD if active else self.INACTIVE_FULL_THRESHOLD) if full else (
                 STATS_SWEEP_THRESHOLD if active else self.INACTIVE_STATS_THRESHOLD)

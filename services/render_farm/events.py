@@ -3,7 +3,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from aiohttp import WSMsgType, web
 
-from services.render_farm import invites
+from services.render_farm import invites, presence
 from utils.logger import get_logger
 
 logger = get_logger("render_farm.events")
@@ -64,16 +64,16 @@ def socket_route(guard, events_of: Callable[[], Events] = lambda: hub, beat_ever
         await socket.prepare(request)
         for extra in events.join(socket, token, owner.player_id):
             asyncio.create_task(extra.close())
-        invites.touch(token, keep=invites.PRESENCE_BEAT_FOR)
-        told = invites.online()
+        presence.touch(token, keep=presence.PRESENCE_BEAT_FOR)
+        told = presence.online()
         await socket.send_json({"type": "hello", "topics": list(TOPICS), "online": told})
 
         async def beat() -> None:
             nonlocal told
             while not socket.closed:
                 await asyncio.sleep(beat_every)
-                invites.touch(token, keep=invites.PRESENCE_BEAT_FOR)
-                now = invites.online()
+                presence.touch(token, keep=presence.PRESENCE_BEAT_FOR)
+                now = presence.online()
                 if now != told and await events._send(socket, {"type": "online", "online": now}):
                     told = now
 

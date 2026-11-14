@@ -46,7 +46,8 @@ from services.image import close_shared_session
 from services.oauth.server import OAuthServer, set_linked as oauth_set_linked
 from bot.handlers.auth.linked import notifier as oauth_notifier
 from db.migrations import run_all_migrations
-from config.settings import DATABASE_URL, RENDER_WORKER_TOKEN, TELEGRAM_THROUGH_ROWS
+from config.settings import RENDER_WORKER_TOKEN, TELEGRAM_THROUGH_ROWS
+from utils.signals import shared as shared_signals
 import db.models
 
 logger = get_logger(__name__)
@@ -63,7 +64,7 @@ class App:
         self.map_checks_task: Optional[asyncio.Task] = None
         self.duels_task: Optional[asyncio.Task] = None
         self.telegram_tasks: Optional[asyncio.Task] = None
-        self.signals = None
+        self.tokens_task: Optional[asyncio.Task] = None
         self.oauth_server: Optional[OAuthServer] = None
 
     async def setup(self) -> None:
@@ -135,6 +136,7 @@ class App:
         from services.render_farm import invites as farm_invites
 
         await farm_invites.load()
+        self.tokens_task = asyncio.create_task(farm_invites.follow(self.shutdown_event), name="render_tokens")
 
         from utils.osu import assay_service
 
@@ -170,12 +172,10 @@ class App:
         if TELEGRAM_THROUGH_ROWS:
             from db.database import AsyncSessionFactory
             from services.render_farm.telegram_rows import Carrier, Rows
-            from utils.signals import Signals
 
             logger.info("Telegram is asked through rows of the database")
-            self.signals = Signals(DATABASE_URL)
-            asking = Rows(AsyncSessionFactory, self.signals)
-            carrier = Carrier(AsyncSessionFactory, Direct(self.bot), self.signals, linked=oauth_notifier(self.bot))
+            asking = Rows(AsyncSessionFactory, shared_signals)
+            carrier = Carrier(AsyncSessionFactory, Direct(self.bot), shared_signals, linked=oauth_notifier(self.bot))
             farm_http.set_telegram(asking)
             oauth_set_linked(asking.linked)
             self.telegram_tasks = asyncio.create_task(carrier.run(self.shutdown_event), name="telegram_tasks")
@@ -257,8 +257,10 @@ class App:
         if self.telegram_tasks:
             with suppress(asyncio.CancelledError):
                 await self.telegram_tasks
-        if self.signals:
-            await self.signals.stop()
+        if self.tokens_task:
+            with suppress(asyncio.CancelledError):
+                await self.tokens_task
+        await shared_signals.stop()
 
         if self.osu_api_client:
             await self.osu_api_client.close()

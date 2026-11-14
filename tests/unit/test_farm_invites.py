@@ -125,3 +125,37 @@ def test_anything_else_does_not(monkeypatch):
     invites.remember("mine")
     assert not farm_http._authorised(_asking("not-mine"))
     assert not farm_http._authorised(types.SimpleNamespace(headers={}))
+
+
+async def test_a_token_issued_elsewhere_is_known_after_the_reload_a_signal_asks_for(database):
+    import asyncio
+
+    from utils.signals import shared
+
+    stop = asyncio.Event()
+    following = asyncio.create_task(invites.follow(stop))
+    await asyncio.sleep(0)
+    token = "f" * 64
+    async with database() as session:
+        session.add(RenderWorkerToken(digest=invites.digest(token), issued_to=7, issued_name="Naum"))
+        await session.commit()
+    assert not invites.known(token)
+    shared.heard(invites.CHANGED)
+    for _ in range(100):
+        if invites.known(token):
+            break
+        await asyncio.sleep(0.01)
+    stop.set()
+    await following
+    assert invites.known(token) and invites.owner(token) == invites.Owner(7, "Naum", None)
+    assert 7 in invites.linked()
+
+
+async def test_a_reload_keeps_who_is_present(database):
+    from services.render_farm import presence
+
+    token = await invites.issue(invites.Invite(7, "Naum", 0.0), "mac")
+    presence.touch(token)
+    assert await invites.load() == 1
+    assert [owner.telegram_id for owner in presence.present()] == [7]
+    presence.forget()
