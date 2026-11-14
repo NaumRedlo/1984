@@ -289,6 +289,15 @@ class App:
 
         logger.info("Shutdown completed.")
 
+def tell_memory() -> None:
+    from utils.memory_report import report
+
+    try:
+        for line in report():
+            logger.info("memory | %s", line)
+    except Exception as exc:
+        logger.warning("the memory report failed: %s", exc)
+
 async def main() -> None:
     app = App()
     await app.setup()
@@ -297,6 +306,8 @@ async def main() -> None:
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, app.shutdown_event.set)
+    if hasattr(signal, "SIGUSR1"):
+        loop.add_signal_handler(signal.SIGUSR1, tell_memory)
 
     try:
         await app.start()

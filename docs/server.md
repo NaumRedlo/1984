@@ -286,6 +286,25 @@ processes in place of one do not fit as they are. Before step 4:
 - size the connection pool for two processes, so that they do not open 18
   connections where 9 sit idle now.
 
+What the imports cost, measured on a development machine on 15 November
+2026 with `scripts/memory_stages.py` (macOS, Python 3.12; the server may
+differ and the script is there to say by how much):
+
+| Loaded | Resident |
+|---|---|
+| Python alone | 16 MB |
+| everything the app's side imports: aiohttp, SQLAlchemy, Pillow, the models, the routes, the loops | 93 MB |
+| the same with `aiogram` | 223 MB |
+
+`aiogram` alone adds 130 MB. A server process that does not import it starts
+at less than half of what the one process starts at today, and what the two
+units need together at the start is about 320 MB against 230 MB now. The rest
+of the 400 to 540 MB is what the process gathers while it runs.
+`kill -USR1` of the process writes a report of that to the log
+(`utils/memory_report.py`): the resident size, what the allocator holds free,
+objects by type, pictures by size, and the module-level caches by what they
+keep.
+
 Disk, 22 GB used before the cleanup; 11 GB used and 18 GB free after it. The
 table below is what was found; everything in it is removed except the three
 SQLite files, which stay until a restore from the nightly dump is rehearsed.
