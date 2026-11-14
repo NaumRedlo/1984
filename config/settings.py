@@ -27,6 +27,8 @@ _legacy_db = os.path.join(PROJECT_ROOT, "bounties.db")
 if not os.path.exists(_default_db) and os.path.exists(_legacy_db):
     _default_db = _legacy_db
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{_default_db}")
+DB_POOL_SIZE = max(1, int(os.getenv("DB_POOL_SIZE", "10")))
+DB_POOL_OVERFLOW = max(0, int(os.getenv("DB_POOL_OVERFLOW", "20")))
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 
 _raw_admin_ids = os.getenv("ADMIN_IDS", "")

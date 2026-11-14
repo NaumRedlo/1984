@@ -71,6 +71,11 @@ class App:
     async def setup(self) -> None:
         validate_settings()
 
+        from utils import aiogram_lazy
+
+        if aiogram_lazy.installed():
+            logger.info("Telegram types are built on first use: %s", "checked" if aiogram_lazy.verify() else "fell back to all at once")
+
         logger.info("Initializing bot and dispatcher...")
         if TELEGRAM_BOT_API_URL:
             session = AiohttpSession(

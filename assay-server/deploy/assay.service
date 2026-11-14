@@ -6,6 +6,8 @@ After=network-online.target
 Environment=ASSAY_URLS=http://127.0.0.1:5077
 Environment=ASSAY_MAPS=/var/lib/assay/maps
 Environment=Logging__LogLevel__Microsoft.AspNetCore=Warning
+Environment=DOTNET_gcServer=0
+Environment=DOTNET_GCConserveMemory=5
 EnvironmentFile=-/etc/assay.env
 ExecStart=/opt/assay/Assay
 Restart=on-failure

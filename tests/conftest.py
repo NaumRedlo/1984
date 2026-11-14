@@ -4,6 +4,10 @@ import uuid
 
 import pytest
 
+from utils.aiogram_lazy import install as _defer_telegram_types
+
+_defer_telegram_types()
+
 POSTGRES = os.getenv("TEST_DATABASE_URL", "")
 _schemas: dict[str, str] = {}
 

@@ -305,6 +305,37 @@ of the 400 to 540 MB is what the process gathers while it runs.
 objects by type, pictures by size, and the module-level caches by what they
 keep.
 
+What the machine itself said on 15 November 2026:
+
+| | |
+|---|---|
+| everything the app's side imports | 89 MB |
+| `aiogram` on top of it | +167 MB |
+| the bot five minutes after a start | 305 MB resident, 268 MB of it anonymous |
+| pictures alive, entries in module-level caches | none worth a line |
+| Assay after 40 hours | 357 MB |
+| PostgreSQL | `shared_buffers` 128 MB, 7 connections of 100 |
+
+Where the 167 MB go: `aiogram` marks its 591 Telegram types to be built on
+first use and then builds every one of them while it is imported
+(`aiogram/types/__init__.py` calls `model_rebuild` on each). Each built type
+carries its own copy of the types nested in it.
+
+`utils/aiogram_lazy.py` leaves them unbuilt. It is installed before
+`aiogram` is imported (`bot/__init__.py`), keeps the names `aiogram` passes,
+and hands them to pydantic when a type is first used. At start the bot reads
+an update and a callback and writes a message through the lazy types; if that
+fails it builds everything as before and says so in the log.
+`AIOGRAM_EAGER_MODELS=1` turns it off. On the development machine the bot's
+imports take 119 MB in place of 227 MB, and 126 MB after the first update and
+send; the whole test suite runs this way.
+
+Also set for the two units to come: `DB_POOL_SIZE` and `DB_POOL_OVERFLOW`
+size the connection pool of a process (10 and 20 when not set), and Assay's
+unit asks for the workstation collector (`DOTNET_gcServer=0`,
+`DOTNET_GCConserveMemory=5`). What the collector settings save is not
+measured yet.
+
 Disk, 22 GB used before the cleanup; 11 GB used and 18 GB free after it. The
 table below is what was found; everything in it is removed except the three
 SQLite files, which stay until a restore from the nightly dump is rehearsed.

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, DB_POOL_OVERFLOW, DB_POOL_SIZE
 
 class Base(DeclarativeBase):
     pass
@@ -59,8 +59,8 @@ else:
         DATABASE_URL,
         echo=False,
         pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_POOL_OVERFLOW,
         pool_timeout=60,
     )
     attach_postgres(engine)
