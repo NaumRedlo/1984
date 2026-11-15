@@ -48,6 +48,7 @@ def quiet_loops(monkeypatch):
 
 async def test_the_app_side_serves_and_runs_its_loops_with_no_bot_and_stops_clean(quiet_loops, spare_database, monkeypatch):
     monkeypatch.setattr(oauth, "get_db_session", spare_database)
+    monkeypatch.setattr(farm_http, "RENDER_WORKER_TOKEN", "a-shared-secret")
     port = _free_port()
     told = []
 
