@@ -3,8 +3,9 @@ from logging.handlers import RotatingFileHandler
 import os
 
 LOG_DIR = "logs"
-LOG_FILE_LEVEL = "bot.log"
-LOG_ERROR_LEVEL = "errors.log"
+LOG_NAME = os.getenv("LOG_NAME", "").strip()
+LOG_FILE_LEVEL = f"{LOG_NAME}.log" if LOG_NAME else "bot.log"
+LOG_ERROR_LEVEL = f"{LOG_NAME}-errors.log" if LOG_NAME else "errors.log"
 MAX_BYTES = 10_000_000
 BACKUP_COUNT = 5
 

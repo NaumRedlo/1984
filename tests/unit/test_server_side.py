@@ -119,3 +119,15 @@ async def test_duel_notices_are_delivered_by_the_bot_until_it_stops(monkeypatch)
     monkeypatch.setattr(duel_tasks, "EVERY", 0.01)
     await asyncio.wait_for(duel_tasks.deliver_notices(stop, Bot()), 2.0)
     assert len(calls) == 2 and callable(calls[0])
+
+
+def test_the_server_logs_into_files_of_its_own():
+    import subprocess
+    import sys
+
+    told = subprocess.run(
+        [sys.executable, "-c", "import os, tempfile; os.chdir(tempfile.mkdtemp()); import server.main, utils.logger as l; "
+                               "print(l.LOG_FILE_LEVEL, l.LOG_ERROR_LEVEL)"],
+        capture_output=True, text=True, check=True, cwd=settings.PROJECT_ROOT, env={**__import__("os").environ, "PYTHONPATH": settings.PROJECT_ROOT},
+    ).stdout.split()
+    assert told == ["server.log", "server-errors.log"]

@@ -1,6 +1,9 @@
 import asyncio
+import os
 import signal
 import sys
+
+os.environ.setdefault("LOG_NAME", "server")
 
 from config.settings import RENDER_WORKER_TOKEN, validate_settings
 from db.database import AsyncSessionFactory, close_engine, engine

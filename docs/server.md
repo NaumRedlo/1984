@@ -183,6 +183,9 @@ Rules the code keeps after the split:
     (`db/setup.py`), so the two may start at the same moment.
   - `GET /health` answers `{"ok", "database", "telegram"}`; 503 when the
     database does not answer.
+  - The server writes `logs/server.log` and `logs/server-errors.log`; the
+    bot keeps `logs/bot.log` and `logs/errors.log`. Two processes do not
+    rotate one file.
   - `deploy/` has the two units and a Caddy example. Caddy keeps trying the
     upstream for 20 seconds, so a request that arrives while the server
     restarts waits instead of failing.
