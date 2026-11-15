@@ -3,9 +3,11 @@ import os
 from collections import deque
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-PACKAGES = ("bot", "services", "tasks", "utils", "db", "config")
+PACKAGES = ("bot", "server", "services", "tasks", "utils", "db", "config")
 
 SERVER_ROOTS = (
+    "server.main",
+    "server.side",
     "services.oauth.server",
     "services.render_farm.http",
     "services.render_farm.events",

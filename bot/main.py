@@ -34,19 +34,17 @@ from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.last_seen_middleware import LastSeenMiddleware
 from bot.middlewares.startup_filter_middleware import StartupFilterMiddleware
 from bot.middlewares.tenant_middleware import TenantMiddleware
-from tasks.live_tracker import LiveTracker, set_current as set_live_tracker
 from tasks.membership import run as sweep_rosters
-from tasks.map_checks import run as check_maps
-from tasks.duels import run as run_duels
+from tasks.duels import deliver_notices as deliver_duel_notices
 from bot.handlers.membership import router as membership_router
-from tasks.profile_updater import periodic_profile_updates
 
-from db.database import engine, Base, close_engine
+from db.database import engine, close_engine
+from db.setup import prepare
+from server.side import AppSide
 from services.image import close_shared_session
-from services.oauth.server import OAuthServer, set_linked as oauth_set_linked
 from bot.handlers.auth.linked import notifier as oauth_notifier
-from db.migrations import run_all_migrations
-from config.settings import RENDER_WORKER_TOKEN, TELEGRAM_THROUGH_ROWS
+from config.settings import BOT_ALONE, RENDER_WORKER_TOKEN, TELEGRAM_THROUGH_ROWS
+from utils.memory_report import to_log
 from utils.signals import shared as shared_signals
 import db.models
 
@@ -58,15 +56,8 @@ class App:
         self.dp: Optional[Dispatcher] = None
         self.osu_api_client: Optional[OsuApiClient] = None
         self.shutdown_event = asyncio.Event()
-        self.profile_updater_task: Optional[asyncio.Task] = None
-        self.live_tracker_task: Optional[asyncio.Task] = None
-        self.membership_task: Optional[asyncio.Task] = None
-        self.map_checks_task: Optional[asyncio.Task] = None
-        self.duels_task: Optional[asyncio.Task] = None
-        self.telegram_tasks: Optional[asyncio.Task] = None
-        self.tokens_task: Optional[asyncio.Task] = None
-        self.roster_task: Optional[asyncio.Task] = None
-        self.oauth_server: Optional[OAuthServer] = None
+        self.side: Optional[AppSide] = None
+        self.tasks: list[asyncio.Task] = []
 
     async def setup(self) -> None:
         validate_settings()
@@ -132,17 +123,13 @@ class App:
 
         self.dp.include_router(errors_router)
 
-        logger.info("Checking/creating database tables...")
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        logger.info("Running database migrations...")
-        await run_all_migrations(engine)
+        logger.info("Checking/creating database tables and running migrations...")
+        await prepare(engine)
 
         from services.render_farm import invites as farm_invites
 
         await farm_invites.load()
-        self.tokens_task = asyncio.create_task(farm_invites.follow(self.shutdown_event), name="render_tokens")
+        self.tasks.append(asyncio.create_task(farm_invites.follow(self.shutdown_event), name="render_tokens"))
 
         from utils.osu import assay_service
 
@@ -167,33 +154,31 @@ class App:
         logger.info("Initializing osu! API client...")
         await self.osu_api_client.initialize()
 
-        logger.info("Starting OAuth server...")
-        self.oauth_server = OAuthServer()
-        await self.oauth_server.start()
-
-        from services.render_farm import http as farm_http
+        from db.database import AsyncSessionFactory
+        from services.render_farm import orders as farm_orders
         from services.render_farm import pairing as farm_pairing
         from services.render_farm.telegram_direct import Direct
+        from services.render_farm.telegram_rows import Carrier, Rows
 
-        if TELEGRAM_THROUGH_ROWS:
-            from db.database import AsyncSessionFactory
-            from services.render_farm.telegram_rows import Carrier, Rows
-
+        direct = Direct(self.bot)
+        told_linked = oauth_notifier(self.bot)
+        through_rows = BOT_ALONE or TELEGRAM_THROUGH_ROWS
+        if through_rows:
             logger.info("Telegram is asked through rows of the database")
-            asking = Rows(AsyncSessionFactory, shared_signals)
-            carrier = Carrier(AsyncSessionFactory, Direct(self.bot), shared_signals, linked=oauth_notifier(self.bot))
-            farm_http.set_telegram(asking)
-            oauth_set_linked(asking.linked)
-            self.telegram_tasks = asyncio.create_task(carrier.run(self.shutdown_event), name="telegram_tasks")
+            carrier = Carrier(AsyncSessionFactory, direct, shared_signals, linked=told_linked)
+            self.tasks.append(asyncio.create_task(carrier.run(self.shutdown_event), name="telegram_tasks"))
+
+        if BOT_ALONE:
+            logger.info("The bot runs alone: the app's side is another process")
+            self.tasks.append(asyncio.create_task(deliver_duel_notices(self.shutdown_event, self.bot), name="duel_notices"))
         else:
-            farm_http.set_telegram(Direct(self.bot))
-            oauth_set_linked(oauth_notifier(self.bot))
-        farm_http.set_osu(self.osu_api_client)
+            self.side = AppSide(self.osu_api_client, self.shutdown_event)
+            if through_rows:
+                asking = Rows(AsyncSessionFactory, shared_signals)
+                await self.side.start(asking, asking.linked, duel_bot=self.bot)
+            else:
+                await self.side.start(direct, told_linked, duel_bot=self.bot)
 
-        from services.render_farm import orders as farm_orders
-        from services.render_farm.roster import roster as farm_roster
-
-        self.roster_task = asyncio.create_task(farm_roster.tell(self.shutdown_event), name="render_roster")
         try:
             await farm_orders.resume(self.bot)
         except Exception as exc:
@@ -205,25 +190,8 @@ class App:
         except Exception as exc:
             logger.warning("cannot learn my own username, pairing links stay bare: %s", exc)
 
-        logger.info("Starting background profile updater...")
-        self.profile_updater_task = asyncio.create_task(
-            periodic_profile_updates(self.osu_api_client, self.shutdown_event),
-            name="profile_updater"
-        )
-
-        logger.info("Starting the live tracker...")
-        tracker = LiveTracker(self.osu_api_client)
-        set_live_tracker(tracker)
-        self.live_tracker_task = asyncio.create_task(tracker.run(self.shutdown_event), name="live_tracker")
-
         logger.info("Starting the roster sweep...")
-        self.membership_task = asyncio.create_task(sweep_rosters(self.bot, self.shutdown_event), name="membership")
-
-        logger.info("Starting the map checks of local scores...")
-        self.map_checks_task = asyncio.create_task(check_maps(self.osu_api_client, self.shutdown_event), name="map_checks")
-
-        logger.info("Starting the duel deadlines and commands...")
-        self.duels_task = asyncio.create_task(run_duels(self.shutdown_event, self.osu_api_client, self.bot), name="duels")
+        self.tasks.append(asyncio.create_task(sweep_rosters(self.bot, self.shutdown_event), name="membership"))
 
     async def start(self) -> None:
         assert self.bot is not None
@@ -240,44 +208,14 @@ class App:
 
         self.shutdown_event.set()
 
-        if self.profile_updater_task:
-            self.profile_updater_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.profile_updater_task
-
-        if self.live_tracker_task:
-            self.live_tracker_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.live_tracker_task
-        set_live_tracker(None)
-
-        if self.membership_task:
-            self.membership_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.membership_task
-
-        if self.map_checks_task:
-            self.map_checks_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.map_checks_task
-
-        if self.duels_task:
-            self.duels_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.duels_task
-
-        if self.oauth_server:
-            await self.oauth_server.stop()
-
-        if self.telegram_tasks:
-            with suppress(asyncio.CancelledError):
-                await self.telegram_tasks
-        if self.tokens_task:
-            with suppress(asyncio.CancelledError):
-                await self.tokens_task
-        if self.roster_task:
-            with suppress(asyncio.CancelledError):
-                await self.roster_task
+        if self.side is not None:
+            await self.side.stop()
+        for task in self.tasks:
+            task.cancel()
+        for task in self.tasks:
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+        self.tasks = []
         await shared_signals.stop()
 
         if self.osu_api_client:
@@ -294,15 +232,6 @@ class App:
 
         logger.info("Shutdown completed.")
 
-def tell_memory() -> None:
-    from utils.memory_report import report
-
-    try:
-        for line in report():
-            logger.info("memory | %s", line)
-    except Exception as exc:
-        logger.warning("the memory report failed: %s", exc)
-
 async def main() -> None:
     app = App()
     await app.setup()
@@ -312,7 +241,7 @@ async def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, app.shutdown_event.set)
     if hasattr(signal, "SIGUSR1"):
-        loop.add_signal_handler(signal.SIGUSR1, tell_memory)
+        loop.add_signal_handler(signal.SIGUSR1, to_log, logger)
 
     try:
         await app.start()

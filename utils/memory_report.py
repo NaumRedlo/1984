@@ -151,6 +151,14 @@ def _holders(roots: tuple[str, ...]) -> list[str]:
     return lines
 
 
+def to_log(logger, roots: tuple[str, ...] = ROOTS) -> None:
+    try:
+        for line in report(roots):
+            logger.info("memory | %s", line)
+    except Exception as exc:
+        logger.warning("the memory report failed: %s", exc)
+
+
 def report(roots: tuple[str, ...] = ROOTS) -> list[str]:
     lines = [f"memory report of pid {os.getpid()}"]
     lines += _status()

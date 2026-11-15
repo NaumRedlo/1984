@@ -8,7 +8,7 @@ from urllib.parse import quote
 from collections import Counter, deque
 from collections.abc import Mapping
 
-from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET
+from config.settings import OSU_CLIENT_ID, OSU_CLIENT_SECRET, OSU_REQUEST_GAP
 from utils.logger import get_logger
 from utils.osu import rulesets
 from utils.singleflight import SingleFlight
@@ -149,7 +149,7 @@ class OsuApiClient:
     TOKEN_URL = "https://osu.ppy.sh/oauth/token"
 
     DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
-    RATE_LIMIT_DELAY = 0.2
+    RATE_LIMIT_DELAY = OSU_REQUEST_GAP
     RATE_WINDOW = 60.0
 
     def __init__(self):

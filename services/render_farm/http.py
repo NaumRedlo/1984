@@ -169,6 +169,9 @@ def _etag_of(body: dict) -> str:
     steady = {key: value for key, value in body.items() if key != "at"}
     return '"' + hashlib.sha1(json.dumps(steady, sort_keys=True).encode()).hexdigest()[:24] + '"'
 
+def telegram_ready() -> bool:
+    return _telegram.ready()
+
 def forget_memories() -> None:
     _chat_cache.clear()
     gathered.forget_holders()

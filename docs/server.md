@@ -170,6 +170,44 @@ Rules the code keeps after the split:
   imports the roster. In a process without workers of its own that call reads
   the row.
 
+- Step 4, 15 November 2026, the part that is code: two entry points.
+  - `python -m server.main` is the app's side alone: the HTTP server with
+    the routes and the OAuth callback, the loops, the duels with Bancho. It
+    does not import `aiogram` and asks Telegram through rows.
+  - `python -m bot.main` with `BOT_ALONE=1` is the bot alone: polling, the
+    handlers, the carrier of Telegram tasks, the roster sweep, the duel
+    notices, the render orders. Without the variable it starts both sides in
+    one process as before, which is the way back.
+  - `server/side.py` is what both ways of starting share.
+  - Tables are created and migrated under a PostgreSQL advisory lock
+    (`db/setup.py`), so the two may start at the same moment.
+  - `GET /health` answers `{"ok", "database", "telegram"}`; 503 when the
+    database does not answer.
+  - `deploy/` has the two units and a Caddy example. Caddy keeps trying the
+    upstream for 20 seconds, so a request that arrives while the server
+    restarts waits instead of failing.
+  - Each unit has its own pool of connections (`DB_POOL_SIZE` 6 and 4) and
+    its own pause between requests to osu! (`OSU_REQUEST_GAP` 0.3 s each, so
+    at most 6.7 requests a second together, against 5 for the one process).
+
+  Run on a development machine: the server's entry point on an empty
+  database takes 103 MB with no `aiogram` loaded, answers `/health`, and
+  stops clean on `SIGTERM`. With a stand-in for the bot in a second process,
+  `/render/me` came back with the name the other process gave; with that
+  process stopped the same kind of request was refused after 3 seconds and
+  `/health` said `"telegram": false`.
+
+  Not done in this step yet:
+  - the units still run as root from `/root/1984`; a user of its own needs
+    the repository and `data/` moved out of root's home and a group shared
+    with the local Bot API server;
+  - the Bot API server still takes `--api-id` and `--api-hash` on its
+    command line;
+  - clients are not told before a stop; their sockets close and they
+    reconnect;
+  - what the bot changes reaches a signed-in app on its next poll, not at
+    once (step 5).
+
 Found on the way, for step 4:
 
 - A video read back from Telegram crosses as the path the local Bot API

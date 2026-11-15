@@ -1,0 +1,19 @@
+[Unit]
+Description=1984 bot: Telegram
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/1984
+ExecStart=/root/1984/venv/bin/python -m bot.main
+Environment=BOT_ALONE=1
+Environment=DB_POOL_SIZE=4
+Environment=DB_POOL_OVERFLOW=6
+Environment=OSU_REQUEST_GAP=0.3
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

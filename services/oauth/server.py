@@ -267,11 +267,23 @@ async def handle_callback(request: web.Request) -> web.Response:
         content_type="text/html",
     )
 
+async def health(_request: web.Request) -> web.Response:
+    from sqlalchemy import text
+
+    try:
+        async with get_db_session() as session:
+            await session.execute(text("select 1"))
+    except Exception as exc:
+        logger.warning("health: the database does not answer: %s", exc)
+        return web.json_response({"ok": False, "database": False}, status=503)
+    return web.json_response({"ok": True, "database": True, "telegram": render_farm_http.telegram_ready()})
+
 class OAuthServer:
     def __init__(self, port: int = OAUTH_SERVER_PORT):
         self.port = port
         self.app = web.Application()
         self.app.router.add_get("/oauth/callback", handle_callback)
+        self.app.router.add_get("/health", health)
 
         render_farm_http.install(self.app)
 

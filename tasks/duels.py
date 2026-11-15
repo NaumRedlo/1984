@@ -75,6 +75,23 @@ async def _sweep(factory, shutdown_event: asyncio.Event, send=None) -> None:
         except Exception as exc:
             logger.error("the duel worker stumbled: %s", exc, exc_info=True)
 
+async def deliver_notices(shutdown_event: asyncio.Event, bot) -> None:
+    from db.database import AsyncSessionFactory
+    from services.duels import notify
+    from utils.language import get_language
+
+    send = _telegram(bot)
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=EVERY)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await notify.deliver(AsyncSessionFactory, send, get_language)
+        except Exception as exc:
+            logger.error("the duel notices stumbled: %s", exc, exc_info=True)
+
 MATCH_EVERY = 5.0
 
 async def _matching(factory, shutdown_event: asyncio.Event, present) -> None:

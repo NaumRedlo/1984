@@ -56,6 +56,8 @@ APP_VIDEOS_DIR = os.getenv("APP_VIDEOS_DIR", os.path.join(PROJECT_ROOT, "data", 
 RENDER_ORDERS_DIR = os.getenv("RENDER_ORDERS_DIR", os.path.join(PROJECT_ROOT, "data", "render-orders"))
 RENDER_SPOOL_DIR = os.getenv("RENDER_SPOOL_DIR", os.path.join(PROJECT_ROOT, "data", "render-spool"))
 TELEGRAM_FETCH_DIR = os.getenv("TELEGRAM_FETCH_DIR", os.path.join(PROJECT_ROOT, "data", "telegram-fetch"))
+BOT_ALONE = os.getenv("BOT_ALONE", "").strip().lower() in ("1", "true", "yes", "on")
+OSU_REQUEST_GAP = max(0.05, float(os.getenv("OSU_REQUEST_GAP", "0.2")))
 TELEGRAM_THROUGH_ROWS = os.getenv("TELEGRAM_THROUGH_ROWS", "").strip().lower() in ("1", "true", "yes", "on")
 APP_VIDEO_MOST = int(os.getenv("APP_VIDEO_MOST", str(2 * 1024 * 1024 * 1024)))
 APP_VIDEO_STORAGE_MOST = int(os.getenv("APP_VIDEO_STORAGE_MOST", str(20 * 1024 * 1024 * 1024)))
@@ -78,9 +80,9 @@ OAUTH_ENCRYPTION_KEY = os.getenv("OAUTH_ENCRYPTION_KEY", "")
 _raw_group_id = os.getenv("GROUP_CHAT_ID", "")
 GROUP_CHAT_ID: int | None = int(_raw_group_id) if _raw_group_id.lstrip("-").isdigit() else None
 
-def validate_settings() -> None:
+def validate_settings(telegram: bool = True) -> None:
     missing = []
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE_DEFAULT":
+    if telegram and (not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE_DEFAULT"):
         missing.append("TELEGRAM_BOT_TOKEN")
     if not OSU_CLIENT_ID:
         missing.append("OSU_CLIENT_ID")
